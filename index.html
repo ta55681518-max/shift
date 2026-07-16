@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>串焼KEMURI屋 シフト希望</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    background: #1a1210; color: #f5efe6; padding: 0 0 40px;
+  }
+  header {
+    background: linear-gradient(180deg,#3a1c12,#2a1109); padding: 18px 16px 14px;
+    text-align: center; border-bottom: 2px solid #e8622a; position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: 1px; }
+  header .month { margin-top: 4px; font-size: 15px; color: #ffcf9e; font-weight: bold; }
+  header .deadline { margin-top: 2px; font-size: 12px; color: #ff9a6b; }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 16px; }
+  .card { background: #241813; border-radius: 14px; padding: 16px; margin-bottom: 16px; border: 1px solid #3a2a22; }
+  label.ttl { display: block; font-size: 13px; color: #ffcf9e; margin-bottom: 8px; font-weight: bold; }
+  select, textarea {
+    width: 100%; padding: 12px; font-size: 16px; border-radius: 10px;
+    border: 1px solid #5a4438; background: #160f0c; color: #f5efe6;
+  }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row select { width: auto; flex: 1; padding: 10px; }
+  .row .tilde { color: #b9a99c; }
+  .legend { display: flex; gap: 12px; justify-content: center; font-size: 13px; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .dot { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; }
+  .dot.maru { background: #1f6f43; color: #fff; }
+  .dot.sankaku { background: #b58a12; color: #fff; }
+  .dot.batu { background: #a3352a; color: #fff; }
+  .quick { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .quick button {
+    flex: 1; min-width: 90px; padding: 10px 6px; font-size: 13px; border-radius: 10px;
+    border: 1px solid #5a4438; background: #2e2019; color: #ffcf9e; font-weight: bold;
+  }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .wd { text-align: center; font-size: 12px; color: #b9a99c; padding-bottom: 2px; }
+  .wd.sat { color: #7db4ff; } .wd.sun { color: #ff8a8a; }
+  .cell {
+    aspect-ratio: 1/1; border-radius: 10px; border: 1px solid #3a2a22; background: #160f0c;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: 12px; cursor: pointer; user-select: none; position: relative; overflow: hidden;
+  }
+  .cell .d { font-size: 12px; color: #b9a99c; line-height: 1; }
+  .cell .mk { font-size: 18px; font-weight: bold; line-height: 1.1; margin-top: 1px; min-height: 20px; }
+  .cell .tm { font-size: 10px; line-height: 1.05; margin-top: 1px; color: #d7ffe6; font-weight: bold; }
+  .cell.empty { background: transparent; border: none; }
+  .cell.maru { background: #1f6f43; border-color: #2c9459; }
+  .cell.maru .d, .cell.maru .mk { color: #fff; }
+  .cell.sankaku { background: #8a6a10; border-color: #b58a12; }
+  .cell.sankaku .d, .cell.sankaku .mk { color: #fff; }
+  .cell.batu { background: #7d2820; border-color: #a3352a; }
+  .cell.batu .d, .cell.batu .mk { color: #fff; }
+  .cell.sat .d { color: #7db4ff; } .cell.sun .d { color: #ff8a8a; }
+  .cell.maru .d, .cell.sankaku .d, .cell.batu .d { color: #fff; }
+  .send {
+    width: 100%; padding: 16px; font-size: 18px; font-weight: bold; border: none; border-radius: 12px;
+    background: linear-gradient(180deg,#ff7b3d,#e8541f); color: #fff; letter-spacing: 2px;
+    box-shadow: 0 4px 0 #a83a12;
+  }
+  .send:active { transform: translateY(2px); box-shadow: 0 2px 0 #a83a12; }
+  .send:disabled { background: #5a4438; box-shadow: none; color: #9a887c; }
+  .note-hint { font-size: 11px; color: #9a887c; margin-top: 6px; }
+  #loading, #thanks { text-align: center; padding: 60px 20px; }
+  #thanks { display: none; }
+  #thanks .big { font-size: 60px; }
+  #thanks h2 { color: #ffcf9e; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: #000; color: #fff; padding: 12px 20px; border-radius: 24px; font-size: 14px;
+    opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50; max-width: 90%;
+  }
+  .toast.show { opacity: .95; }
+  .prog { font-size: 12px; color: #9a887c; text-align: center; margin-top: 4px; }
+
+  /* ▼ 日をタップしたとき出るポップアップ（ボトムシート） */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 60;
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  .overlay.show { display: flex; }
+  .sheet {
+    width: 100%; max-width: 480px; background: #241813; border-radius: 18px 18px 0 0;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); border-top: 2px solid #e8622a;
+    animation: up .18s ease;
+  }
+  @keyframes up { from { transform: translateY(30px); opacity:.5 } to { transform: none; opacity:1 } }
+  .sheet h3 { margin: 0 0 14px; text-align: center; font-size: 17px; color: #ffcf9e; }
+  .opt {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px; margin-bottom: 10px;
+    border-radius: 12px; border: 2px solid #3a2a22; background: #160f0c; color: #f5efe6;
+    font-size: 16px; font-weight: bold; text-align: left; cursor: pointer;
+  }
+  .opt .ic { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; flex: 0 0 auto; }
+  .opt.sel { border-color: #ff7b3d; background: #33231a; }
+  .opt.maru .ic { background: #1f6f43; } .opt.sankaku .ic { background: #8a6a10; } .opt.batu .ic { background: #7d2820; }
+  .time-area { margin: 4px 0 12px; padding: 12px; background: #160f0c; border-radius: 12px; border: 1px solid #3a2a22; }
+  .time-area.hide { display: none; }
+  .seg { display: flex; gap: 8px; margin-bottom: 10px; }
+  .seg button {
+    flex: 1; padding: 10px; border-radius: 10px; border: 2px solid #3a2a22; background: #241813;
+    color: #cbb8a8; font-size: 14px; font-weight: bold;
+  }
+  .seg button.on { border-color: #ff7b3d; color: #fff; background: #33231a; }
+  .sheet-actions { display: flex; gap: 10px; margin-top: 4px; }
+  .sheet-actions button { flex: 1; padding: 14px; border-radius: 12px; font-size: 15px; font-weight: bold; border: none; }
+  .btn-clear { background: #2e2019; color: #b9a99c; }
+  .btn-ok { background: linear-gradient(180deg,#ff7b3d,#e8541f); color: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔥 串焼KEMURI屋 🔥</h1>
+  <div class="month" id="monthLabel">シフト希望</div>
+  <div class="deadline" id="deadlineLabel"></div>
+</header>
+
+<div id="loading" class="wrap">読み込み中…⏳</div>
+
+<div id="app" class="wrap" style="display:none">
+  <div class="card">
+    <label class="ttl">👤 あなたの名前</label>
+    <select id="name">
+      <option value="">― 選んでね ―</option>
+    </select>
+  </div>
+
+  <div class="card">
+    <label class="ttl">⏰ 基本の出れる時間帯（時間指定のときの初期値）</label>
+    <div class="row">
+      <select id="defStart"></select>
+      <span class="tilde">〜</span>
+      <select id="defEnd"></select>
+    </div>
+    <div class="note-hint">よく出るいつもの時間を入れとくと、日ごとの入力がラクさー</div>
+  </div>
+
+  <div class="card">
+    <div class="legend">
+      <span><span class="dot maru">○</span>出れる</span>
+      <span><span class="dot sankaku">△</span>できれば休み</span>
+      <span><span class="dot batu">✕</span>休みたい</span>
+    </div>
+    <div class="prog">日にちをタップ → 出れる/休み や 時間帯を選べるさー</div>
+    <div class="quick">
+      <button type="button" onclick="fillAll('maru')">ぜんぶ○（終日）</button>
+      <button type="button" onclick="fillWeekend('batu')">土日を✕</button>
+      <button type="button" onclick="fillAll('')">クリア</button>
+    </div>
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div class="card">
+    <label class="ttl">📝 ひとこと（任意）</label>
+    <textarea id="note" rows="2" placeholder="例）連休ほしい / テスト期間は早上がり希望 など"></textarea>
+  </div>
+
+  <button class="send" id="sendBtn" onclick="submit()">この内容で提出する</button>
+  <div class="prog" id="fillCount"></div>
+</div>
+
+<div id="thanks" class="wrap">
+  <div class="big">🎉</div>
+  <h2>提出ありがとう！</h2>
+  <p id="thanksMsg" style="color:#cbb8a8"></p>
+  <button class="send" style="max-width:220px;margin:10px auto 0;display:block" onclick="location.reload()">もう一回ひらく</button>
+</div>
+
+<!-- 日タップで出るポップアップ -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet">
+    <h3 id="sheetTtl">8月1日</h3>
+    <button class="opt maru" id="optMaru" onclick="pickMark('maru')"><span class="ic">○</span>出れる</button>
+    <div class="time-area" id="timeArea">
+      <div class="seg">
+        <button id="segAllday" onclick="setAllday(true)">終日OK</button>
+        <button id="segTimed" onclick="setAllday(false)">時間を指定</button>
+      </div>
+      <div class="row" id="timeSelects">
+        <select id="tStart"></select>
+        <span class="tilde">〜</span>
+        <select id="tEnd"></select>
+      </div>
+    </div>
+    <button class="opt sankaku" id="optSankaku" onclick="pickMark('sankaku')"><span class="ic">△</span>できれば休み</button>
+    <button class="opt batu" id="optBatu" onclick="pickMark('batu')"><span class="ic">✕</span>休みたい</button>
+    <div class="sheet-actions">
+      <button class="btn-clear" onclick="pickMark('')">未定にする</button>
+      <button class="btn-ok" onclick="confirmSheet()">決定</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ▼▼▼ GASをデプロイしたときに出る「ウェブアプリのURL」をここに貼る ▼▼▼
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbyuFEe7RZOq0Mi6xptI-g84ZDWjk-e2SMXRh7v5k7dv6Ocmhe4co7IH9IUKpKX8OCYp/exec";
+  // ▲▲▲ https://script.google.com/macros/s/～/exec の形 ▲▲▲
+
+  // 時間の選択肢（30分きざみ・10:00〜26:00）。26:00＝深夜2時。1時間きざみにしたいなら STEP を 1 に
+  const T_FROM = 10, T_TO = 26, STEP = 0.5;
+  const WD = ["日","月","火","水","木","金","土"];
+  const MARK = { "maru": "○", "sankaku": "△", "batu": "✕", "": "" };
+  // STATE[d] = { mark:""|"maru"|"sankaku"|"batu", allday:true, start:"17:00", end:"23:00" }
+  let STATE = {};
+  let INFO = null;
+  let editDay = null;      // ポップアップで編集中の日
+  let editTmp = null;      // 編集中の一時state
+
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove("show"), 2600);
+  }
+  function fmtT(v){ const h=Math.floor(v), m=(v-h)*60; return String(h)+":"+(m?"30":"00"); }
+  function timeVals(){ const a=[]; for(let v=T_FROM; v<=T_TO; v+=STEP) a.push(fmtT(v)); return a; }
+  // allowEmpty=true のとき、先頭に「未定（〜ラスト）」を入れる ＝ 終わりの時間を決めない
+  function fillSelect(sel, cur, allowEmpty){
+    sel.innerHTML="";
+    if (allowEmpty){ const o=document.createElement("option"); o.value=""; o.textContent="未定（〜ラスト）"; sel.appendChild(o); }
+    timeVals().forEach(t=>{ const o=document.createElement("option"); o.value=t; o.textContent=t; sel.appendChild(o); });
+    sel.value = cur || "";
+  }
+  // "17:00" → "17"、"17:30" → "17½"（セルに小さく出す用）
+  function shortT(t){ const [h,m]=t.split(":"); return m==="30" ? h+"½" : h; }
+
+  async function init() {
+    if (GAS_URL.indexOf("http") !== 0) {
+      document.getElementById("loading").innerHTML =
+        "⚠️ まだGASのURLが設定されてないさー<br><small>index.html の GAS_URL を直してね</small>";
+      return;
+    }
+    try {
+      const res = await fetch(GAS_URL);
+      INFO = await res.json();
+      buildUI();
+    } catch (e) {
+      document.getElementById("loading").innerHTML = "⚠️ 読み込み失敗… 通信を確認してもう一度ひらいてね<br><small>"+e+"</small>";
+    }
+  }
+
+  function buildUI() {
+    const [y, m] = INFO.targetMonth.split("-").map(Number);
+    document.getElementById("monthLabel").textContent = y + "年" + m + "月分のシフト希望";
+    if (INFO.deadline) document.getElementById("deadlineLabel").textContent = "提出しめきり：" + INFO.deadline;
+
+    // 名前
+    const sel = document.getElementById("name");
+    (INFO.staff || []).forEach(n => { const o=document.createElement("option"); o.value=n; o.textContent=n; sel.appendChild(o); });
+
+    // 基本時間帯＆ポップアップの時間プルダウン
+    const dOpen = (INFO.defaultOpen || "17:00"), dClose = (INFO.defaultClose || "23:00");
+    fillSelect(document.getElementById("defStart"), dOpen);
+    fillSelect(document.getElementById("defEnd"),   dClose, true);
+    fillSelect(document.getElementById("tStart"),   dOpen);
+    fillSelect(document.getElementById("tEnd"),     dClose, true);
+
+    // カレンダー
+    const grid = document.getElementById("grid");
+    WD.forEach((w,i) => { const h=document.createElement("div"); h.className="wd"+(i===0?" sun":i===6?" sat":""); h.textContent=w; grid.appendChild(h); });
+    const first = new Date(y, m-1, 1).getDay();
+    const days = new Date(y, m, 0).getDate();
+    for (let i=0;i<first;i++){ const e=document.createElement("div"); e.className="cell empty"; grid.appendChild(e); }
+    for (let d=1; d<=days; d++){
+      const wd = new Date(y, m-1, d).getDay();
+      STATE[d] = { mark:"", allday:true, start:dOpen, end:dClose, userSet:false };
+      const c = document.createElement("div");
+      c.className = "cell" + (wd===0?" sun":wd===6?" sat":"");
+      c.dataset.day = d;
+      c.innerHTML = '<span class="d">'+d+'</span><span class="mk"></span><span class="tm"></span>';
+      c.onclick = () => openSheet(d);
+      grid.appendChild(c);
+    }
+    document.getElementById("loading").style.display="none";
+    document.getElementById("app").style.display="block";
+    updateCount();
+  }
+
+  // ---- セル表示 ----
+  function renderCell(d) {
+    const c = document.querySelector('.cell[data-day="'+d+'"]');
+    const st = STATE[d];
+    c.classList.remove("maru","sankaku","batu");
+    const mk = c.querySelector(".mk"), tm = c.querySelector(".tm");
+    if (st.mark) c.classList.add(st.mark);
+    if (st.mark === "maru") {
+      if (st.allday) { mk.textContent="○"; tm.textContent=""; }
+      else { mk.textContent=""; tm.textContent = shortT(st.start) + (st.end ? "-"+shortT(st.end) : "〜"); }
+    } else {
+      mk.textContent = MARK[st.mark]; tm.textContent="";
+    }
+  }
+
+  // ---- ポップアップ ----
+  function openSheet(d) {
+    editDay = d;
+    editTmp = Object.assign({}, STATE[d]);
+    // まだ個別に時間を決めてない日は、いまの「基本の出れる時間帯」を初期値にする
+    if (!editTmp.userSet) {
+      editTmp.start = document.getElementById("defStart").value;
+      editTmp.end   = document.getElementById("defEnd").value;
+    }
+    const [y,m] = INFO.targetMonth.split("-").map(Number);
+    const wd = new Date(y, m-1, d).getDay();
+    document.getElementById("sheetTtl").textContent = m+"月"+d+"日（"+WD[wd]+"）";
+    document.getElementById("tStart").value = editTmp.start;
+    document.getElementById("tEnd").value   = editTmp.end;
+    refreshSheet();
+    document.getElementById("overlay").classList.add("show");
+  }
+  function refreshSheet() {
+    ["Maru","Sankaku","Batu"].forEach(k=>{
+      document.getElementById("opt"+k).classList.toggle("sel", editTmp.mark===k.toLowerCase());
+    });
+    const timed = (editTmp.mark==="maru" && !editTmp.allday);
+    document.getElementById("timeArea").classList.toggle("hide", editTmp.mark!=="maru");
+    document.getElementById("segAllday").classList.toggle("on", editTmp.allday);
+    document.getElementById("segTimed").classList.toggle("on", !editTmp.allday);
+    document.getElementById("timeSelects").style.display = timed ? "flex" : "none";
+  }
+  function pickMark(mk) {
+    if (mk==="") { closeSheetAnd(()=>{ STATE[editDay]={mark:"",allday:true,start:editTmp.start,end:editTmp.end}; renderCell(editDay); }); return; }
+    editTmp.mark = mk;
+    if (mk!=="maru") { // 休み系は即確定でサクサク
+      closeSheetAnd(()=>{ STATE[editDay].mark=mk; renderCell(editDay); });
+      return;
+    }
+    refreshSheet();
+  }
+  function setAllday(v) { editTmp.allday = v; refreshSheet(); }
+  function confirmSheet() {
+    editTmp.start = document.getElementById("tStart").value;
+    editTmp.end   = document.getElementById("tEnd").value; // "" ＝ 終わり未定（〜ラスト）
+    if (editTmp.mark==="maru" && !editTmp.allday) {
+      if (!editTmp.start) { toast("始まりの時間を選んでね"); return; }
+      if (editTmp.end && editTmp.start >= editTmp.end) { toast("終わりは始まりより後にしてね"); return; }
+      editTmp.userSet = true; // この日は個別に時間を決めた印
+    }
+    STATE[editDay] = editTmp;
+    renderCell(editDay);
+    closeSheet();
+  }
+  function closeSheet(){ document.getElementById("overlay").classList.remove("show"); editDay=null; updateCount(); }
+  function closeSheetAnd(fn){ fn(); closeSheet(); }
+
+  // ---- 一括ボタン ----
+  function fillAll(v) {
+    Object.keys(STATE).forEach(d=>{
+      if (v==="maru") STATE[d]={mark:"maru",allday:true,start:STATE[d].start,end:STATE[d].end};
+      else STATE[d]={mark:"",allday:true,start:STATE[d].start,end:STATE[d].end};
+      renderCell(d);
+    });
+    updateCount();
+  }
+  function fillWeekend(v) {
+    const [y,m]=INFO.targetMonth.split("-").map(Number);
+    Object.keys(STATE).forEach(d=>{
+      const wd=new Date(y,m-1,+d).getDay();
+      if (wd===0||wd===6){ STATE[d].mark=v; if(v==="maru")STATE[d].allday=true; renderCell(d); }
+    });
+    updateCount();
+  }
+  function updateCount() {
+    let mk=0,sk=0,bt=0;
+    Object.values(STATE).forEach(s=>{ if(s.mark==="maru")mk++; else if(s.mark==="sankaku")sk++; else if(s.mark==="batu")bt++; });
+    document.getElementById("fillCount").textContent = "○"+mk+"日 ・ △"+sk+"日 ・ ✕"+bt+"日（無印は「未定」で提出）";
+  }
+
+  // ---- 提出 ----
+  function cellValue(st) {
+    if (st.mark==="maru") {
+      if (st.allday) return "○";
+      return st.end ? (st.start+"-"+st.end) : (st.start+"〜"); // "17:00-23:00" / "17:00〜"（終わり未定）
+    }
+    if (st.mark==="sankaku") return "△";
+    if (st.mark==="batu") return "✕";
+    return "";
+  }
+  async function submit() {
+    const name = document.getElementById("name").value;
+    if (!name) { toast("名前を選んでねー"); return; }
+    const anyMarked = Object.values(STATE).some(s=>s.mark);
+    if (!anyMarked && !confirm("まだ1日も選んでないけど、この内容で提出する？")) return;
+
+    const btn = document.getElementById("sendBtn");
+    btn.disabled = true; btn.textContent = "送信中…";
+    const days = {};
+    Object.keys(STATE).forEach(d=>{ const v=cellValue(STATE[d]); if(v) days[d]=v; });
+
+    const payload = { month: INFO.targetMonth, name, days, note: document.getElementById("note").value.trim() };
+    try {
+      const res = await fetch(GAS_URL, { method:"POST", body: JSON.stringify(payload) });
+      const r = await res.json();
+      if (!r.ok) throw new Error(r.error || "unknown");
+      document.getElementById("app").style.display="none";
+      document.getElementById("thanks").style.display="block";
+      document.getElementById("thanksMsg").textContent =
+        (r.remain > 0) ? ("残り " + r.remain + " 人が未提出だよ") : "これで全員そろったさー！🎊";
+      window.scrollTo(0,0);
+    } catch (e) {
+      btn.disabled=false; btn.textContent="この内容で提出する";
+      toast("送信に失敗… もう一度お願い🙏");
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>
