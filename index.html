@@ -149,7 +149,8 @@
     <div class="prog">日にちをタップ → 出れる/休み や 時間帯を選べるさー</div>
     <div class="quick">
       <button type="button" onclick="fillAll('maru')">ぜんぶ○（終日）</button>
-      <button type="button" onclick="fillWeekend('batu')">土日を✕</button>
+      <button type="button" onclick="fillAll('batu')">ぜんぶ✕</button>
+      <button type="button" onclick="fillWeekend('batu')">土日祝を✕</button>
       <button type="button" onclick="fillAll('')">クリア</button>
     </div>
     <div class="grid" id="grid"></div>
@@ -207,6 +208,9 @@
   const T_FROM = 10, T_TO = 26, STEP = 0.5;
   const WD = ["日","月","火","水","木","金","土"];
   const MARK = { "maru": "○", "sankaku": "△", "batu": "✕", "": "" };
+  // 日本の祝日（毎年ここに足してね）。形式 "YYYY-MM-DD"
+  const HOLIDAYS = ["2026-01-01","2026-01-12","2026-02-11","2026-02-23","2026-03-20","2026-04-29","2026-05-03","2026-05-04","2026-05-05","2026-05-06","2026-07-20","2026-08-11","2026-09-21","2026-09-22","2026-09-23","2026-10-12","2026-11-03","2026-11-23","2027-01-01","2027-01-11"];
+  function isHoliday(y,m,d){ return HOLIDAYS.indexOf(y+"-"+String(m).padStart(2,"0")+"-"+String(d).padStart(2,"0"))!==-1; }
   // STATE[d] = { mark:""|"maru"|"sankaku"|"batu", allday:true, start:"17:00", end:"23:00" }
   let STATE = {};
   let INFO = null;
@@ -271,7 +275,7 @@
       const wd = new Date(y, m-1, d).getDay();
       STATE[d] = { mark:"", allday:true, start:dOpen, end:dClose, userSet:false };
       const c = document.createElement("div");
-      c.className = "cell" + (wd===0?" sun":wd===6?" sat":"");
+      c.className = "cell" + ((wd===0||isHoliday(y,m,d))?" sun":wd===6?" sat":""); // 日曜・祝日は赤
       c.dataset.day = d;
       c.innerHTML = '<span class="d">'+d+'</span><span class="mk"></span><span class="tm"></span>';
       c.onclick = () => openSheet(d);
@@ -352,8 +356,10 @@
   // ---- 一括ボタン ----
   function fillAll(v) {
     Object.keys(STATE).forEach(d=>{
-      if (v==="maru") STATE[d]={mark:"maru",allday:true,start:STATE[d].start,end:STATE[d].end};
-      else STATE[d]={mark:"",allday:true,start:STATE[d].start,end:STATE[d].end};
+      const s = STATE[d];
+      if (v==="maru")      STATE[d]={mark:"maru", allday:true, start:s.start, end:s.end, userSet:s.userSet};
+      else if (v==="batu") STATE[d]={mark:"batu", allday:true, start:s.start, end:s.end, userSet:s.userSet};
+      else                 STATE[d]={mark:"",     allday:true, start:s.start, end:s.end, userSet:s.userSet};
       renderCell(d);
     });
     updateCount();
@@ -362,7 +368,7 @@
     const [y,m]=INFO.targetMonth.split("-").map(Number);
     Object.keys(STATE).forEach(d=>{
       const wd=new Date(y,m-1,+d).getDay();
-      if (wd===0||wd===6){ STATE[d].mark=v; if(v==="maru")STATE[d].allday=true; renderCell(d); }
+      if (wd===0||wd===6||isHoliday(y,m,+d)){ STATE[d].mark=v; if(v==="maru")STATE[d].allday=true; renderCell(d); }
     });
     updateCount();
   }
