@@ -54,7 +54,11 @@
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; font-size: 11px; color: #8a7f76; padding: 6px 3px; border-bottom: 2px solid #eee2d6; white-space: nowrap; }
   td { padding: 5px 3px; border-bottom: 1px solid #f0e9e0; vertical-align: middle; font-size: 14px; }
-  td.num, th.num { text-align: right; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scrollx { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #sum-table th, #sum-table td { white-space: nowrap; }
+  #sum-table tbody tr:active { background: #f4ede4; }
+  #sum-table tfoot td { border-top: 2px solid #eee2d6; border-bottom: none; font-weight: 700; color: #2a2420; }
   .muted { color: #8a7f76; font-size: 12px; }
   .warn { background: #fff6ed; border-left: 4px solid #e08a3c; padding: 9px 11px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; }
   .alert { background: #fdeeea; border-left: 4px solid #c9412f; padding: 9px 11px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; }
@@ -150,6 +154,12 @@
   <div class="card" id="prep-card">
     <h2>今日仕込む串 <span class="pill" id="prep-count">0</span></h2>
     <div id="prep-list" class="muted">—</div>
+  </div>
+
+  <div class="card">
+    <h2>在庫一覧（ロット合計） <span class="pill" id="sum-total"></span></h2>
+    <div class="scrollx"><table id="sum-table"></table></div>
+    <div class="muted" style="margin-top:6px">行をタップすると、その串の明細（ロット別）へ移動するさ。</div>
   </div>
 
   <div class="card">
@@ -534,6 +544,7 @@ function renderStock() {
   renderExpiry(names);
   renderReport(names);
   renderPrep(names);
+  renderSummary(names);
 
   const box = document.getElementById('s-items');
   box.innerHTML = names.length ? names.map((n, i) => itemCardHTML(n, i)).join('')
@@ -563,7 +574,7 @@ function itemCardHTML(n, i) {
   });
   const lotsHTML = lots.length ? lots.map(l => lotRowHTML(i, l)).join('')
     : '<div class="muted" style="padding:4px 0">ロットなし。下の「仕込みを足す」で入れてね</div>';
-  return `<div class="item ${low ? 'low' : ''}">
+  return `<div class="item ${low ? 'low' : ''}" id="item-${i}">
     <div class="item-head">
       <div class="item-name">${esc(n)}${low ? ' <span class="pill red">要仕込み</span>' : ''}</div>
       <div class="item-stock"><span class="big-stock">${fmt(total)}</span>本
@@ -647,6 +658,45 @@ function renderPrep(names) {
         ${p.need != null ? `／目標まであと <b style="color:#b0402a">${fmt(p.need)}本</b>` : '<span class="pill red">要仕込み</span>'}
       </div>`).join('')
     : '<span class="ok" style="display:inline-block">いまは足りてるさ！👍</span>';
+}
+
+/* ロット合計の一覧表 */
+function renderSummary(names) {
+  const tbl = document.getElementById('sum-table');
+  if (!names.length) {
+    document.getElementById('sum-total').textContent = '';
+    tbl.innerHTML = '<tbody><tr><td class="muted">まだ串が無いさ</td></tr></tbody>';
+    return;
+  }
+  let totQ = 0, totV = 0;
+  const rows = names.map((n, i) => {
+    const it = KDB.items[n];
+    const total = stockOf(n), val = stockValue(n);
+    const active = it.lots.filter(l => num(l.qty) > 0);
+    const exps = active.map(l => l.exp).filter(Boolean).sort();
+    const nextExp = exps.length ? exps[0] : '';
+    const ec = expClass(nextExp);
+    const expStyle = ec === 'exp-bad' ? 'color:#b0402a;font-weight:700' : ec === 'exp-soon' ? 'color:#a85a1c;font-weight:600' : '';
+    const low = total <= num(it.min);
+    totQ += total; totV += val;
+    return `<tr onclick="focusItem(${i})" style="cursor:pointer">
+      <td>${esc(n)}${low ? ' <span class="pill red">要</span>' : ''}</td>
+      <td class="num"><b>${fmt(total)}</b></td>
+      <td class="num">${active.length}</td>
+      <td class="num" style="${expStyle}">${nextExp ? mdShort(nextExp) : '—'}</td>
+      <td class="num">${num(it.cost) ? yen(it.cost) : '—'}</td>
+      <td class="num">${val ? yen(val) : '—'}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('sum-total').textContent = '合計 ' + fmt(totQ) + '本';
+  tbl.innerHTML =
+    `<thead><tr><th>串</th><th class="num">合計</th><th class="num">ロット</th><th class="num">最短期限</th><th class="num">原価/本</th><th class="num">在庫額</th></tr></thead>
+     <tbody>${rows}</tbody>
+     <tfoot><tr><td>合計</td><td class="num">${fmt(totQ)}</td><td></td><td></td><td></td><td class="num">${yen(totV)}</td></tr></tfoot>`;
+}
+function focusItem(i) {
+  const el = document.getElementById('item-' + i);
+  if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.style.transition = 'box-shadow .2s'; el.style.boxShadow = '0 0 0 2px #c9622f'; setTimeout(() => el.style.boxShadow = '', 900); }
 }
 
 /* ---- 串カードの編集 ---- */
