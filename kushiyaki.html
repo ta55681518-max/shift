@@ -90,7 +90,7 @@
   .lot:last-child { border-bottom: none; }
   .lot .lg { display: inline-flex; align-items: center; gap: 4px; color: #6a5f56; }
   .lot input[type=date] { width: 140px; padding: 6px 7px; font-size: 13px; }
-  .lot input.q { width: 60px; text-align: right; padding: 6px 7px; font-size: 14px; font-weight: 700; }
+  .lot input.q, .lot select.q { width: 68px; text-align: right; padding: 6px 7px; font-size: 14px; font-weight: 700; }
   .lot.exp-bad { background: #fdeeea; border-radius: 7px; padding: 6px 6px; }
   .lot.exp-soon { background: #fff6ed; border-radius: 7px; padding: 6px 6px; }
   .lot .sp { flex: 1 1 auto; }
@@ -163,7 +163,7 @@
     <h2>仕込みを足す（新しいロット）</h2>
     <div class="row gap">
       <div style="flex:2"><label>串</label><select id="prep-ing"></select></div>
-      <div><label>仕込んだ本数</label><input id="prep-qty" type="number" step="1" inputmode="numeric"></div>
+      <div><label>仕込んだ本数</label><select id="prep-qty"></select></div>
     </div>
     <div class="row gap">
       <div><label>仕込み日</label><input id="prep-made" type="date"></div>
@@ -177,7 +177,7 @@
     <div class="muted gap">落とした・売れ残って捨てた・焦がした などの廃棄ぶんを在庫から引くさ（期限が近いロットから引く）。原価も記録するよ。</div>
     <div class="row gap">
       <div style="flex:2"><label>串</label><select id="loss-ing"></select></div>
-      <div><label>ロス本数</label><input id="loss-qty" type="number" step="1" inputmode="numeric"></div>
+      <div><label>ロス本数</label><select id="loss-qty"></select></div>
     </div>
     <label>理由（任意）</label>
     <input id="loss-reason" class="gap" placeholder="例）売れ残り廃棄 / 落とした / 焦げ">
@@ -193,7 +193,7 @@
     </div>
     <div class="row gap">
       <div><label>日持ち(日)</label><input id="add-keep" type="number" step="1" inputmode="numeric" placeholder="例）3"></div>
-      <div><label>今ある本数</label><input id="add-qty" type="number" step="1" value="0" inputmode="numeric"></div>
+      <div><label>今ある本数</label><select id="add-qty"></select></div>
     </div>
     <button class="act ghost" onclick="addItemManual()">追加する</button>
   </div>
@@ -419,6 +419,21 @@ function addDays(d, n) { if (!d) return ''; const t = new Date(d + 'T00:00:00');
 function mdShort(d) { if (!d) return '—'; const p = d.split('-'); return p.length === 3 ? (+p[1]) + '/' + (+p[2]) : d; }
 function isKushiName(n) { return /串/.test(n); }
 
+/* 本数プルダウン用のoption。selが範囲外でも必ず含める。blank=先頭に空選択 */
+function numOpts(from, to, sel, blank) {
+  sel = (sel === '' || sel == null) ? '' : num(sel);
+  let hi = to; if (sel !== '' && sel > hi) hi = sel;
+  let s = blank ? '<option value="">―</option>' : '';
+  for (let v = from; v <= hi; v++) s += `<option value="${v}"${v === sel ? ' selected' : ''}>${v}</option>`;
+  return s;
+}
+/* 固定レンジの本数プルダウンを用意（起動時に1回） */
+function fillQtySelects() {
+  document.getElementById('prep-qty').innerHTML = numOpts(1, 100, '', true);
+  document.getElementById('loss-qty').innerHTML = numOpts(1, 100, '', true);
+  document.getElementById('add-qty').innerHTML = numOpts(0, 100, 0, false);
+}
+
 /* 消費期限の状態：'' / 'exp-soon' / 'exp-bad' */
 function expClass(exp) {
   if (!exp) return '';
@@ -571,7 +586,7 @@ function lotRowHTML(i, l) {
   return `<div class="lot ${cls}">
     <span class="lg">仕込 <input type="date" value="${l.made || ''}" onchange="setLot(${i},${l.id},'made',this.value)"></span>
     <span class="lg">期限 <input type="date" value="${l.exp || ''}" onchange="setLot(${i},${l.id},'exp',this.value)"></span>
-    <span class="lg">残 <input class="q" type="number" step="1" inputmode="numeric" value="${num(l.qty)}" onchange="setLot(${i},${l.id},'qty',this.value)">本</span>
+    <span class="lg">残 <select class="q" onchange="setLot(${i},${l.id},'qty',this.value)">${numOpts(0, 150, num(l.qty))}</select>本</span>
     ${expLabel(l.exp)}
     <span class="sp"></span>
     <button class="mini warnbtn" onclick="discardLot(${i},${l.id})">廃棄</button>
@@ -929,6 +944,7 @@ function wipe() {
 /* ========== 起動 ========== */
 function redrawAll() { renderStock(); }
 normalizeItems();
+fillQtySelects();
 document.getElementById('prep-made').value = today();
 document.getElementById('add-qty').value = 0;
 document.getElementById('add-cost').value = 0;
