@@ -203,6 +203,22 @@
   </div>
 
   <div class="card">
+    <h2>zaikoへ書き戻す（串在庫 → zaiko）</h2>
+    <div class="muted gap">
+      串の残り本数を、zaikoの「在庫」タブにも <b>本数（本）</b> で反映するさ。
+      仕込み・棚卸・出数反映で本数が変わるたびに自動で書き戻すよ。<br>
+      ※<b>同じ端末でzaikoを開いたことがあるとき</b>だけ効くさ（別端末の控えには書き戻せない）。
+      zaikoでは材料（例：豚バラ）とは別に、串（例：豚バラ串）が本数で並ぶよ。
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <input type="checkbox" id="sync-toggle" onchange="toggleSync(this)" style="width:auto;flex:0 0 auto">
+      <label for="sync-toggle" style="margin:0;font-size:14px;color:#2a2420">zaikoにも自動で反映する（同じ端末のとき）</label>
+    </div>
+    <div id="sync-status" class="muted gap"></div>
+    <button class="act" onclick="syncNow()">今すぐzaikoに反映</button>
+  </div>
+
+  <div class="card">
     <h2>どれを「串」として管理する？</h2>
     <div class="muted gap">zaikoの商品から、串焼きだけ選んでね。チェックした串がこのアプリの在庫表に出るさ。</div>
     <div class="row gap">
@@ -257,7 +273,7 @@ const ZKEY = 'kemuri_zaiko_v1';       // zaikoの保存キー（読むだけ）
 const SNAP = 'kemuri_zaiko_snapshot'; // zaiko控え（このアプリが持つ）
 
 /* items[name] = { stock:本数, min:最低ライン, par:目標(仕込み到達点), per:1品あたり本数 } */
-function blank() { return { items: {}, applied: {}, log: [] }; }
+function blank() { return { items: {}, applied: {}, log: [], syncZaiko: true }; }
 let KDB = loadK();
 let VIEW = [];        // 在庫表の表示順（名前配列）… inlineハンドラのindex用
 let PICK = [];        // 設定タブの商品チェックリスト表示順
@@ -278,6 +294,50 @@ function readZaiko() {
   return null;
 }
 function zaikoIsLive() { try { return !!JSON.parse(localStorage.getItem(ZKEY)); } catch (e) { return false; } }
+/* 書き戻し用：同じ端末の“本物のzaiko”だけを取る（控えには書き戻さない） */
+function liveZaiko() { try { const z = JSON.parse(localStorage.getItem(ZKEY)); return (z && typeof z === 'object') ? z : null; } catch (e) { return null; } }
+
+/* 串在庫を zaiko の「在庫（ingredients）」に本数で書き戻す。
+   ・同じ端末に本物のzaikoがあるときだけ有効（controlは KDB.syncZaiko、force=手動）
+   ・zaikoの材料（例：豚バラ）とは別に、串（例：豚バラ串）を単位「本」で並べる
+   ・本数を入れた串（または既にzaikoに在る串）だけ反映＝0本の空登録は作らない */
+function syncToZaiko(reason, force) {
+  if (!force && !KDB.syncZaiko) return false;
+  const z = liveZaiko();
+  if (!z) return false;               // 同じ端末に本物のzaikoが無い → 何もしない（控えは書き戻し対象外）
+  z.ingredients = z.ingredients || [];
+  let n = 0;
+  Object.keys(KDB.items).forEach(name => {
+    const it = KDB.items[name];
+    let g = z.ingredients.find(x => x.name === name);
+    const meaningful = num(it.stock) > 0 || num(it.min) > 0 || g;
+    if (!meaningful) return;
+    if (!g) { g = { name, unit: '本', qty: 0, min: 0 }; z.ingredients.push(g); }
+    if (!g.unit) g.unit = '本';
+    g.qty = num(it.stock);
+    if (num(it.min) > 0) g.min = num(it.min);
+    n++;
+  });
+  if (!n) return false;
+  z.log = z.log || [];
+  z.log.unshift({ at: nowStr(), type: '串反映', text: `串焼き在庫アプリから ${n}種を反映${reason ? '（' + reason + '）' : ''}` });
+  try { localStorage.setItem(ZKEY, JSON.stringify(z)); return true; }
+  catch (e) { toast('zaikoへの反映に失敗したさ…'); return false; }
+}
+/* 設定タブの「今すぐ反映」ボタン */
+function syncNow() {
+  if (!zaikoIsLive()) { toast('同じ端末のzaikoが見つからないさ。\nこの端末でzaikoを一度ひらいてね\n（別端末の控えには書き戻せない）'); return; }
+  const ok = syncToZaiko('手動反映', true);
+  toast(ok ? 'zaikoに反映したさ！\nzaikoの「在庫」タブに串が本数で出るよ' : '反映するものが無かったさ（先に本数を入れてね）');
+  renderSetup(); renderLinkBanner();
+}
+/* 自動反映のON/OFF */
+function toggleSync(el) {
+  KDB.syncZaiko = el.checked; save();
+  if (el.checked) syncToZaiko('自動反映ON');
+  renderSetup(); renderLinkBanner();
+  toast(el.checked ? 'zaikoへの自動反映をONにしたさ' : '自動反映をOFFにしたさ');
+}
 
 /* zaikoの全商品名（レシピ＋メニュー＋出数に出てくる名前） */
 function zProducts() {
@@ -338,7 +398,8 @@ function renderLinkBanner() {
   const days = Object.keys(zDays()).sort();
   const latest = days.length ? days[days.length - 1] : 'なし';
   const src = zaikoIsLive() ? '同じ端末のzaiko' : '控え（取り込みぶん）';
-  el.innerHTML = `<div class="ok">zaikoと連携中（${src}）／串の登録 ${Object.keys(KDB.items).length}種・最新の出数 ${esc(latest)}</div>`;
+  const sync = KDB.syncZaiko ? (zaikoIsLive() ? '／zaikoへ自動反映 <b>ON</b>' : '／自動反映ON（この端末では書き戻し不可）') : '';
+  el.innerHTML = `<div class="ok">zaikoと連携中（${src}）／串の登録 ${Object.keys(KDB.items).length}種・最新の出数 ${esc(latest)}${sync}</div>`;
 }
 
 function renderStock() {
@@ -400,11 +461,11 @@ function setStock(i, v) {
   const before = num(KDB.items[n].stock), after = num(v);
   KDB.items[n].stock = after;
   KDB.log.unshift({ at: nowStr(), type: '棚卸', text: `${n} 残りを ${fmt(before)}→${fmt(after)}本 に修正` });
-  save(); renderStock();
+  save(); syncToZaiko('棚卸'); renderStock();
 }
 function setField(i, f, v) {
   const n = VIEW[i]; if (!KDB.items[n]) return;
-  KDB.items[n][f] = num(v); save(); renderStock();
+  KDB.items[n][f] = num(v); save(); syncToZaiko('最低/目標の更新'); renderStock();
 }
 function delItem(i) {
   const n = VIEW[i];
@@ -418,7 +479,7 @@ function addPrep() {
   if (!n || !KDB.items[n] || !q) { toast('串と本数を確認してね'); return; }
   KDB.items[n].stock = num(KDB.items[n].stock) + q;
   KDB.log.unshift({ at: nowStr(), type: '仕込み', text: `${n} ＋${fmt(q)}本` });
-  save();
+  save(); syncToZaiko('仕込み');
   document.getElementById('prep-qty').value = '';
   renderStock();
   toast(n + ' に ' + fmt(q) + '本 足したさ');
@@ -429,7 +490,7 @@ function addItemManual() {
   if (KDB.items[name]) { toast('もうあるさ'); return; }
   KDB.items[name] = { stock: num(document.getElementById('add-qty').value), min: 0, par: 0, per: 1 };
   KDB.log.unshift({ at: nowStr(), type: '追加', text: `${name} を手で追加` });
-  save();
+  save(); syncToZaiko('串を追加');
   document.getElementById('add-name').value = '';
   document.getElementById('add-qty').value = 0;
   renderStock();
@@ -509,7 +570,7 @@ function applyReflect() {
   if (KDB.applied[d]) { toast('その日はもう反映ずみさ'); return; }
   if (!Object.keys(soldOn(d)).length) { toast('この日は引くものが無いさ'); return; }
   ask(d + ' の出数を在庫から引くさ？', () => {
-    doReflect(d); save(); renderReflect(); toast(d + ' を反映したさ');
+    doReflect(d); save(); syncToZaiko('出数反映'); renderReflect(); toast(d + ' を反映したさ');
   });
 }
 function applyAllUnreflected() {
@@ -517,7 +578,7 @@ function applyAllUnreflected() {
   if (!days.length) { toast('未反映の日は無いさ'); return; }
   ask(`未反映の ${days.length}日ぶん（${days[0]}〜${days[days.length - 1]}）をまとめて引くさ？`, () => {
     let n = 0; days.forEach(d => { if (doReflect(d)) n++; });
-    save(); renderReflect(); toast(n + '日ぶん反映したさ');
+    save(); syncToZaiko('出数反映'); renderReflect(); toast(n + '日ぶん反映したさ');
   });
 }
 function renderApplied() {
@@ -540,7 +601,7 @@ function undoReflect(d) {
     Object.keys(rec.changes).forEach(n => { if (KDB.items[n]) KDB.items[n].stock = num(KDB.items[n].stock) + rec.changes[n]; });
     delete KDB.applied[d];
     KDB.log.unshift({ at: nowStr(), type: '反映取消', text: `${d} の反映を取り消し（在庫を戻した）` });
-    save(); renderReflect(); toast('取り消したさ');
+    save(); syncToZaiko('反映取消'); renderReflect(); toast('取り消したさ');
   });
 }
 
@@ -554,6 +615,13 @@ function renderSetup() {
     const prods = zProducts().length, days = Object.keys(zDays()).length;
     st.innerHTML = `<span class="ok" style="display:block">読み込めたさ（${zaikoIsLive() ? '同じ端末のzaiko' : '控え'}）／商品 ${prods}件・出数の記録 ${days}日</span>`;
   }
+  // 書き戻し設定の表示
+  const tg = document.getElementById('sync-toggle');
+  if (tg) tg.checked = !!KDB.syncZaiko;
+  const ss = document.getElementById('sync-status');
+  if (ss) ss.innerHTML = zaikoIsLive()
+    ? `この端末のzaikoに書き戻せるさ（自動反映：<b>${KDB.syncZaiko ? 'ON' : 'OFF'}</b>）`
+    : '※いまは同じ端末のzaikoが見つからないさ。zaikoをこの端末で一度ひらいてね';
   // 串の選択リスト
   const prods = zProducts();
   PICK = prods;
@@ -608,7 +676,7 @@ function importKDB() {
   try { d = JSON.parse(document.getElementById('io-box').value); }
   catch (e) { toast('中身が読めなかったさ'); return; }
   ask('今の串在庫を、貼り付けた内容で上書きするさ？', () => {
-    KDB = Object.assign(blank(), d); save(); redrawAll(); toast('読み込んださ！');
+    KDB = Object.assign(blank(), d); save(); syncToZaiko('データ読み込み'); redrawAll(); toast('読み込んださ！');
   });
 }
 function wipe() {
