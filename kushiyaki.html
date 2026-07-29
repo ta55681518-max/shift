@@ -111,6 +111,13 @@
   }
   #ask-box { background: #fff; border-radius: 14px; padding: 18px; max-width: 340px; width: 100%; }
   #ask-msg { font-size: 15px; margin-bottom: 15px; white-space: pre-wrap; }
+  #dsc-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 100;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  #dsc-bg.show { display: flex; }
+  #dsc-box { background: #fff; border-radius: 14px; padding: 18px; max-width: 340px; width: 100%; }
+  #dsc-title { font-size: 15px; }
 </style>
 </head>
 <body>
@@ -122,6 +129,18 @@
   <div class="row">
     <button class="act" onclick="askYes()">はい</button>
     <button class="act ghost" onclick="askNo()">やめる</button>
+  </div>
+</div></div>
+
+<div id="dsc-bg"><div id="dsc-box">
+  <div id="dsc-title" class="gap"></div>
+  <label>廃棄する本数</label>
+  <select id="dsc-qty" class="gap"></select>
+  <label>理由（任意）</label>
+  <input id="dsc-reason" class="gap" placeholder="例）期限切れ / 焦げ / 落とした">
+  <div class="row">
+    <button class="act" style="background:#b0402a" onclick="doDiscard()">廃棄する</button>
+    <button class="act ghost" onclick="closeDsc()">やめる</button>
   </div>
 </div></div>
 
@@ -185,13 +204,16 @@
 
   <div class="card">
     <h2>ロス（廃棄）を記録 <span class="muted">在庫からマイナス</span></h2>
-    <div class="muted gap">落とした・売れ残って捨てた・焦がした などの廃棄ぶんを在庫から引くさ（期限が近いロットから引く）。原価も記録するよ。</div>
+    <div class="muted gap">落とした・売れ残り・焦げ・期限切れ などの廃棄ぶんを在庫から引くさ。原価も記録するよ。<br>
+      「対象」で <b>まとめて（期限が近い順）</b> か <b>特定のロット</b> を選べる。ロット丸ごとなら、上の在庫の各ロットの「廃棄」ボタンでも一発さ。</div>
     <div class="row gap">
-      <div style="flex:2"><label>串</label><select id="loss-ing"></select></div>
-      <div><label>ロス本数</label><select id="loss-qty"></select></div>
+      <div style="flex:2"><label>串</label><select id="loss-ing" onchange="fillLossLots()"></select></div>
+      <div style="flex:2"><label>対象（ロット）</label><select id="loss-lot" onchange="fillLossQty()"></select></div>
     </div>
-    <label>理由（任意）</label>
-    <input id="loss-reason" class="gap" placeholder="例）売れ残り廃棄 / 落とした / 焦げ">
+    <div class="row gap">
+      <div><label>廃棄する本数</label><select id="loss-qty"></select></div>
+      <div style="flex:2"><label>理由（任意）</label><input id="loss-reason" placeholder="例）売れ残り / 落とした / 焦げ / 期限切れ"></div>
+    </div>
     <button class="act" style="background:#b0402a" onclick="addLoss()">ロスを記録して引く</button>
   </div>
 
@@ -246,6 +268,33 @@
 
 <!-- ============ 串の設定・連携 ============ -->
 <div id="p-setup" class="hide">
+  <div class="card">
+    <h2>スタッフと共有（Googleシート） <span class="pill" id="share-pill">OFF</span></h2>
+    <div id="share-status" class="muted gap"></div>
+    <div class="muted gap">全員が同じ「共有URL」を入れると、串の在庫を<b>みんなで共有</b>できるさ。変更は自動で同期されるよ。</div>
+    <label>共有URL（GASウェブアプリのURL）</label>
+    <input id="share-url" class="gap" placeholder="https://script.google.com/macros/s/……/exec">
+    <div class="row gap">
+      <button class="act" onclick="saveShareUrl()">保存して接続</button>
+      <button class="act sub2" onclick="syncNowShare()">今すぐ同期</button>
+    </div>
+    <button class="act ghost gap" onclick="stopShare()">この端末の共有をやめる</button>
+    <details>
+      <summary>はじめての人向け：共有の作り方（1回だけ）</summary>
+      <div class="muted" style="margin-top:8px;line-height:1.7">
+        <b>①</b> Googleスプレッドシートを新規作成（名前は何でもOK）<br>
+        <b>②</b> メニューの <b>拡張機能 → Apps Script</b> を開く<br>
+        <b>③</b> 最初のコードを消して、下のコードを<b>全部貼り付けて保存</b>（💾）<br>
+        <b>④</b> 右上の <b>デプロイ → 新しいデプロイ</b>／種類＝<b>ウェブアプリ</b>／アクセス＝<b>全員</b>／デプロイ<br>
+        <b>⑤</b> 出てきた <b>/exec で終わるURL</b> を上の「共有URL」に貼って「保存して接続」<br>
+        <b>⑥</b> スタッフの端末でも<b>同じURL</b>を貼れば、全員で共有完了さ
+      </div>
+      <textarea id="gas-code" readonly style="min-height:200px;margin-top:8px" onclick="this.select()"></textarea>
+      <button class="act ghost" style="margin-top:8px" onclick="copyGas()">GASコードをコピー</button>
+      <div class="muted" style="margin-top:6px">※同時に2人が同じ串を編集すると、あとから保存したほうが有効さ（基本は問題なし）。</div>
+    </details>
+  </div>
+
   <div class="card">
     <h2>zaikoとの連携</h2>
     <div id="z-status" class="muted gap"></div>
@@ -339,8 +388,118 @@ function loadK() {
 function save() {
   try { localStorage.setItem(KKEY, JSON.stringify(KDB)); }
   catch (e) { toast('保存できんかったさ…'); }
+  schedulePush();
 }
 function nextSeq() { return KDB.seq++; }
+
+/* ===== スタッフ共有（Googleシート＋GAS） =====
+   全端末が同じ共有URL（GASウェブアプリ）を見て、同じデータを読み書きする。
+   変更は自動で保存（push）、他端末の更新は定期＆フォーカス時に取得（pull）。
+   同時編集はあとから保存した内容が有効（last-write-wins）。 */
+const SHAREKEY = 'kemuri_kushiyaki_share';
+let SHARE = { url: localStorage.getItem(SHAREKEY) || '', rev: 0, pushing: false, dirty: false, timer: null, lastSync: 0, err: '', loop: false };
+let READY = false;   // 起動時の初期化中はpushしない
+let PULLING = false;
+
+function shareOn() { return !!SHARE.url; }
+function schedulePush() {
+  if (!READY || !shareOn()) return;
+  SHARE.dirty = true; updateShareStatus();
+  clearTimeout(SHARE.timer);
+  SHARE.timer = setTimeout(pushShared, 1200);
+}
+async function pushShared() {
+  if (!shareOn()) return;
+  SHARE.pushing = true; updateShareStatus();
+  try {
+    const res = await fetch(SHARE.url, { method: 'POST', body: JSON.stringify({ data: KDB, baseRev: SHARE.rev }) });
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || '保存に失敗');
+    SHARE.rev = r.rev; SHARE.dirty = false; SHARE.err = ''; SHARE.lastSync = Date.now();
+  } catch (e) { SHARE.err = String(e.message || e); }
+  SHARE.pushing = false; updateShareStatus();
+}
+async function pullShared(opts) {
+  opts = opts || {};
+  if (!shareOn()) return;
+  if (!opts.force && (SHARE.pushing || SHARE.dirty)) return;   // ローカル未保存を上書きしない
+  if (PULLING) return; PULLING = true;
+  try {
+    const res = await fetch(SHARE.url);
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || '読み込みに失敗');
+    if (r.data && (opts.force || r.rev !== SHARE.rev)) {
+      KDB = Object.assign(blank(), r.data);
+      normalizeItems();
+      localStorage.setItem(KKEY, JSON.stringify(KDB));   // pushを起こさず直接保存
+      SHARE.rev = (r.rev != null ? r.rev : SHARE.rev);
+      redrawAll();
+      if (!document.getElementById('p-reflect').classList.contains('hide')) renderReflect();
+      if (!document.getElementById('p-setup').classList.contains('hide')) renderSetup();
+    } else if (r.data == null && opts.force) {
+      pushShared();   // 共有先が空 → この端末の内容を上げる
+    }
+    if (r.rev != null) SHARE.rev = r.rev;
+    SHARE.err = ''; SHARE.lastSync = Date.now();
+  } catch (e) { SHARE.err = String(e.message || e); }
+  PULLING = false; updateShareStatus();
+}
+function startShareLoop() {
+  if (SHARE.loop) return;
+  SHARE.loop = true;
+  setInterval(() => { if (shareOn()) pullShared(); }, 20000);
+  window.addEventListener('focus', () => { if (shareOn()) pullShared(); });
+}
+function saveShareUrl() {
+  const url = document.getElementById('share-url').value.trim();
+  if (url && url.indexOf('http') !== 0) { toast('URLは https://… の形で貼ってね'); return; }
+  if (!url) { stopShare(); return; }
+  SHARE.url = url; localStorage.setItem(SHAREKEY, url);
+  fetch(url).then(r => r.json()).then(r => {
+    startShareLoop();
+    const hasData = r && r.ok && r.data && Object.keys(r.data.items || {}).length;
+    if (hasData) {
+      ask('共有先にすでにデータがあるさ。\n共有先の内容を読み込む？\n（「はい」＝共有を読み込む／「やめる」＝この端末の内容を共有先に上げる）',
+        () => { SHARE.rev = r.rev || 0; pullShared({ force: true }); toast('共有につないで読み込んださ'); },
+        () => { SHARE.rev = r.rev || 0; pushShared(); toast('共有につないで、この端末の内容を上げたさ'); });
+    } else {
+      SHARE.rev = (r && r.rev) || 0; pushShared(); toast('共有につないださ（この端末の内容を上げた）');
+    }
+    renderSetup(); renderLinkBanner();
+  }).catch(e => { SHARE.err = String(e); toast('共有先につながらないさ…URLを確認してね'); renderSetup(); });
+}
+function stopShare() {
+  SHARE.url = ''; localStorage.removeItem(SHAREKEY); SHARE.dirty = false; clearTimeout(SHARE.timer);
+  updateShareStatus(); renderSetup(); renderLinkBanner(); toast('この端末の共有をOFFにしたさ');
+}
+async function syncNowShare() {
+  if (!shareOn()) { toast('先に共有URLを保存してね'); return; }
+  clearTimeout(SHARE.timer);
+  await pushShared();
+  await pullShared();
+  toast('同期したさ（最終同期 ' + shareTime(SHARE.lastSync) + '）');
+}
+function shareTime(ms) { if (!ms) return '—'; const d = new Date(ms); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
+function updateShareStatus() {
+  const el = document.getElementById('share-status'); if (!el) return;
+  const pill = document.getElementById('share-pill');
+  if (!shareOn()) { el.innerHTML = '<span class="muted">共有OFF（この端末だけで保存中）</span>'; if (pill) pill.textContent = 'OFF'; return; }
+  const state = SHARE.err ? `<span style="color:#b0402a">エラー：${esc(SHARE.err)}</span>`
+    : SHARE.pushing ? '保存中…' : SHARE.dirty ? '未保存の変更あり…' : '同期OK';
+  el.innerHTML = `<span class="${SHARE.err ? '' : 'ok'}" style="display:block">👥 共有中（${state}）／最終同期 ${shareTime(SHARE.lastSync)}</span>`;
+  if (pill) pill.textContent = SHARE.err ? '!' : 'ON';
+}
+
+/* GASに貼り付けるコード（コピー用） */
+const GAS_SRC = `const SHEET_NAME='kushiyaki';
+function sheet_(){var ss=SpreadsheetApp.getActiveSpreadsheet();var sh=ss.getSheetByName(SHEET_NAME);if(!sh)sh=ss.insertSheet(SHEET_NAME);return sh;}
+function doGet(){var sh=sheet_();var data=sh.getRange('A1').getValue();var rev=Number(sh.getRange('B1').getValue())||0;return out_({ok:true,data:data?JSON.parse(data):null,rev:rev});}
+function doPost(e){var lock=LockService.getScriptLock();lock.waitLock(20000);try{var body=JSON.parse(e.postData.contents||'{}');var sh=sheet_();var rev=(Number(sh.getRange('B1').getValue())||0)+1;sh.getRange('A1').setValue(JSON.stringify(body.data||{}));sh.getRange('B1').setValue(rev);return out_({ok:true,rev:rev});}catch(err){return out_({ok:false,error:String(err)});}finally{lock.releaseLock();}}
+function out_(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);}`;
+function copyGas() {
+  const t = document.getElementById('gas-code'); t.select();
+  navigator.clipboard.writeText(t.value).then(() => toast('GASコードをコピーしたさ'), () => { try { document.execCommand('copy'); toast('コピーしたさ'); } catch (e) {} });
+}
 
 /* 旧データ（stockスカラー）→ ロット構造へ移行、欠けたフィールドを補う */
 function normalizeItems() {
@@ -469,15 +628,16 @@ function toast(msg) {
   t.textContent = msg; t.style.display = 'block';
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', 3400);
 }
-let askCb = null;
-function ask(msg, cb) {
-  askCb = cb;
+let askCb = null, askCbNo = null;
+function ask(msg, cb, cbNo) {
+  askCb = cb; askCbNo = cbNo || null;
   document.getElementById('ask-msg').textContent = msg;
   document.getElementById('ask-input').classList.add('hide');
   document.getElementById('ask-bg').style.display = 'flex';
 }
-function askYes() { const c = askCb; askNo(); if (c) c(); }
-function askNo() { document.getElementById('ask-bg').style.display = 'none'; askCb = null; }
+function closeAsk() { document.getElementById('ask-bg').style.display = 'none'; askCb = null; askCbNo = null; }
+function askYes() { const c = askCb; closeAsk(); if (c) c(); }
+function askNo() { const c = askCbNo; closeAsk(); if (c) c(); }
 
 /* ========== 在庫の計算（ロット） ========== */
 function stockOf(n) { const it = KDB.items[n]; return it ? it.lots.reduce((a, l) => a + num(l.qty), 0) : 0; }
@@ -505,6 +665,16 @@ function consume(n, qty) {
   });
   it.lots = it.lots.filter(l => num(l.qty) > 0);
   return { taken: num(qty) - need, slices, short: need };
+}
+/* 指定した1ロットから qty本 消費（ロット指定の廃棄用） */
+function consumeFromLot(n, lotId, qty) {
+  const it = KDB.items[n]; const l = it.lots.find(x => x.id === lotId);
+  if (!l) return { taken: 0, short: num(qty), slices: [] };
+  const take = Math.min(num(l.qty), num(qty));
+  l.qty = num(l.qty) - take;
+  const slices = [{ id: l.id, made: l.made, exp: l.exp, take }];
+  it.lots = it.lots.filter(x => num(x.qty) > 0);
+  return { taken: take, short: num(qty) - take, slices };
 }
 /* slices を元に戻す（反映取消） */
 function restore(n, slices) {
@@ -539,7 +709,8 @@ function renderLinkBanner() {
   const latest = days.length ? days[days.length - 1] : 'なし';
   const src = zaikoIsLive() ? '同じ端末のzaiko' : '控え（取り込みぶん）';
   const sync = KDB.syncZaiko ? (zaikoIsLive() ? '／zaikoへ自動反映 <b>ON</b>' : '／自動反映ON（この端末では書き戻し不可）') : '';
-  el.innerHTML = `<div class="ok">zaikoと連携中（${src}）／串の登録 ${Object.keys(KDB.items).length}種・最新の出数 ${esc(latest)}${sync}</div>`;
+  const shr = shareOn() ? `／👥スタッフ共有 <b>ON</b>` : '';
+  el.innerHTML = `<div class="ok">zaikoと連携中（${src}）／串の登録 ${Object.keys(KDB.items).length}種・最新の出数 ${esc(latest)}${sync}${shr}</div>`;
 }
 
 function renderStock() {
@@ -562,7 +733,11 @@ function renderStock() {
 
   const opts = names.length ? names.map(n => `<option>${esc(n)}</option>`).join('') : '<option value="">（串が無いさ）</option>';
   document.getElementById('prep-ing').innerHTML = opts;
-  document.getElementById('loss-ing').innerHTML = opts;
+  const lossSel = document.getElementById('loss-ing');
+  const lossCur = lossSel.value;
+  lossSel.innerHTML = opts;
+  if (lossCur && names.indexOf(lossCur) !== -1) lossSel.value = lossCur;
+  fillLossLots();
 
   const lg = document.getElementById('s-log');
   lg.innerHTML = KDB.log.length ? KDB.log.slice(0, 40).map(l =>
@@ -745,17 +920,36 @@ function delLot(i, id) {
     save(); syncToZaiko('ロット削除'); renderStock(); toast('消したさ');
   });
 }
+// ロットの「廃棄」ボタン → 何本捨てるかをその場で選ぶ（初期値＝ロット全部）
+let dscTarget = null;
 function discardLot(i, id) {
   const n = VIEW[i]; const it = KDB.items[n]; if (!it) return;
   const l = it.lots.find(x => x.id === id); if (!l) return;
   const q = num(l.qty); if (!q) { toast('このロットは0本さ'); return; }
-  ask(`${n} を ${q}本 廃棄する（ロス記録）さ？`, () => {
-    l.qty = 0; it.lots = it.lots.filter(x => num(x.qty) > 0);
-    const cost = costOf(n) * q;
-    KDB.losses.unshift({ at: nowStr(), d: today(), name: n, qty: q, reason: '廃棄（期限切れ等）', cost });
-    KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(q)}本 廃棄（期限切れ等）${cost ? ' / 原価' + yen(cost) : ''}` });
-    save(); syncToZaiko('廃棄'); renderStock(); toast(`${n} を${fmt(q)}本 廃棄で記録したさ`);
-  });
+  dscTarget = { name: n, id };
+  document.getElementById('dsc-title').innerHTML =
+    `<b>${esc(n)}</b> を廃棄<br><span class="muted">仕込${mdShort(l.made)}・期限${mdShort(l.exp)}・残${fmt(q)}本</span>`;
+  document.getElementById('dsc-qty').innerHTML = numOpts(1, q, q, false);  // 初期値＝全部
+  document.getElementById('dsc-reason').value = '';
+  document.getElementById('dsc-bg').classList.add('show');
+}
+function closeDsc() { document.getElementById('dsc-bg').classList.remove('show'); dscTarget = null; }
+function doDiscard() {
+  if (!dscTarget) return;
+  const { name, id } = dscTarget;
+  const it = KDB.items[name]; if (!it) { closeDsc(); return; }
+  const l = it.lots.find(x => x.id === id);
+  const q = num(document.getElementById('dsc-qty').value);
+  if (!q) { toast('本数を選んでね'); return; }
+  const reason = document.getElementById('dsc-reason').value.trim() || '廃棄';
+  const lotLabel = l ? `（ロット 仕込${mdShort(l.made)}/期限${mdShort(l.exp)}）` : '';
+  const r = consumeFromLot(name, id, q);
+  const cost = costOf(name) * r.taken;
+  KDB.losses.unshift({ at: nowStr(), d: today(), name, qty: r.taken, reason, cost });
+  KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${name} −${fmt(r.taken)}本 廃棄（${reason}）${lotLabel}${cost ? ' / 原価' + yen(cost) : ''}` });
+  save(); syncToZaiko('廃棄');
+  closeDsc(); renderStock();
+  toast(`${name} を${fmt(r.taken)}本 廃棄したさ${cost ? '（' + yen(cost) + '）' : ''}`);
 }
 function delItem(i) {
   const n = VIEW[i];
@@ -782,18 +976,45 @@ function addPrep() {
 }
 
 /* ---- ロス（廃棄） ---- */
+// 「対象（ロット）」プルダウン：まとめて or 各ロット
+function fillLossLots() {
+  const n = document.getElementById('loss-ing').value;
+  const sel = document.getElementById('loss-lot');
+  let o = '<option value="">まとめて（期限が近い順）</option>';
+  if (n && KDB.items[n]) {
+    const lots = KDB.items[n].lots.filter(l => num(l.qty) > 0).slice()
+      .sort((a, b) => { const ae = a.exp || '9999-12-31', be = b.exp || '9999-12-31'; return ae < be ? -1 : ae > be ? 1 : 0; });
+    lots.forEach(l => { o += `<option value="${l.id}">仕込${mdShort(l.made)}・期限${mdShort(l.exp)}・残${fmt(num(l.qty))}本</option>`; });
+  }
+  sel.innerHTML = o;
+  fillLossQty();
+}
+// 「廃棄する本数」プルダウン：対象の残り本数を上限にする
+function fillLossQty() {
+  const n = document.getElementById('loss-ing').value;
+  const lotId = document.getElementById('loss-lot').value;
+  let max = 0;
+  if (n && KDB.items[n]) {
+    if (lotId) { const l = KDB.items[n].lots.find(x => x.id === +lotId); max = l ? num(l.qty) : 0; }
+    else max = stockOf(n);
+  }
+  max = Math.max(1, Math.floor(max));
+  document.getElementById('loss-qty').innerHTML = numOpts(1, max, '', true);
+}
 function addLoss() {
   const n = document.getElementById('loss-ing').value;
+  const lotId = document.getElementById('loss-lot').value;
   const q = num(document.getElementById('loss-qty').value);
   const reason = document.getElementById('loss-reason').value.trim();
-  if (!n || !KDB.items[n] || !q) { toast('串とロス本数を確認してね'); return; }
-  ask(`${n} を ${fmt(q)}本 ロス（廃棄）で在庫から引くさ？`, () => {
-    const r = consume(n, q);
+  if (!n || !KDB.items[n] || !q) { toast('串と廃棄する本数を確認してね'); return; }
+  let lotLabel = '';
+  if (lotId) { const l = KDB.items[n].lots.find(x => x.id === +lotId); lotLabel = l ? `（ロット 仕込${mdShort(l.made)}/期限${mdShort(l.exp)}）` : ''; }
+  ask(`${n} を ${fmt(q)}本 ${lotId ? 'このロットから' : 'まとめて'}廃棄で在庫から引くさ？`, () => {
+    const r = lotId ? consumeFromLot(n, +lotId, q) : consume(n, q);
     const cost = costOf(n) * r.taken;
     KDB.losses.unshift({ at: nowStr(), d: today(), name: n, qty: r.taken, reason: reason || '理由なし', cost });
-    KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(r.taken)}本 ロス（${reason || '理由なし'}）${cost ? ' / 原価' + yen(cost) : ''}${r.short ? ' ※在庫不足' + fmt(r.short) + '本' : ''}` });
+    KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(r.taken)}本 ロス（${reason || '理由なし'}${lotId ? '／ロット指定' : ''}）${lotLabel}${cost ? ' / 原価' + yen(cost) : ''}${r.short ? ' ※在庫不足' + fmt(r.short) + '本' : ''}` });
     save(); syncToZaiko('ロス');
-    document.getElementById('loss-qty').value = '';
     document.getElementById('loss-reason').value = '';
     renderStock();
     toast(`${n} を${fmt(r.taken)}本 ロス記録したさ${cost ? '（' + yen(cost) + '）' : ''}${r.short ? '\n※在庫が' + fmt(r.short) + '本 足りんかった' : ''}`);
@@ -935,6 +1156,13 @@ function undoReflect(d) {
 
 /* ========== 串の設定・連携 ========== */
 function renderSetup() {
+  // 共有
+  const su = document.getElementById('share-url');
+  if (su && document.activeElement !== su) su.value = SHARE.url;
+  const gc = document.getElementById('gas-code');
+  if (gc && !gc.value) gc.value = GAS_SRC;
+  updateShareStatus();
+
   const z = readZaiko();
   const st = document.getElementById('z-status');
   if (!z) {
@@ -1018,6 +1246,8 @@ document.getElementById('prep-made').value = today();
 document.getElementById('add-qty').value = 0;
 document.getElementById('add-cost').value = 0;
 renderStock();
+if (shareOn()) { startShareLoop(); pullShared({ force: true }); }   // 起動時：共有先の最新を取得
+READY = true;
 </script>
 </body>
 </html>
