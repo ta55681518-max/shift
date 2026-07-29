@@ -88,6 +88,7 @@
   .fld .f { flex: 0 0 auto; }
   .fld .f label { margin-bottom: 2px; font-size: 11px; }
   .fld .f input { width: 72px; text-align: right; padding: 7px 7px; font-size: 14px; }
+  .fld .f select.mode { width: 96px; padding: 7px 6px; font-size: 13px; }
   .fld .del-wrap { margin-left: auto; align-self: center; }
   .lots { margin-top: 7px; border-top: 1px dashed #ece3d8; padding-top: 7px; }
   .lot { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid #f4ede4; font-size: 13px; }
@@ -355,6 +356,9 @@ function normalizeItems() {
     }
     it.lots.forEach(l => { if (l.id == null) { l.id = nextSeq(); changed = true; } });
     if (it.cost == null) { it.cost = 0; changed = true; }
+    if (it.costMode == null) { it.costMode = 'piece'; changed = true; }  // 'piece'=1本あたり / 'gram'=グラム
+    if (it.gPer == null) { it.gPer = 0; changed = true; }                // 1本あたりのグラム数
+    if (it.gPrice == null) { it.gPrice = 0; changed = true; }            // 円/g
     if (it.keep == null) { it.keep = ''; changed = true; }
     if (it.per == null) { it.per = 1; changed = true; }
     if (it.min == null) { it.min = 0; changed = true; }
@@ -477,7 +481,9 @@ function askNo() { document.getElementById('ask-bg').style.display = 'none'; ask
 
 /* ========== 在庫の計算（ロット） ========== */
 function stockOf(n) { const it = KDB.items[n]; return it ? it.lots.reduce((a, l) => a + num(l.qty), 0) : 0; }
-function stockValue(n) { return stockOf(n) * num(KDB.items[n].cost); }
+/* 1本あたり原価。gramモードなら（g/本 × 円/g）で計算 */
+function costOf(n) { const it = KDB.items[n]; if (!it) return 0; return it.costMode === 'gram' ? num(it.gPer) * num(it.gPrice) : num(it.cost); }
+function stockValue(n) { return stockOf(n) * costOf(n); }
 
 /* 先入れ先出し（期限が早い→仕込みが古い→id順）で並べる */
 function lotOrder(lots) {
@@ -574,16 +580,27 @@ function itemCardHTML(n, i) {
   });
   const lotsHTML = lots.length ? lots.map(l => lotRowHTML(i, l)).join('')
     : '<div class="muted" style="padding:4px 0">ロットなし。下の「仕込みを足す」で入れてね</div>';
+  const c = costOf(n);
+  const gram = it.costMode === 'gram';
+  const costFlds = `
+      <span class="f"><label>原価タイプ</label><select class="mode" onchange="setField(${i},'costMode',this.value)">
+        <option value="piece"${gram ? '' : ' selected'}>1本あたり</option>
+        <option value="gram"${gram ? ' selected' : ''}>グラム</option></select></span>
+      ${gram
+        ? `<span class="f"><label>g/本</label><input type="number" step="any" inputmode="decimal" value="${num(it.gPer)}" onchange="setField(${i},'gPer',this.value)"></span>
+           <span class="f"><label>¥/g</label><input type="number" step="any" inputmode="decimal" value="${num(it.gPrice)}" onchange="setField(${i},'gPrice',this.value)"></span>`
+        : `<span class="f"><label>原価¥/本</label><input type="number" step="any" inputmode="decimal" value="${num(it.cost)}" onchange="setField(${i},'cost',this.value)"></span>`}`;
+  const costNote = gram ? ` <span class="muted">(${fmt(num(it.gPer))}g×¥${fmt(num(it.gPrice))}/g)</span>` : '';
   return `<div class="item ${low ? 'low' : ''}" id="item-${i}">
     <div class="item-head">
       <div class="item-name">${esc(n)}${low ? ' <span class="pill red">要仕込み</span>' : ''}</div>
       <div class="item-stock"><span class="big-stock">${fmt(total)}</span>本
-        <span class="muted"> ・${yen(it.cost)}/本${num(it.cost) ? ' ・在庫' + yen(stockValue(n)) : ''}</span></div>
+        <span class="muted"> ・${yen(c)}/本${costNote}${c ? ' ・在庫' + yen(stockValue(n)) : ''}</span></div>
     </div>
     <div class="fld">
       <span class="f"><label>最低</label><input type="number" step="1" inputmode="numeric" value="${num(it.min)}" onchange="setField(${i},'min',this.value)"></span>
       <span class="f"><label>目標</label><input type="number" step="1" inputmode="numeric" value="${num(it.par)}" onchange="setField(${i},'par',this.value)"></span>
-      <span class="f"><label>原価¥/本</label><input type="number" step="any" inputmode="decimal" value="${num(it.cost)}" onchange="setField(${i},'cost',this.value)"></span>
+      ${costFlds}
       <span class="f"><label>日持ち日</label><input type="number" step="1" inputmode="numeric" value="${it.keep === '' ? '' : num(it.keep)}" onchange="setField(${i},'keep',this.value)"></span>
       <span class="f" title="E-POSで1回売れたときに減る本数（1本売り=1、2本セット・1皿2本=2）"><label>1注文の本数</label><input type="number" step="any" inputmode="decimal" value="${num(it.per) || 1}" onchange="setField(${i},'per',this.value)"></span>
       <span class="del-wrap"><button class="mini del" onclick="delItem(${i})">串を削除</button></span>
@@ -678,13 +695,14 @@ function renderSummary(names) {
     const ec = expClass(nextExp);
     const expStyle = ec === 'exp-bad' ? 'color:#b0402a;font-weight:700' : ec === 'exp-soon' ? 'color:#a85a1c;font-weight:600' : '';
     const low = total <= num(it.min);
+    const c = costOf(n);
     totQ += total; totV += val;
     return `<tr onclick="focusItem(${i})" style="cursor:pointer">
       <td>${esc(n)}${low ? ' <span class="pill red">要</span>' : ''}</td>
       <td class="num"><b>${fmt(total)}</b></td>
       <td class="num">${active.length}</td>
       <td class="num" style="${expStyle}">${nextExp ? mdShort(nextExp) : '—'}</td>
-      <td class="num">${num(it.cost) ? yen(it.cost) : '—'}</td>
+      <td class="num">${c ? yen(c) : '—'}</td>
       <td class="num">${val ? yen(val) : '—'}</td>
     </tr>`;
   }).join('');
@@ -703,6 +721,7 @@ function focusItem(i) {
 function setField(i, f, v) {
   const n = VIEW[i]; if (!KDB.items[n]) return;
   if (f === 'keep') KDB.items[n].keep = (v === '' ? '' : num(v));
+  else if (f === 'costMode') KDB.items[n].costMode = (v === 'gram' ? 'gram' : 'piece');
   else KDB.items[n][f] = num(v);
   save();
   if (f === 'min') syncToZaiko('最低ラインの更新');
@@ -732,7 +751,7 @@ function discardLot(i, id) {
   const q = num(l.qty); if (!q) { toast('このロットは0本さ'); return; }
   ask(`${n} を ${q}本 廃棄する（ロス記録）さ？`, () => {
     l.qty = 0; it.lots = it.lots.filter(x => num(x.qty) > 0);
-    const cost = num(it.cost) * q;
+    const cost = costOf(n) * q;
     KDB.losses.unshift({ at: nowStr(), d: today(), name: n, qty: q, reason: '廃棄（期限切れ等）', cost });
     KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(q)}本 廃棄（期限切れ等）${cost ? ' / 原価' + yen(cost) : ''}` });
     save(); syncToZaiko('廃棄'); renderStock(); toast(`${n} を${fmt(q)}本 廃棄で記録したさ`);
@@ -770,7 +789,7 @@ function addLoss() {
   if (!n || !KDB.items[n] || !q) { toast('串とロス本数を確認してね'); return; }
   ask(`${n} を ${fmt(q)}本 ロス（廃棄）で在庫から引くさ？`, () => {
     const r = consume(n, q);
-    const cost = num(KDB.items[n].cost) * r.taken;
+    const cost = costOf(n) * r.taken;
     KDB.losses.unshift({ at: nowStr(), d: today(), name: n, qty: r.taken, reason: reason || '理由なし', cost });
     KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(r.taken)}本 ロス（${reason || '理由なし'}）${cost ? ' / 原価' + yen(cost) : ''}${r.short ? ' ※在庫不足' + fmt(r.short) + '本' : ''}` });
     save(); syncToZaiko('ロス');
@@ -792,7 +811,7 @@ function addItemManual() {
   const q = num(document.getElementById('add-qty').value);
   const lots = [];
   if (q > 0) { const made = today(); const exp = (keep !== '' && keep > 0) ? addDays(made, keep) : ''; lots.push({ id: nextSeq(), made, exp, qty: q }); }
-  KDB.items[name] = { min: 0, par: 0, per: 1, cost, keep, lots };
+  KDB.items[name] = { min: 0, par: 0, per: 1, cost, costMode: 'piece', gPer: 0, gPrice: 0, keep, lots };
   KDB.log.unshift({ at: nowStr(), type: '追加', text: `${name} を手で追加${q ? '（' + fmt(q) + '本）' : ''}` });
   save(); syncToZaiko('串を追加');
   ['add-name', 'add-cost', 'add-keep', 'add-qty'].forEach(id => document.getElementById(id).value = '');
@@ -941,12 +960,12 @@ function renderSetup() {
 function togglePick(i) {
   const n = PICK[i]; if (n == null) return;
   if (KDB.items[n]) { delete KDB.items[n]; }
-  else { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, keep: '', lots: [] }; }
+  else { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; }
   save(); renderSetup();
 }
 function autoPickKushi() {
   let added = 0;
-  zProducts().forEach(n => { if (isKushiName(n) && !KDB.items[n]) { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, keep: '', lots: [] }; added++; } });
+  zProducts().forEach(n => { if (isKushiName(n) && !KDB.items[n]) { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; added++; } });
   save(); renderSetup();
   toast(added ? added + '種の串を選んださ（在庫タブで本数・原価を入れてね）' : '「串」がつく新しい商品は無かったさ');
 }
