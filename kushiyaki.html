@@ -247,6 +247,33 @@
 <!-- ============ 串の設定・連携 ============ -->
 <div id="p-setup" class="hide">
   <div class="card">
+    <h2>スタッフと共有（Googleシート） <span class="pill" id="share-pill">OFF</span></h2>
+    <div id="share-status" class="muted gap"></div>
+    <div class="muted gap">全員が同じ「共有URL」を入れると、串の在庫を<b>みんなで共有</b>できるさ。変更は自動で同期されるよ。</div>
+    <label>共有URL（GASウェブアプリのURL）</label>
+    <input id="share-url" class="gap" placeholder="https://script.google.com/macros/s/……/exec">
+    <div class="row gap">
+      <button class="act" onclick="saveShareUrl()">保存して接続</button>
+      <button class="act sub2" onclick="syncNowShare()">今すぐ同期</button>
+    </div>
+    <button class="act ghost gap" onclick="stopShare()">この端末の共有をやめる</button>
+    <details>
+      <summary>はじめての人向け：共有の作り方（1回だけ）</summary>
+      <div class="muted" style="margin-top:8px;line-height:1.7">
+        <b>①</b> Googleスプレッドシートを新規作成（名前は何でもOK）<br>
+        <b>②</b> メニューの <b>拡張機能 → Apps Script</b> を開く<br>
+        <b>③</b> 最初のコードを消して、下のコードを<b>全部貼り付けて保存</b>（💾）<br>
+        <b>④</b> 右上の <b>デプロイ → 新しいデプロイ</b>／種類＝<b>ウェブアプリ</b>／アクセス＝<b>全員</b>／デプロイ<br>
+        <b>⑤</b> 出てきた <b>/exec で終わるURL</b> を上の「共有URL」に貼って「保存して接続」<br>
+        <b>⑥</b> スタッフの端末でも<b>同じURL</b>を貼れば、全員で共有完了さ
+      </div>
+      <textarea id="gas-code" readonly style="min-height:200px;margin-top:8px" onclick="this.select()"></textarea>
+      <button class="act ghost" style="margin-top:8px" onclick="copyGas()">GASコードをコピー</button>
+      <div class="muted" style="margin-top:6px">※同時に2人が同じ串を編集すると、あとから保存したほうが有効さ（基本は問題なし）。</div>
+    </details>
+  </div>
+
+  <div class="card">
     <h2>zaikoとの連携</h2>
     <div id="z-status" class="muted gap"></div>
     <div class="row">
@@ -339,8 +366,118 @@ function loadK() {
 function save() {
   try { localStorage.setItem(KKEY, JSON.stringify(KDB)); }
   catch (e) { toast('保存できんかったさ…'); }
+  schedulePush();
 }
 function nextSeq() { return KDB.seq++; }
+
+/* ===== スタッフ共有（Googleシート＋GAS） =====
+   全端末が同じ共有URL（GASウェブアプリ）を見て、同じデータを読み書きする。
+   変更は自動で保存（push）、他端末の更新は定期＆フォーカス時に取得（pull）。
+   同時編集はあとから保存した内容が有効（last-write-wins）。 */
+const SHAREKEY = 'kemuri_kushiyaki_share';
+let SHARE = { url: localStorage.getItem(SHAREKEY) || '', rev: 0, pushing: false, dirty: false, timer: null, lastSync: 0, err: '', loop: false };
+let READY = false;   // 起動時の初期化中はpushしない
+let PULLING = false;
+
+function shareOn() { return !!SHARE.url; }
+function schedulePush() {
+  if (!READY || !shareOn()) return;
+  SHARE.dirty = true; updateShareStatus();
+  clearTimeout(SHARE.timer);
+  SHARE.timer = setTimeout(pushShared, 1200);
+}
+async function pushShared() {
+  if (!shareOn()) return;
+  SHARE.pushing = true; updateShareStatus();
+  try {
+    const res = await fetch(SHARE.url, { method: 'POST', body: JSON.stringify({ data: KDB, baseRev: SHARE.rev }) });
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || '保存に失敗');
+    SHARE.rev = r.rev; SHARE.dirty = false; SHARE.err = ''; SHARE.lastSync = Date.now();
+  } catch (e) { SHARE.err = String(e.message || e); }
+  SHARE.pushing = false; updateShareStatus();
+}
+async function pullShared(opts) {
+  opts = opts || {};
+  if (!shareOn()) return;
+  if (!opts.force && (SHARE.pushing || SHARE.dirty)) return;   // ローカル未保存を上書きしない
+  if (PULLING) return; PULLING = true;
+  try {
+    const res = await fetch(SHARE.url);
+    const r = await res.json();
+    if (!r.ok) throw new Error(r.error || '読み込みに失敗');
+    if (r.data && (opts.force || r.rev !== SHARE.rev)) {
+      KDB = Object.assign(blank(), r.data);
+      normalizeItems();
+      localStorage.setItem(KKEY, JSON.stringify(KDB));   // pushを起こさず直接保存
+      SHARE.rev = (r.rev != null ? r.rev : SHARE.rev);
+      redrawAll();
+      if (!document.getElementById('p-reflect').classList.contains('hide')) renderReflect();
+      if (!document.getElementById('p-setup').classList.contains('hide')) renderSetup();
+    } else if (r.data == null && opts.force) {
+      pushShared();   // 共有先が空 → この端末の内容を上げる
+    }
+    if (r.rev != null) SHARE.rev = r.rev;
+    SHARE.err = ''; SHARE.lastSync = Date.now();
+  } catch (e) { SHARE.err = String(e.message || e); }
+  PULLING = false; updateShareStatus();
+}
+function startShareLoop() {
+  if (SHARE.loop) return;
+  SHARE.loop = true;
+  setInterval(() => { if (shareOn()) pullShared(); }, 20000);
+  window.addEventListener('focus', () => { if (shareOn()) pullShared(); });
+}
+function saveShareUrl() {
+  const url = document.getElementById('share-url').value.trim();
+  if (url && url.indexOf('http') !== 0) { toast('URLは https://… の形で貼ってね'); return; }
+  if (!url) { stopShare(); return; }
+  SHARE.url = url; localStorage.setItem(SHAREKEY, url);
+  fetch(url).then(r => r.json()).then(r => {
+    startShareLoop();
+    const hasData = r && r.ok && r.data && Object.keys(r.data.items || {}).length;
+    if (hasData) {
+      ask('共有先にすでにデータがあるさ。\n共有先の内容を読み込む？\n（「はい」＝共有を読み込む／「やめる」＝この端末の内容を共有先に上げる）',
+        () => { SHARE.rev = r.rev || 0; pullShared({ force: true }); toast('共有につないで読み込んださ'); },
+        () => { SHARE.rev = r.rev || 0; pushShared(); toast('共有につないで、この端末の内容を上げたさ'); });
+    } else {
+      SHARE.rev = (r && r.rev) || 0; pushShared(); toast('共有につないださ（この端末の内容を上げた）');
+    }
+    renderSetup(); renderLinkBanner();
+  }).catch(e => { SHARE.err = String(e); toast('共有先につながらないさ…URLを確認してね'); renderSetup(); });
+}
+function stopShare() {
+  SHARE.url = ''; localStorage.removeItem(SHAREKEY); SHARE.dirty = false; clearTimeout(SHARE.timer);
+  updateShareStatus(); renderSetup(); renderLinkBanner(); toast('この端末の共有をOFFにしたさ');
+}
+async function syncNowShare() {
+  if (!shareOn()) { toast('先に共有URLを保存してね'); return; }
+  clearTimeout(SHARE.timer);
+  await pushShared();
+  await pullShared();
+  toast('同期したさ（最終同期 ' + shareTime(SHARE.lastSync) + '）');
+}
+function shareTime(ms) { if (!ms) return '—'; const d = new Date(ms); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
+function updateShareStatus() {
+  const el = document.getElementById('share-status'); if (!el) return;
+  const pill = document.getElementById('share-pill');
+  if (!shareOn()) { el.innerHTML = '<span class="muted">共有OFF（この端末だけで保存中）</span>'; if (pill) pill.textContent = 'OFF'; return; }
+  const state = SHARE.err ? `<span style="color:#b0402a">エラー：${esc(SHARE.err)}</span>`
+    : SHARE.pushing ? '保存中…' : SHARE.dirty ? '未保存の変更あり…' : '同期OK';
+  el.innerHTML = `<span class="${SHARE.err ? '' : 'ok'}" style="display:block">👥 共有中（${state}）／最終同期 ${shareTime(SHARE.lastSync)}</span>`;
+  if (pill) pill.textContent = SHARE.err ? '!' : 'ON';
+}
+
+/* GASに貼り付けるコード（コピー用） */
+const GAS_SRC = `const SHEET_NAME='kushiyaki';
+function sheet_(){var ss=SpreadsheetApp.getActiveSpreadsheet();var sh=ss.getSheetByName(SHEET_NAME);if(!sh)sh=ss.insertSheet(SHEET_NAME);return sh;}
+function doGet(){var sh=sheet_();var data=sh.getRange('A1').getValue();var rev=Number(sh.getRange('B1').getValue())||0;return out_({ok:true,data:data?JSON.parse(data):null,rev:rev});}
+function doPost(e){var lock=LockService.getScriptLock();lock.waitLock(20000);try{var body=JSON.parse(e.postData.contents||'{}');var sh=sheet_();var rev=(Number(sh.getRange('B1').getValue())||0)+1;sh.getRange('A1').setValue(JSON.stringify(body.data||{}));sh.getRange('B1').setValue(rev);return out_({ok:true,rev:rev});}catch(err){return out_({ok:false,error:String(err)});}finally{lock.releaseLock();}}
+function out_(o){return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);}`;
+function copyGas() {
+  const t = document.getElementById('gas-code'); t.select();
+  navigator.clipboard.writeText(t.value).then(() => toast('GASコードをコピーしたさ'), () => { try { document.execCommand('copy'); toast('コピーしたさ'); } catch (e) {} });
+}
 
 /* 旧データ（stockスカラー）→ ロット構造へ移行、欠けたフィールドを補う */
 function normalizeItems() {
@@ -469,15 +606,16 @@ function toast(msg) {
   t.textContent = msg; t.style.display = 'block';
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', 3400);
 }
-let askCb = null;
-function ask(msg, cb) {
-  askCb = cb;
+let askCb = null, askCbNo = null;
+function ask(msg, cb, cbNo) {
+  askCb = cb; askCbNo = cbNo || null;
   document.getElementById('ask-msg').textContent = msg;
   document.getElementById('ask-input').classList.add('hide');
   document.getElementById('ask-bg').style.display = 'flex';
 }
-function askYes() { const c = askCb; askNo(); if (c) c(); }
-function askNo() { document.getElementById('ask-bg').style.display = 'none'; askCb = null; }
+function closeAsk() { document.getElementById('ask-bg').style.display = 'none'; askCb = null; askCbNo = null; }
+function askYes() { const c = askCb; closeAsk(); if (c) c(); }
+function askNo() { const c = askCbNo; closeAsk(); if (c) c(); }
 
 /* ========== 在庫の計算（ロット） ========== */
 function stockOf(n) { const it = KDB.items[n]; return it ? it.lots.reduce((a, l) => a + num(l.qty), 0) : 0; }
@@ -539,7 +677,8 @@ function renderLinkBanner() {
   const latest = days.length ? days[days.length - 1] : 'なし';
   const src = zaikoIsLive() ? '同じ端末のzaiko' : '控え（取り込みぶん）';
   const sync = KDB.syncZaiko ? (zaikoIsLive() ? '／zaikoへ自動反映 <b>ON</b>' : '／自動反映ON（この端末では書き戻し不可）') : '';
-  el.innerHTML = `<div class="ok">zaikoと連携中（${src}）／串の登録 ${Object.keys(KDB.items).length}種・最新の出数 ${esc(latest)}${sync}</div>`;
+  const shr = shareOn() ? `／👥スタッフ共有 <b>ON</b>` : '';
+  el.innerHTML = `<div class="ok">zaikoと連携中（${src}）／串の登録 ${Object.keys(KDB.items).length}種・最新の出数 ${esc(latest)}${sync}${shr}</div>`;
 }
 
 function renderStock() {
@@ -935,6 +1074,13 @@ function undoReflect(d) {
 
 /* ========== 串の設定・連携 ========== */
 function renderSetup() {
+  // 共有
+  const su = document.getElementById('share-url');
+  if (su && document.activeElement !== su) su.value = SHARE.url;
+  const gc = document.getElementById('gas-code');
+  if (gc && !gc.value) gc.value = GAS_SRC;
+  updateShareStatus();
+
   const z = readZaiko();
   const st = document.getElementById('z-status');
   if (!z) {
@@ -1018,6 +1164,8 @@ document.getElementById('prep-made').value = today();
 document.getElementById('add-qty').value = 0;
 document.getElementById('add-cost').value = 0;
 renderStock();
+if (shareOn()) { startShareLoop(); pullShared({ force: true }); }   // 起動時：共有先の最新を取得
+READY = true;
 </script>
 </body>
 </html>
