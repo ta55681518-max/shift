@@ -185,13 +185,16 @@
 
   <div class="card">
     <h2>ロス（廃棄）を記録 <span class="muted">在庫からマイナス</span></h2>
-    <div class="muted gap">落とした・売れ残って捨てた・焦がした などの廃棄ぶんを在庫から引くさ（期限が近いロットから引く）。原価も記録するよ。</div>
+    <div class="muted gap">落とした・売れ残り・焦げ・期限切れ などの廃棄ぶんを在庫から引くさ。原価も記録するよ。<br>
+      「対象」で <b>まとめて（期限が近い順）</b> か <b>特定のロット</b> を選べる。ロット丸ごとなら、上の在庫の各ロットの「廃棄」ボタンでも一発さ。</div>
     <div class="row gap">
-      <div style="flex:2"><label>串</label><select id="loss-ing"></select></div>
-      <div><label>ロス本数</label><select id="loss-qty"></select></div>
+      <div style="flex:2"><label>串</label><select id="loss-ing" onchange="fillLossLots()"></select></div>
+      <div style="flex:2"><label>対象（ロット）</label><select id="loss-lot" onchange="fillLossQty()"></select></div>
     </div>
-    <label>理由（任意）</label>
-    <input id="loss-reason" class="gap" placeholder="例）売れ残り廃棄 / 落とした / 焦げ">
+    <div class="row gap">
+      <div><label>廃棄する本数</label><select id="loss-qty"></select></div>
+      <div style="flex:2"><label>理由（任意）</label><input id="loss-reason" placeholder="例）売れ残り / 落とした / 焦げ / 期限切れ"></div>
+    </div>
     <button class="act" style="background:#b0402a" onclick="addLoss()">ロスを記録して引く</button>
   </div>
 
@@ -644,6 +647,16 @@ function consume(n, qty) {
   it.lots = it.lots.filter(l => num(l.qty) > 0);
   return { taken: num(qty) - need, slices, short: need };
 }
+/* 指定した1ロットから qty本 消費（ロット指定の廃棄用） */
+function consumeFromLot(n, lotId, qty) {
+  const it = KDB.items[n]; const l = it.lots.find(x => x.id === lotId);
+  if (!l) return { taken: 0, short: num(qty), slices: [] };
+  const take = Math.min(num(l.qty), num(qty));
+  l.qty = num(l.qty) - take;
+  const slices = [{ id: l.id, made: l.made, exp: l.exp, take }];
+  it.lots = it.lots.filter(x => num(x.qty) > 0);
+  return { taken: take, short: num(qty) - take, slices };
+}
 /* slices を元に戻す（反映取消） */
 function restore(n, slices) {
   const it = KDB.items[n]; if (!it) return;
@@ -701,7 +714,11 @@ function renderStock() {
 
   const opts = names.length ? names.map(n => `<option>${esc(n)}</option>`).join('') : '<option value="">（串が無いさ）</option>';
   document.getElementById('prep-ing').innerHTML = opts;
-  document.getElementById('loss-ing').innerHTML = opts;
+  const lossSel = document.getElementById('loss-ing');
+  const lossCur = lossSel.value;
+  lossSel.innerHTML = opts;
+  if (lossCur && names.indexOf(lossCur) !== -1) lossSel.value = lossCur;
+  fillLossLots();
 
   const lg = document.getElementById('s-log');
   lg.innerHTML = KDB.log.length ? KDB.log.slice(0, 40).map(l =>
@@ -921,18 +938,45 @@ function addPrep() {
 }
 
 /* ---- ロス（廃棄） ---- */
+// 「対象（ロット）」プルダウン：まとめて or 各ロット
+function fillLossLots() {
+  const n = document.getElementById('loss-ing').value;
+  const sel = document.getElementById('loss-lot');
+  let o = '<option value="">まとめて（期限が近い順）</option>';
+  if (n && KDB.items[n]) {
+    const lots = KDB.items[n].lots.filter(l => num(l.qty) > 0).slice()
+      .sort((a, b) => { const ae = a.exp || '9999-12-31', be = b.exp || '9999-12-31'; return ae < be ? -1 : ae > be ? 1 : 0; });
+    lots.forEach(l => { o += `<option value="${l.id}">仕込${mdShort(l.made)}・期限${mdShort(l.exp)}・残${fmt(num(l.qty))}本</option>`; });
+  }
+  sel.innerHTML = o;
+  fillLossQty();
+}
+// 「廃棄する本数」プルダウン：対象の残り本数を上限にする
+function fillLossQty() {
+  const n = document.getElementById('loss-ing').value;
+  const lotId = document.getElementById('loss-lot').value;
+  let max = 0;
+  if (n && KDB.items[n]) {
+    if (lotId) { const l = KDB.items[n].lots.find(x => x.id === +lotId); max = l ? num(l.qty) : 0; }
+    else max = stockOf(n);
+  }
+  max = Math.max(1, Math.floor(max));
+  document.getElementById('loss-qty').innerHTML = numOpts(1, max, '', true);
+}
 function addLoss() {
   const n = document.getElementById('loss-ing').value;
+  const lotId = document.getElementById('loss-lot').value;
   const q = num(document.getElementById('loss-qty').value);
   const reason = document.getElementById('loss-reason').value.trim();
-  if (!n || !KDB.items[n] || !q) { toast('串とロス本数を確認してね'); return; }
-  ask(`${n} を ${fmt(q)}本 ロス（廃棄）で在庫から引くさ？`, () => {
-    const r = consume(n, q);
+  if (!n || !KDB.items[n] || !q) { toast('串と廃棄する本数を確認してね'); return; }
+  let lotLabel = '';
+  if (lotId) { const l = KDB.items[n].lots.find(x => x.id === +lotId); lotLabel = l ? `（ロット 仕込${mdShort(l.made)}/期限${mdShort(l.exp)}）` : ''; }
+  ask(`${n} を ${fmt(q)}本 ${lotId ? 'このロットから' : 'まとめて'}廃棄で在庫から引くさ？`, () => {
+    const r = lotId ? consumeFromLot(n, +lotId, q) : consume(n, q);
     const cost = costOf(n) * r.taken;
     KDB.losses.unshift({ at: nowStr(), d: today(), name: n, qty: r.taken, reason: reason || '理由なし', cost });
-    KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(r.taken)}本 ロス（${reason || '理由なし'}）${cost ? ' / 原価' + yen(cost) : ''}${r.short ? ' ※在庫不足' + fmt(r.short) + '本' : ''}` });
+    KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(r.taken)}本 ロス（${reason || '理由なし'}${lotId ? '／ロット指定' : ''}）${lotLabel}${cost ? ' / 原価' + yen(cost) : ''}${r.short ? ' ※在庫不足' + fmt(r.short) + '本' : ''}` });
     save(); syncToZaiko('ロス');
-    document.getElementById('loss-qty').value = '';
     document.getElementById('loss-reason').value = '';
     renderStock();
     toast(`${n} を${fmt(r.taken)}本 ロス記録したさ${cost ? '（' + yen(cost) + '）' : ''}${r.short ? '\n※在庫が' + fmt(r.short) + '本 足りんかった' : ''}`);
