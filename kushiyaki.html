@@ -166,7 +166,7 @@
     <h2>串の在庫（ロット別）</h2>
     <div id="s-alert"></div>
     <div id="s-items"></div>
-    <div class="muted" style="margin-top:6px">各ロットの「残」を直せば棚卸（実数入力）。仕込みは下の「仕込みを足す」で新しいロットとして入るさ。</div>
+    <div class="muted" style="margin-top:6px">各ロットの「残」を直せば棚卸（実数入力）。仕込みは下の「仕込みを足す」で新しいロットとして入るさ。<br>「1注文の本数」＝E-POSで1回売れたときに減る本数（1本売り=1、2本セット・1皿2本=2）。出数の反映に使うさ。</div>
   </div>
 
   <div class="card">
@@ -585,7 +585,7 @@ function itemCardHTML(n, i) {
       <span class="f"><label>目標</label><input type="number" step="1" inputmode="numeric" value="${num(it.par)}" onchange="setField(${i},'par',this.value)"></span>
       <span class="f"><label>原価¥/本</label><input type="number" step="any" inputmode="decimal" value="${num(it.cost)}" onchange="setField(${i},'cost',this.value)"></span>
       <span class="f"><label>日持ち日</label><input type="number" step="1" inputmode="numeric" value="${it.keep === '' ? '' : num(it.keep)}" onchange="setField(${i},'keep',this.value)"></span>
-      <span class="f"><label>1品=本</label><input type="number" step="any" inputmode="decimal" value="${num(it.per) || 1}" onchange="setField(${i},'per',this.value)"></span>
+      <span class="f" title="E-POSで1回売れたときに減る本数（1本売り=1、2本セット・1皿2本=2）"><label>1注文の本数</label><input type="number" step="any" inputmode="decimal" value="${num(it.per) || 1}" onchange="setField(${i},'per',this.value)"></span>
       <span class="del-wrap"><button class="mini del" onclick="delItem(${i})">串を削除</button></span>
     </div>
     <div class="lots">${lotsHTML}</div>
