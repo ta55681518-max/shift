@@ -111,6 +111,13 @@
   }
   #ask-box { background: #fff; border-radius: 14px; padding: 18px; max-width: 340px; width: 100%; }
   #ask-msg { font-size: 15px; margin-bottom: 15px; white-space: pre-wrap; }
+  #dsc-bg {
+    position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 100;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  #dsc-bg.show { display: flex; }
+  #dsc-box { background: #fff; border-radius: 14px; padding: 18px; max-width: 340px; width: 100%; }
+  #dsc-title { font-size: 15px; }
 </style>
 </head>
 <body>
@@ -122,6 +129,18 @@
   <div class="row">
     <button class="act" onclick="askYes()">はい</button>
     <button class="act ghost" onclick="askNo()">やめる</button>
+  </div>
+</div></div>
+
+<div id="dsc-bg"><div id="dsc-box">
+  <div id="dsc-title" class="gap"></div>
+  <label>廃棄する本数</label>
+  <select id="dsc-qty" class="gap"></select>
+  <label>理由（任意）</label>
+  <input id="dsc-reason" class="gap" placeholder="例）期限切れ / 焦げ / 落とした">
+  <div class="row">
+    <button class="act" style="background:#b0402a" onclick="doDiscard()">廃棄する</button>
+    <button class="act ghost" onclick="closeDsc()">やめる</button>
   </div>
 </div></div>
 
@@ -901,17 +920,36 @@ function delLot(i, id) {
     save(); syncToZaiko('ロット削除'); renderStock(); toast('消したさ');
   });
 }
+// ロットの「廃棄」ボタン → 何本捨てるかをその場で選ぶ（初期値＝ロット全部）
+let dscTarget = null;
 function discardLot(i, id) {
   const n = VIEW[i]; const it = KDB.items[n]; if (!it) return;
   const l = it.lots.find(x => x.id === id); if (!l) return;
   const q = num(l.qty); if (!q) { toast('このロットは0本さ'); return; }
-  ask(`${n} を ${q}本 廃棄する（ロス記録）さ？`, () => {
-    l.qty = 0; it.lots = it.lots.filter(x => num(x.qty) > 0);
-    const cost = costOf(n) * q;
-    KDB.losses.unshift({ at: nowStr(), d: today(), name: n, qty: q, reason: '廃棄（期限切れ等）', cost });
-    KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${n} −${fmt(q)}本 廃棄（期限切れ等）${cost ? ' / 原価' + yen(cost) : ''}` });
-    save(); syncToZaiko('廃棄'); renderStock(); toast(`${n} を${fmt(q)}本 廃棄で記録したさ`);
-  });
+  dscTarget = { name: n, id };
+  document.getElementById('dsc-title').innerHTML =
+    `<b>${esc(n)}</b> を廃棄<br><span class="muted">仕込${mdShort(l.made)}・期限${mdShort(l.exp)}・残${fmt(q)}本</span>`;
+  document.getElementById('dsc-qty').innerHTML = numOpts(1, q, q, false);  // 初期値＝全部
+  document.getElementById('dsc-reason').value = '';
+  document.getElementById('dsc-bg').classList.add('show');
+}
+function closeDsc() { document.getElementById('dsc-bg').classList.remove('show'); dscTarget = null; }
+function doDiscard() {
+  if (!dscTarget) return;
+  const { name, id } = dscTarget;
+  const it = KDB.items[name]; if (!it) { closeDsc(); return; }
+  const l = it.lots.find(x => x.id === id);
+  const q = num(document.getElementById('dsc-qty').value);
+  if (!q) { toast('本数を選んでね'); return; }
+  const reason = document.getElementById('dsc-reason').value.trim() || '廃棄';
+  const lotLabel = l ? `（ロット 仕込${mdShort(l.made)}/期限${mdShort(l.exp)}）` : '';
+  const r = consumeFromLot(name, id, q);
+  const cost = costOf(name) * r.taken;
+  KDB.losses.unshift({ at: nowStr(), d: today(), name, qty: r.taken, reason, cost });
+  KDB.log.unshift({ at: nowStr(), type: 'ロス', text: `${name} −${fmt(r.taken)}本 廃棄（${reason}）${lotLabel}${cost ? ' / 原価' + yen(cost) : ''}` });
+  save(); syncToZaiko('廃棄');
+  closeDsc(); renderStock();
+  toast(`${name} を${fmt(r.taken)}本 廃棄したさ${cost ? '（' + yen(cost) + '）' : ''}`);
 }
 function delItem(i) {
   const n = VIEW[i];
