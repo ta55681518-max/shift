@@ -284,6 +284,8 @@
       <button class="act" onclick="saveShareUrl()">保存して接続</button>
       <button class="act sub2" onclick="syncNowShare()">今すぐ同期</button>
     </div>
+    <button class="act sub2 gap" id="btn-join" onclick="copyJoinLink()">📨 スタッフ用の参加リンクをコピー</button>
+    <div class="muted" style="margin-top:4px">このリンクをLINEなどで送るだけで、スタッフの端末は<b>開いた瞬間に共有につながる</b>さ（URLを貼る手間なし）。自分のChromeやSafariで開いても同じに使えるよ。</div>
     <button class="act ghost gap" onclick="stopShare()">この端末の共有をやめる</button>
     <details>
       <summary>はじめての人向け：共有の作り方（1回だけ）</summary>
@@ -293,7 +295,7 @@
         <b>③</b> 最初のコードを消して、下のコードを<b>全部貼り付けて保存</b>（💾）<br>
         <b>④</b> 右上の <b>デプロイ → 新しいデプロイ</b>／種類＝<b>ウェブアプリ</b>／アクセス＝<b>全員</b>／デプロイ<br>
         <b>⑤</b> 出てきた <b>/exec で終わるURL</b> を上の「共有URL」に貼って「保存して接続」<br>
-        <b>⑥</b> スタッフの端末でも<b>同じURL</b>を貼れば、全員で共有完了さ
+        <b>⑥</b> 上の「<b>📨 スタッフ用の参加リンクをコピー</b>」を押して、出たリンクをスタッフに送るだけ。スタッフはそれを開けば自動で共有につながるさ（URLを貼る必要なし）
       </div>
       <textarea id="gas-code" readonly style="min-height:200px;margin-top:8px" onclick="this.select()"></textarea>
       <button class="act ghost" style="margin-top:8px" onclick="copyGas()">GASコードをコピー</button>
@@ -477,6 +479,27 @@ function saveShareUrl() {
 function stopShare() {
   SHARE.url = ''; localStorage.removeItem(SHAREKEY); SHARE.dirty = false; clearTimeout(SHARE.timer);
   updateShareStatus(); renderSetup(); renderLinkBanner(); toast('この端末の共有をOFFにしたさ');
+}
+/* ===== スタッフ用の参加リンク（開くだけで同じ共有に自動接続） ===== */
+function b64u(s) { return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function b64uDec(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return decodeURIComponent(escape(atob(s))); }
+function joinLink() { return shareOn() ? (location.origin + location.pathname + '#s=' + b64u(SHARE.url)) : ''; }
+function copyJoinLink() {
+  if (!shareOn()) { toast('先に共有URLを保存してね'); return; }
+  const link = joinLink();
+  const done = () => toast('参加リンクをコピーしたさ！LINEなどでスタッフに送ってね');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done, () => window.prompt('このリンクをスタッフに送ってね', link));
+  else window.prompt('このリンクをスタッフに送ってね', link);
+}
+function applyJoinHash() {
+  const m = (location.hash || '').match(/[#&]s=([^&]+)/);
+  if (!m) return false;
+  let url = ''; try { url = b64uDec(m[1]); } catch (e) { return false; }
+  history.replaceState(null, '', location.pathname + location.search);   // リンクからURLを消す
+  if (!url || url.indexOf('http') !== 0 || url === SHARE.url) return false;
+  SHARE.url = url; localStorage.setItem(SHAREKEY, url);
+  const inp = document.getElementById('share-url'); if (inp) inp.value = url;
+  return true;
 }
 async function syncNowShare() {
   if (!shareOn()) { toast('先に共有URLを保存してね'); return; }
@@ -1252,7 +1275,8 @@ document.getElementById('prep-made').value = today();
 document.getElementById('add-qty').value = 0;
 document.getElementById('add-cost').value = 0;
 renderStock();
-if (shareOn()) { startShareLoop(); pullShared({ force: true }); }   // 起動時：共有先の最新を取得
+const _joined = applyJoinHash();   // 参加リンクから開いたら共有URLを自動セット
+if (shareOn()) { startShareLoop(); pullShared({ force: true }); if (_joined) toast('共有につないださ！みんなの串在庫を読み込むよ🍢'); }   // 起動時：共有先の最新を取得
 READY = true;
 </script>
 </body>
