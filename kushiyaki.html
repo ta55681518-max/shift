@@ -253,6 +253,17 @@
       <a href="../zaiko/" style="color:#2a6b7c;font-weight:600">zaikoを開いて出数を入れて</a>きてね。
     </div>
     <div id="r-src" class="muted gap"></div>
+    <div class="gap" style="background:#f5efe7;border-radius:10px;padding:9px 11px">
+      <div style="font-size:13px;color:#6a5f56;margin-bottom:6px">反映のもと（どこから本数を出す？）</div>
+      <label style="display:flex;align-items:center;gap:8px;margin:0 0 5px;font-size:14px;color:#2a2420;cursor:pointer">
+        <input type="radio" name="rby" value="material" onchange="setReflectBy('material')" style="width:auto;flex:0 0 auto">
+        <span>材料の使用量（zaikoのレシピ換算）<span class="muted">←おすすめ</span></span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:14px;color:#2a2420;cursor:pointer">
+        <input type="radio" name="rby" value="sales" onchange="setReflectBy('sales')" style="width:auto;flex:0 0 auto">
+        <span>商品の出数 × 1注文の本数</span>
+      </label>
+    </div>
     <label>反映する営業日</label>
     <div class="row gap">
       <select id="r-date"></select>
@@ -384,7 +395,7 @@ const SOON = 2;                       // 消費期限「まもなく」の日数
      min:最低ライン, par:目標(仕込み到達点), per:1品あたり本数, cost:原価(円/本), keep:日持ち日数,
      lots:[ {id, made:仕込み日, exp:消費期限, qty:残り本数} ]
    } */
-function blank() { return { items: {}, applied: {}, log: [], losses: [], seq: 1, syncZaiko: true }; }
+function blank() { return { items: {}, applied: {}, log: [], losses: [], seq: 1, syncZaiko: true, reflectBy: 'material' }; }
 let KDB = loadK();
 let VIEW = [];        // 在庫の表示順（名前配列）
 let PICK = [];        // 設定タブの商品チェックリスト表示順
@@ -535,6 +546,7 @@ function normalizeItems() {
   let changed = false;
   if (!Array.isArray(KDB.losses)) { KDB.losses = []; changed = true; }
   if (KDB.seq == null) { KDB.seq = 1; changed = true; }
+  if (KDB.reflectBy == null) { KDB.reflectBy = 'material'; changed = true; }
   Object.keys(KDB.items).forEach(n => {
     const it = KDB.items[n];
     if (!Array.isArray(it.lots)) {
@@ -1079,6 +1091,8 @@ function renderReflect() {
   if (!z) { src.innerHTML = '<span class="warn" style="display:block">zaikoが読めてないさ。「串の設定・連携」で読み直してね。</span>'; }
   else src.innerHTML = `連携元：${zaikoIsLive() ? '同じ端末のzaiko' : '控え'}／串の登録 ${Object.keys(KDB.items).length}種`;
 
+  document.querySelectorAll('input[name="rby"]').forEach(r => { r.checked = (r.value === (KDB.reflectBy || 'material')); });
+
   const days = reflectableDays();
   const sel = document.getElementById('r-date');
   const unappliedLatest = [...days].reverse().find(d => !KDB.applied[d]);
@@ -1104,19 +1118,43 @@ function soldOn(d) {
   return map;
 }
 
+/* 指定日の材料使用量 = zaikoのレシピ（分量）× 出数。串は「本数」で登録している前提。
+   zaikoのcalcUsageと同じ計算（ing.amount × 出数）を、串として登録ずみの材料だけ返す。 */
+function usedOn(d) {
+  const z = readZaiko(); if (!z) return {};
+  const rec = z.recipes || {};
+  const rows = (z.days || {})[d] || [];
+  const use = {};
+  rows.forEach(r => {
+    const rc = rec[r.name];
+    if (!rc || !rc.length) return;
+    rc.forEach(ing => { use[ing.name] = (use[ing.name] || 0) + num(ing.amount) * num(r.qty); });
+  });
+  const map = {};
+  Object.keys(use).forEach(n => { if (KDB.items[n] != null && use[n]) map[n] = use[n]; });
+  return map;
+}
+
+/* 反映のもと：material=材料使用量（レシピ換算）／sales=出数×本数 */
+function consumedOn(d) { return KDB.reflectBy === 'material' ? usedOn(d) : soldOn(d); }
+function setReflectBy(v) { KDB.reflectBy = (v === 'material' ? 'material' : 'sales'); save(); renderReflect(); toast(KDB.reflectBy === 'material' ? '材料使用量（レシピ換算）で引くさ' : '出数×本数で引くさ'); }
+
 function previewReflect() {
   const d = document.getElementById('r-date').value;
   const box = document.getElementById('r-preview');
   if (!d) { box.innerHTML = ''; return; }
-  const sold = soldOn(d);
+  const sold = consumedOn(d);
   const names = Object.keys(sold);
   if (!names.length) {
-    box.innerHTML = `<div class="warn" style="margin-top:9px">${esc(d)} は、登録した串に当てはまる出数が無かったさ。<br>（zaikoの商品名と、串の名前が合ってるか確認してね）</div>`;
+    const hint = KDB.reflectBy === 'material'
+      ? 'zaikoでレシピ（商品→串）が登録されてて、串の名前が合ってるか確認してね'
+      : 'zaikoの商品名と、串の名前が合ってるか確認してね';
+    box.innerHTML = `<div class="warn" style="margin-top:9px">${esc(d)} は、登録した串に当てはまる${KDB.reflectBy === 'material' ? '材料使用量' : '出数'}が無かったさ。<br>（${hint}）</div>`;
     return;
   }
   box.innerHTML = `<div class="${KDB.applied[d] ? 'warn' : 'ok'}" style="margin-top:9px">
-      ${esc(d)}${KDB.applied[d] ? ' はもう反映ずみさ（もう一度押すと二重に引くよ→止めてある）' : ' の出数を引くと…'}</div>
-    <table style="margin-top:6px"><thead><tr><th>串</th><th class="num">売れた本数</th><th class="num">反映後の残り</th></tr></thead><tbody>${
+      ${esc(d)}${KDB.applied[d] ? ' はもう反映ずみさ（もう一度押すと二重に引くよ→止めてある）' : (KDB.reflectBy === 'material' ? ' の材料使用量を引くと…' : ' の出数を引くと…')}</div>
+    <table style="margin-top:6px"><thead><tr><th>串</th><th class="num">使う本数</th><th class="num">反映後の残り</th></tr></thead><tbody>${
       names.sort((a, b) => sold[b] - sold[a]).map(n => {
         const after = stockOf(n) - sold[n];
         return `<tr><td>${esc(n)}</td><td class="num"><b>${fmt(sold[n])}</b></td>
@@ -1127,7 +1165,7 @@ function previewReflect() {
 
 function doReflect(d) {
   if (!d || KDB.applied[d]) return false;
-  const sold = soldOn(d);
+  const sold = consumedOn(d);
   const changes = {}; const shorts = [];
   Object.keys(sold).forEach(n => {
     const r = consume(n, sold[n]);
@@ -1142,13 +1180,13 @@ function applyReflect() {
   const d = document.getElementById('r-date').value;
   if (!d) { toast('反映する日が無いさ'); return; }
   if (KDB.applied[d]) { toast('その日はもう反映ずみさ'); return; }
-  if (!Object.keys(soldOn(d)).length) { toast('この日は引くものが無いさ'); return; }
-  ask(d + ' の出数を在庫から引くさ？', () => {
+  if (!Object.keys(consumedOn(d)).length) { toast('この日は引くものが無いさ'); return; }
+  ask(d + (KDB.reflectBy === 'material' ? ' の材料使用量' : ' の出数') + 'を在庫から引くさ？', () => {
     doReflect(d); save(); syncToZaiko('出数反映'); renderReflect(); toast(d + ' を反映したさ');
   });
 }
 function applyAllUnreflected() {
-  const days = reflectableDays().filter(d => !KDB.applied[d] && Object.keys(soldOn(d)).length);
+  const days = reflectableDays().filter(d => !KDB.applied[d] && Object.keys(consumedOn(d)).length);
   if (!days.length) { toast('未反映の日は無いさ'); return; }
   ask(`未反映の ${days.length}日ぶん（${days[0]}〜${days[days.length - 1]}）をまとめて引くさ？`, () => {
     let n = 0; days.forEach(d => { if (doReflect(d)) n++; });
