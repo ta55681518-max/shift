@@ -341,7 +341,7 @@
 
   <div class="card">
     <h2>どれを「串」として管理する？</h2>
-    <div class="muted gap">zaikoの商品から、串焼きだけ選んでね。チェックした串がこのアプリの在庫表に出るさ。</div>
+    <div class="muted gap">zaikoの商品名だけでなく、<b>レシピの中の材料名（例：豚バラ串）</b>もここに出るさ。本数で管理したい串を選んでね。チェックした串がこのアプリの在庫表に出るよ。<br>※材料モードで反映するなら、ここで選ぶ串の名前は<b>zaikoのレシピの材料名とぴったり同じ</b>にしてね。</div>
     <div class="row gap">
       <button class="mini go" onclick="autoPickKushi()">「串」がつく商品を自動で選ぶ</button>
       <button class="mini" onclick="pickAllKushi(false)">ぜんぶ外す</button>
@@ -579,8 +579,17 @@ function liveZaiko() { try { const z = JSON.parse(localStorage.getItem(ZKEY)); r
 function zProducts() {
   const z = readZaiko(); if (!z) return [];
   const s = new Set([...Object.keys(z.recipes || {}), ...(z.menus || [])]);
+  // レシピの中の材料名（＝本数で登録した串。例：豚バラ串）も選べるように加える
+  Object.values(z.recipes || {}).forEach(rec => (rec || []).forEach(ing => { if (ing && ing.name) s.add(ing.name); }));
   Object.values(z.days || {}).forEach(rows => rows.forEach(r => s.add(r.name)));
   return [...s].filter(Boolean).sort();
+}
+/* レシピに出てくる材料名だけ（串の候補） */
+function zMaterials() {
+  const z = readZaiko(); if (!z) return [];
+  const s = new Set();
+  Object.values(z.recipes || {}).forEach(rec => (rec || []).forEach(ing => { if (ing && ing.name) s.add(ing.name); }));
+  return [...s].sort();
 }
 function zDays() { const z = readZaiko(); return z ? (z.days || {}) : {}; }
 
@@ -1119,20 +1128,29 @@ function soldOn(d) {
 }
 
 /* 指定日の材料使用量 = zaikoのレシピ（分量）× 出数。串は「本数」で登録している前提。
-   zaikoのcalcUsageと同じ計算（ing.amount × 出数）を、串として登録ずみの材料だけ返す。 */
-function usedOn(d) {
-  const z = readZaiko(); if (!z) return {};
-  const rec = z.recipes || {};
-  const rows = (z.days || {})[d] || [];
-  const use = {};
+   zaikoのcalcUsageと同じ計算（ing.amount × 出数）。
+   matched=串登録ずみ／unreg=使ったのに串未登録／noRecipe=レシピ未登録の商品 */
+function usageDetail(d) {
+  const z = readZaiko();
+  const rec = z ? (z.recipes || {}) : {};
+  const rows = z ? ((z.days || {})[d] || []) : [];
+  const use = {}; const noRecipe = new Set();
   rows.forEach(r => {
     const rc = rec[r.name];
-    if (!rc || !rc.length) return;
-    rc.forEach(ing => { use[ing.name] = (use[ing.name] || 0) + num(ing.amount) * num(r.qty); });
+    if (!rc || !rc.length) { if (num(r.qty) > 0) noRecipe.add(r.name); return; }
+    rc.forEach(ing => { if (ing && ing.name) use[ing.name] = (use[ing.name] || 0) + num(ing.amount) * num(r.qty); });
   });
-  const map = {};
-  Object.keys(use).forEach(n => { if (KDB.items[n] != null && use[n]) map[n] = use[n]; });
-  return map;
+  const matched = {}, unreg = {};
+  Object.keys(use).forEach(n => { if (!use[n]) return; (KDB.items[n] != null ? matched : unreg)[n] = use[n]; });
+  return { matched, unreg, noRecipe: [...noRecipe] };
+}
+function usedOn(d) { return usageDetail(d).matched; }
+
+/* レシピ材料を串として1タップ登録 */
+function addKushiFromMaterial(name) {
+  if (!name || KDB.items[name]) return;
+  KDB.items[name] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] };
+  save(); renderReflect(); toast('「' + name + '」を串として追加したさ（在庫タブで本数・原価を入れてね）');
 }
 
 /* 反映のもと：material=材料使用量（レシピ換算）／sales=出数×本数 */
@@ -1145,14 +1163,30 @@ function previewReflect() {
   if (!d) { box.innerHTML = ''; return; }
   const sold = consumedOn(d);
   const names = Object.keys(sold);
+
+  // 材料モードのときは「拾えなかった原因」を出す（レシピの材料＝串が未登録／商品にレシピが無い）
+  let diag = '';
+  if (KDB.reflectBy === 'material') {
+    const det = usageDetail(d);
+    const unregNames = Object.keys(det.unreg).sort((a, b) => det.unreg[b] - det.unreg[a]);
+    if (unregNames.length) {
+      diag += `<div class="warn" style="margin-top:9px">レシピで使われてるけど、まだ<b>串として登録してない</b>材料があるさ。タップで串に追加できるよ：<br>${
+        unregNames.map(n => `<span class="chip" style="cursor:pointer" onclick="addKushiFromMaterial('${esc(n).replace(/'/g, "\\'")}')">＋ ${esc(n)}（${fmt(det.unreg[n])}本）</span>`).join(' ')
+      }</div>`;
+    }
+    if (det.noRecipe.length) {
+      diag += `<div class="muted" style="margin-top:6px">※レシピ未登録の商品：${det.noRecipe.map(esc).join('、')}（zaikoの「レシピ」タブで 商品→串◯本 を登録すると拾えるさ）</div>`;
+    }
+  }
+
   if (!names.length) {
     const hint = KDB.reflectBy === 'material'
-      ? 'zaikoでレシピ（商品→串）が登録されてて、串の名前が合ってるか確認してね'
+      ? 'zaikoの「レシピ」タブで 商品→串◯本 を登録し、レシピの材料名を串在庫の串名と合わせてね'
       : 'zaikoの商品名と、串の名前が合ってるか確認してね';
-    box.innerHTML = `<div class="warn" style="margin-top:9px">${esc(d)} は、登録した串に当てはまる${KDB.reflectBy === 'material' ? '材料使用量' : '出数'}が無かったさ。<br>（${hint}）</div>`;
+    box.innerHTML = diag + `<div class="warn" style="margin-top:9px">${esc(d)} は、登録した串に当てはまる${KDB.reflectBy === 'material' ? '材料使用量' : '出数'}が無かったさ。<br>（${hint}）</div>`;
     return;
   }
-  box.innerHTML = `<div class="${KDB.applied[d] ? 'warn' : 'ok'}" style="margin-top:9px">
+  box.innerHTML = diag + `<div class="${KDB.applied[d] ? 'warn' : 'ok'}" style="margin-top:9px">
       ${esc(d)}${KDB.applied[d] ? ' はもう反映ずみさ（もう一度押すと二重に引くよ→止めてある）' : (KDB.reflectBy === 'material' ? ' の材料使用量を引くと…' : ' の出数を引くと…')}</div>
     <table style="margin-top:6px"><thead><tr><th>串</th><th class="num">使う本数</th><th class="num">反映後の残り</th></tr></thead><tbody>${
       names.sort((a, b) => sold[b] - sold[a]).map(n => {
