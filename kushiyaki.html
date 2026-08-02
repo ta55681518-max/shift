@@ -70,6 +70,15 @@
   .alert { background: #fdeeea; border-left: 4px solid #c9412f; padding: 9px 11px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; }
   .ok { background: #eef6ed; border-left: 4px solid #4c8a3c; padding: 9px 11px; border-radius: 6px; font-size: 13px; margin-bottom: 10px; }
   .hide { display: none; }
+  .sbar { display: flex; align-items: center; gap: 10px; padding: 10px 13px; border-radius: 11px; margin-bottom: 12px; font-size: 13.5px; line-height: 1.45; }
+  .sbar span { flex: 1; }
+  .sbar button { flex: 0 0 auto; border: none; border-radius: 8px; padding: 8px 13px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .sbar.on { background: #eaf5ec; border: 1px solid #b6dcbb; color: #276b39; }
+  .sbar.on button { background: #3c8a4c; color: #fff; }
+  .sbar.off { background: #fff3e6; border: 1px solid #f0c99a; color: #9a5a1c; }
+  .sbar.off button { background: #c9622f; color: #fff; }
+  .sbar.err { background: #fdeeea; border: 1px solid #e6b3a6; color: #b0402a; }
+  .sbar.err button { background: #b0402a; color: #fff; }
   .pill { display: inline-block; background: #eee2d6; color: #6a5f56; border-radius: 20px; padding: 2px 9px; font-size: 11px; margin-left: 5px; }
   .pill.red { background: #f6d9d2; color: #b0402a; }
   .pill.grn { background: #dcecd8; color: #3c7a2c; }
@@ -162,6 +171,8 @@
   <button class="tab" data-t="reflect">出数を反映</button>
   <button class="tab" data-t="setup">串の設定・連携</button>
 </div>
+
+<div id="share-bar"></div>
 
 <!-- ============ 串の在庫 ============ -->
 <div id="p-stock">
@@ -520,7 +531,33 @@ async function syncNowShare() {
   toast('同期したさ（最終同期 ' + shareTime(SHARE.lastSync) + '）');
 }
 function shareTime(ms) { if (!ms) return '—'; const d = new Date(ms); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
+function goTab(t) {
+  const b = [...document.querySelectorAll('.tab')].find(x => x.dataset.t === t);
+  if (b) b.click();
+  window.scrollTo(0, 0);
+}
+/* 全タブ共通：この端末が共有につながっているか一目でわかるバー */
+function renderShareBar() {
+  const el = document.getElementById('share-bar'); if (!el) return;
+  if (!shareOn()) {
+    el.innerHTML = `<div class="sbar off">
+      <span><b>👥 スタッフ共有：OFF</b> ― この端末だけで保存中（他の人には反映されません）</span>
+      <button onclick="goTab('setup')">つなぐ</button></div>`;
+    return;
+  }
+  if (SHARE.err) {
+    el.innerHTML = `<div class="sbar err">
+      <span><b>👥 共有エラー</b> ― つながっていないかもしれないさ</span>
+      <button onclick="goTab('setup')">確認</button></div>`;
+    return;
+  }
+  const state = SHARE.pushing ? '保存中…' : SHARE.dirty ? '同期待ち…' : '同期OK';
+  el.innerHTML = `<div class="sbar on">
+    <span><b>👥 スタッフ共有：ON</b> ― この端末はつながっています（${state}／最終同期 ${shareTime(SHARE.lastSync)}）</span>
+    <button onclick="syncNowShare()">今すぐ同期</button></div>`;
+}
 function updateShareStatus() {
+  renderShareBar();
   const el = document.getElementById('share-status'); if (!el) return;
   const pill = document.getElementById('share-pill');
   if (!shareOn()) { el.innerHTML = '<span class="muted">共有OFF（この端末だけで保存中）</span>'; if (pill) pill.textContent = 'OFF'; return; }
@@ -1348,6 +1385,7 @@ document.getElementById('add-qty').value = 0;
 document.getElementById('add-cost').value = 0;
 renderStock();
 const _joined = applyJoinHash();   // 参加リンクから開いたら共有URLを自動セット
+renderShareBar();                  // 全タブ共通の共有ON/OFF表示
 if (shareOn()) { startShareLoop(); pullShared({ force: true }); if (_joined) toast('共有につないださ！みんなの串在庫を読み込むよ🍢'); }   // 起動時：共有先の最新を取得
 READY = true;
 </script>
