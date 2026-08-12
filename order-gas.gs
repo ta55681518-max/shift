@@ -47,7 +47,7 @@ function ensureSheets_() {
   if (!ss.getSheetByName(SHEET_ORDER)) {
     const sh = ss.insertSheet(SHEET_ORDER);
     sh.getRange(1, 1, 1, 9).setValues([[
-      "受付日時", "予約番号", "お名前", "電話番号", "受取日", "受取時間", "注文内容", "合計", "ご要望",
+      "受付日時", "予約番号", "お名前", "電話番号", "受取日", "受取時間", "注文内容", "合計", "備考",
     ]]);
     sh.setFrozenRows(1);
   }
@@ -134,7 +134,7 @@ function doPost(e) {
         "受取：" + p.date + " " + p.time + "\n" +
         "内容：" + itemsText + "\n" +
         "合計：¥" + total + "\n" +
-        "ご要望：" + (p.note || "なし")
+        "備考：" + (p.note || "なし")
       );
     }
 

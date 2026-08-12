@@ -165,8 +165,8 @@
   </div>
 
   <div class="card">
-    <label class="ttl">📝 ご要望（任意）</label>
-    <textarea id="note" rows="3" placeholder="例：エビ抜きでお願いします など"></textarea>
+    <label class="ttl">📝 備考（任意）</label>
+    <textarea id="note" rows="3"></textarea>
   </div>
 
   <button class="send" id="sendBtn" onclick="openConfirm()">予約内容を確認する</button>
@@ -328,7 +328,7 @@
     rows += '<tr class="sep"><td class="k">お受け取り</td><td>'+fmtDateJa(p.date)+' '+p.time+'</td></tr>';
     rows += '<tr><td class="k">お名前</td><td>'+esc(p.name)+' さま</td></tr>';
     rows += '<tr><td class="k">お電話</td><td>'+esc(p.tel)+'</td></tr>';
-    if (p.note) rows += '<tr><td class="k">ご要望</td><td>'+esc(p.note)+'</td></tr>';
+    if (p.note) rows += '<tr><td class="k">備考</td><td>'+esc(p.note)+'</td></tr>';
     tbl.innerHTML = rows;
     document.getElementById("overlay").classList.add("show");
   }
