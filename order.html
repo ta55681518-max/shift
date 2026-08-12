@@ -20,23 +20,29 @@
   .wrap { max-width: 480px; margin: 0 auto; padding: 16px; }
   .card { background: #241813; border-radius: 14px; padding: 16px; margin-bottom: 16px; border: 1px solid #3a2a22; }
   label.ttl { display: block; font-size: 13px; color: #ffcf9e; margin-bottom: 8px; font-weight: bold; }
-  select, textarea, input[type=text], input[type=tel], input[type=date] {
+  select, textarea, input[type=text], input[type=tel] {
     width: 100%; padding: 12px; font-size: 16px; border-radius: 10px;
     border: 1px solid #5a4438; background: #160f0c; color: #f5efe6;
   }
-  input[type=date] { -webkit-appearance: none; appearance: none; min-height: 48px; }
   .row { display: flex; align-items: center; gap: 8px; }
   .row > * { flex: 1; }
   .note-hint { font-size: 11px; color: #9a887c; margin-top: 6px; }
+
+  /* イメージ写真 */
+  .photo {
+    width: 100%; border-radius: 12px; display: block; margin-bottom: 12px;
+    border: 1px solid #3a2a22; aspect-ratio: 4/3; object-fit: cover; background: #160f0c;
+  }
+  .photo.hide { display: none; }
 
   /* メニュー */
   .item { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid #3a2a22; }
   .item:last-child { border-bottom: none; padding-bottom: 0; }
   .item:first-child { padding-top: 0; }
   .item .info { flex: 1; min-width: 0; }
-  .item .nm { font-size: 15px; font-weight: bold; }
+  .item .nm { font-size: 16px; font-weight: bold; }
   .item .ds { font-size: 12px; color: #b9a99c; margin-top: 2px; }
-  .item .pr { font-size: 14px; color: #ffcf9e; font-weight: bold; margin-top: 2px; }
+  .item .pr { font-size: 15px; color: #ffcf9e; font-weight: bold; margin-top: 2px; }
   .stepper { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
   .stepper button {
     width: 40px; height: 40px; border-radius: 10px; border: 1px solid #5a4438;
@@ -51,6 +57,13 @@
   .total-line .amt { font-size: 24px; font-weight: bold; color: #ffcf9e; }
   .total-line .amt small { font-size: 13px; }
 
+  /* 受け取り日時 */
+  .fixed-date {
+    text-align: center; font-size: 18px; font-weight: bold; color: #ffcf9e;
+    padding: 12px; border-radius: 10px; background: #160f0c; border: 1px solid #5a4438;
+    margin-bottom: 10px;
+  }
+
   .send {
     width: 100%; padding: 16px; font-size: 18px; font-weight: bold; border: none; border-radius: 12px;
     background: linear-gradient(180deg,#ff7b3d,#e8541f); color: #fff; letter-spacing: 2px;
@@ -59,10 +72,10 @@
   .send:active { transform: translateY(2px); box-shadow: 0 2px 0 #a83a12; }
   .send:disabled { background: #5a4438; box-shadow: none; color: #9a887c; }
 
-  #loading, #thanks { text-align: center; padding: 60px 20px; }
-  #thanks { display: none; }
-  #thanks .big { font-size: 60px; }
-  #thanks h2 { color: #ffcf9e; }
+  #loading, #thanks, #closed { text-align: center; padding: 60px 20px; }
+  #thanks, #closed { display: none; }
+  #thanks .big, #closed .big { font-size: 60px; }
+  #thanks h2, #closed h2 { color: #ffcf9e; }
   #thanks .odr {
     display: inline-block; margin-top: 8px; padding: 8px 18px; border-radius: 10px;
     background: #241813; border: 1px solid #3a2a22; font-size: 18px; font-weight: bold; color: #ff9a6b;
@@ -116,10 +129,19 @@
 
 <div id="loading">よみこみ中…</div>
 
+<div id="closed">
+  <div class="big">🙇</div>
+  <h2>ご予約の受付は終了しました</h2>
+  <p style="color:#9a887c; font-size:13px;">お問い合わせはお電話でお願いします</p>
+</div>
+
 <div class="wrap" id="app" style="display:none">
 
   <div class="card">
     <label class="ttl">🍢 ご注文内容（数量をえらんでね）</label>
+    <!-- イメージ写真：order-photo.jpg という名前で同じ場所に置くと表示されます -->
+    <img class="photo" id="photo" src="order-photo.jpg" alt="オードブルのイメージ写真"
+         onerror="this.classList.add('hide')">
     <div id="menuList"></div>
     <div class="total-line" style="margin-top:12px; border-top:1px solid #3a2a22; padding-top:12px;">
       <span class="lbl">合計（税込）</span>
@@ -129,11 +151,9 @@
 
   <div class="card">
     <label class="ttl">📅 お受け取り日時</label>
-    <div class="row">
-      <input type="date" id="pDate">
-      <select id="pTime"></select>
-    </div>
-    <div class="note-hint" id="leadHint"></div>
+    <div class="fixed-date" id="fixedDateLabel"></div>
+    <select id="pTime"></select>
+    <div class="note-hint" id="timeHint"></div>
   </div>
 
   <div class="card">
@@ -146,7 +166,7 @@
 
   <div class="card">
     <label class="ttl">📝 ご要望・アレルギーなど（任意）</label>
-    <textarea id="note" rows="3" placeholder="例：エビ抜きでお願いします／のし紙希望 など"></textarea>
+    <textarea id="note" rows="3" placeholder="例：エビ抜きでお願いします など"></textarea>
   </div>
 
   <button class="send" id="sendBtn" onclick="openConfirm()">予約内容を確認する</button>
@@ -182,17 +202,16 @@
   const GAS_URL = "";
   // ▲▲▲ https://script.google.com/macros/s/～/exec の形 ▲▲▲
 
-  // GASにつながらないとき用の初期メニュー（GAS側の「メニュー」シートで上書きできる）
+  // GASにつながらないとき用の初期設定（GAS側の「メニュー」「設定」シートで上書きできる）
   const DEFAULT_INFO = {
     items: [
-      { name: "串焼オードブル（小）", desc: "2〜3人前・串焼き盛り合わせ", price: 3000 },
-      { name: "串焼オードブル（中）", desc: "4〜5人前・串焼き＋一品料理", price: 5000 },
-      { name: "串焼オードブル（大）", desc: "6〜8人前・宴会にぴったり", price: 8000 }
+      { name: "オードブル", desc: "串焼KEMURI屋 特製オードブル", price: 8000 }
     ],
-    leadDays: 2,          // 何日前までに予約が必要か
-    maxDays: 60,          // 何日先まで受け付けるか
-    timeFrom: 17, timeTo: 22, timeStep: 0.5,  // 受け取り時間（30分きざみ）
-    notice: "お受け取りの2日前までにご予約ください"
+    fixedDate: "2026-08-27",   // お渡し日（この日限定）
+    deadline: "2026-08-25",    // 予約のしめきり（この日まで受付）
+    timeFrom: 12, timeTo: 17, timeStep: 0.5,  // 受け取り時間（30分きざみ）
+    imageUrl: "",              // 空なら同じ場所の order-photo.jpg を表示
+    notice: "8月27日お渡し限定・ご予約は8月25日まで"
   };
 
   let INFO = null;
@@ -205,9 +224,9 @@
   }
   function yen(n){ return Number(n).toLocaleString("ja-JP"); }
   function fmtT(v){ const h=Math.floor(v), m=(v-h)*60; return String(h)+":"+(m?"30":"00"); }
-  function ymd(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  function todayYmd(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
   const WD = ["日","月","火","水","木","金","土"];
-  function fmtDateJa(s){ const [y,m,d]=s.split("-").map(Number); const wd=WD[new Date(y,m-1,d).getDay()]; return y+"年"+m+"月"+d+"日（"+wd+"）"; }
+  function fmtDateJa(s){ const [y,m,d]=s.split("-").map(Number); const wd=WD[new Date(y,m-1,d).getDay()]; return m+"月"+d+"日（"+wd+"）"; }
 
   async function init() {
     INFO = DEFAULT_INFO;
@@ -216,13 +235,23 @@
         const res = await fetch(GAS_URL);
         const r = await res.json();
         if (r && r.ok) INFO = Object.assign({}, DEFAULT_INFO, r);
-      } catch (e) { /* つながらなければ初期メニューで表示 */ }
+      } catch (e) { /* つながらなければ初期設定で表示 */ }
     }
     buildUI();
   }
 
   function buildUI() {
+    document.getElementById("loading").style.display="none";
     document.getElementById("noticeLabel").textContent = INFO.notice || "";
+
+    // しめきりを過ぎていたら受付終了
+    if (INFO.deadline && todayYmd() > INFO.deadline) {
+      document.getElementById("closed").style.display="block";
+      return;
+    }
+
+    // イメージ写真（設定シートの写真URLがあればそちらを優先）
+    if (INFO.imageUrl) document.getElementById("photo").src = INFO.imageUrl;
 
     // メニュー
     const list = document.getElementById("menuList");
@@ -247,22 +276,16 @@
       list.appendChild(div);
     });
 
-    // 受け取り日（リード日数〜maxDays先まで）
-    const dEl = document.getElementById("pDate");
-    const min = new Date(); min.setDate(min.getDate() + (INFO.leadDays||0));
-    const max = new Date(); max.setDate(max.getDate() + (INFO.maxDays||60));
-    dEl.min = ymd(min); dEl.max = ymd(max); dEl.value = ymd(min);
-    document.getElementById("leadHint").textContent =
-      "ご予約は" + (INFO.leadDays||0) + "日後（" + fmtDateJa(ymd(min)).replace(/^\d+年/,"") + "）以降のお受け取り分から承ります";
-
-    // 受け取り時間
+    // お渡し日（固定）と受け取り時間
+    document.getElementById("fixedDateLabel").textContent = fmtDateJa(INFO.fixedDate) + " お渡し";
     const tEl = document.getElementById("pTime");
     tEl.innerHTML = "";
     for (let v=INFO.timeFrom; v<=INFO.timeTo; v+=INFO.timeStep) {
       const o=document.createElement("option"); o.value=fmtT(v); o.textContent=fmtT(v); tEl.appendChild(o);
     }
+    document.getElementById("timeHint").textContent =
+      fmtT(INFO.timeFrom) + "〜" + fmtT(INFO.timeTo) + " の間でお受け取り時間をえらんでね";
 
-    document.getElementById("loading").style.display="none";
     document.getElementById("app").style.display="block";
   }
 
@@ -282,20 +305,14 @@
 
   function validate() {
     const items = pickedItems();
-    if (!items.length) { toast("商品を1つ以上えらんでね"); return null; }
-    const date = document.getElementById("pDate").value;
-    if (!date) { toast("お受け取り日をえらんでね"); return null; }
-    const dEl = document.getElementById("pDate");
-    if ((dEl.min && date < dEl.min) || (dEl.max && date > dEl.max)) {
-      toast("お受け取り日は " + fmtDateJa(dEl.min) + " 以降でお願いします"); return null;
-    }
+    if (!items.length) { toast("数量をえらんでね"); return null; }
     const time = document.getElementById("pTime").value;
     const name = document.getElementById("cName").value.trim();
     if (!name) { toast("お名前を入れてね"); return null; }
     const tel = document.getElementById("cTel").value.replace(/[^0-9]/g,"");
     if (tel.length < 10 || tel.length > 11) { toast("電話番号を確認してね（10〜11桁）"); return null; }
     const total = items.reduce((s,x)=>s+x.price*x.qty, 0);
-    return { name, tel, date, time, items, total, note: document.getElementById("note").value.trim() };
+    return { name, tel, date: INFO.fixedDate, time, items, total, note: document.getElementById("note").value.trim() };
   }
 
   let PENDING = null;

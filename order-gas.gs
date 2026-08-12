@@ -25,23 +25,22 @@ function ensureSheets_() {
   const ss = ss_();
   if (!ss.getSheetByName(SHEET_MENU)) {
     const sh = ss.insertSheet(SHEET_MENU);
-    sh.getRange(1, 1, 4, 4).setValues([
+    sh.getRange(1, 1, 2, 4).setValues([
       ["商品名", "説明", "価格", "表示"],
-      ["串焼オードブル（小）", "2〜3人前・串焼き盛り合わせ", 3000, true],
-      ["串焼オードブル（中）", "4〜5人前・串焼き＋一品料理", 5000, true],
-      ["串焼オードブル（大）", "6〜8人前・宴会にぴったり", 8000, true],
+      ["オードブル", "串焼KEMURI屋 特製オードブル", 8000, true],
     ]);
     sh.setFrozenRows(1);
   }
   if (!ss.getSheetByName(SHEET_CONF)) {
     const sh = ss.insertSheet(SHEET_CONF);
-    sh.getRange(1, 1, 7, 2).setValues([
-      ["リード日数", 2],
-      ["受付最大日数", 60],
-      ["受取開始時刻", 17],
-      ["受取終了時刻", 22],
+    sh.getRange(1, 1, 8, 2).setValues([
+      ["受取日", "2026-08-27"],
+      ["締切日", "2026-08-25"],
+      ["受取開始時刻", 12],
+      ["受取終了時刻", 17],
       ["受取刻み(時間)", 0.5],
-      ["お知らせ", "お受け取りの2日前までにご予約ください"],
+      ["お知らせ", "8月27日お渡し限定・ご予約は8月25日まで"],
+      ["写真URL", ""],  // 入れるとページの写真がこのURLに差し替わる
       ["通知メール", ""],  // 入れると新規予約のたびにメールが届く
     ]);
   }
@@ -76,13 +75,21 @@ function doGet() {
   return json_({
     ok: true,
     items: items,
-    leadDays: Number(conf["リード日数"]) || 0,
-    maxDays: Number(conf["受付最大日数"]) || 60,
-    timeFrom: Number(conf["受取開始時刻"]) || 17,
-    timeTo: Number(conf["受取終了時刻"]) || 22,
+    fixedDate: dateStr_(conf["受取日"], "2026-08-27"),
+    deadline: dateStr_(conf["締切日"], "2026-08-25"),
+    timeFrom: Number(conf["受取開始時刻"]) || 12,
+    timeTo: Number(conf["受取終了時刻"]) || 17,
     timeStep: Number(conf["受取刻み(時間)"]) || 0.5,
+    imageUrl: String(conf["写真URL"] || ""),
     notice: String(conf["お知らせ"] || ""),
   });
+}
+
+/** 設定シートの日付を "YYYY-MM-DD" 文字列にそろえる（Dateでも文字でもOK） */
+function dateStr_(v, fallback) {
+  if (v instanceof Date) return Utilities.formatDate(v, "Asia/Tokyo", "yyyy-MM-dd");
+  const s = String(v || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : fallback;
 }
 
 /** 予約の送信を受け取る */
