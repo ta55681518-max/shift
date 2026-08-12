@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>串焼KEMURI屋 オードブルご予約</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    background: #1a1210; color: #f5efe6; padding: 0 0 40px;
+  }
+  header {
+    background: linear-gradient(180deg,#3a1c12,#2a1109); padding: 18px 16px 14px;
+    text-align: center; border-bottom: 2px solid #e8622a; position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: 1px; }
+  header .sub { margin-top: 4px; font-size: 15px; color: #ffcf9e; font-weight: bold; }
+  header .notice { margin-top: 2px; font-size: 12px; color: #ff9a6b; }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 16px; }
+  .card { background: #241813; border-radius: 14px; padding: 16px; margin-bottom: 16px; border: 1px solid #3a2a22; }
+  label.ttl { display: block; font-size: 13px; color: #ffcf9e; margin-bottom: 8px; font-weight: bold; }
+  select, textarea, input[type=text], input[type=tel] {
+    width: 100%; padding: 12px; font-size: 16px; border-radius: 10px;
+    border: 1px solid #5a4438; background: #160f0c; color: #f5efe6;
+  }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row > * { flex: 1; }
+  .note-hint { font-size: 11px; color: #9a887c; margin-top: 6px; }
+
+  /* イメージ写真 */
+  .photo {
+    width: 100%; height: auto; border-radius: 12px; display: block; margin-bottom: 12px;
+    border: 1px solid #3a2a22; background: #160f0c;
+  }
+  .photo.hide { display: none; }
+
+  /* メニュー */
+  .item { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid #3a2a22; }
+  .item:last-child { border-bottom: none; padding-bottom: 0; }
+  .item:first-child { padding-top: 0; }
+  .item .info { flex: 1; min-width: 0; }
+  .item .nm { font-size: 16px; font-weight: bold; }
+  .item .ds { font-size: 12px; color: #b9a99c; margin-top: 2px; }
+  .item .pr { font-size: 15px; color: #ffcf9e; font-weight: bold; margin-top: 2px; }
+  .stepper { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .stepper button {
+    width: 40px; height: 40px; border-radius: 10px; border: 1px solid #5a4438;
+    background: #2e2019; color: #ffcf9e; font-size: 20px; font-weight: bold; line-height: 1;
+  }
+  .stepper button:active { background: #3a2a22; }
+  .stepper .qty { width: 30px; text-align: center; font-size: 17px; font-weight: bold; }
+  .item.picked .nm { color: #ff9a6b; }
+
+  .total-line { display: flex; justify-content: space-between; align-items: baseline; margin-top: 4px; }
+  .total-line .lbl { font-size: 13px; color: #ffcf9e; font-weight: bold; }
+  .total-line .amt { font-size: 24px; font-weight: bold; color: #ffcf9e; }
+  .total-line .amt small { font-size: 13px; }
+
+  /* 受け取り日時 */
+  .fixed-date {
+    text-align: center; font-size: 18px; font-weight: bold; color: #ffcf9e;
+    padding: 12px; border-radius: 10px; background: #160f0c; border: 1px solid #5a4438;
+    margin-bottom: 10px;
+  }
+
+  .send {
+    width: 100%; padding: 16px; font-size: 18px; font-weight: bold; border: none; border-radius: 12px;
+    background: linear-gradient(180deg,#ff7b3d,#e8541f); color: #fff; letter-spacing: 2px;
+    box-shadow: 0 4px 0 #a83a12;
+  }
+  .send:active { transform: translateY(2px); box-shadow: 0 2px 0 #a83a12; }
+  .send:disabled { background: #5a4438; box-shadow: none; color: #9a887c; }
+
+  #loading, #thanks, #closed { text-align: center; padding: 60px 20px; }
+  #thanks, #closed { display: none; }
+  #thanks .big, #closed .big { font-size: 60px; }
+  #thanks h2, #closed h2 { color: #ffcf9e; }
+  #thanks .odr {
+    display: inline-block; margin-top: 8px; padding: 8px 18px; border-radius: 10px;
+    background: #241813; border: 1px solid #3a2a22; font-size: 18px; font-weight: bold; color: #ff9a6b;
+  }
+  #thanksDetail { text-align: left; max-width: 340px; margin: 16px auto 0; font-size: 14px; color: #d8cabb; line-height: 1.7; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: #000; color: #fff; padding: 12px 20px; border-radius: 24px; font-size: 14px;
+    opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50; max-width: 90%;
+  }
+  .toast.show { opacity: .95; }
+
+  /* 確認のボトムシート */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 60;
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  .overlay.show { display: flex; }
+  .sheet {
+    width: 100%; max-width: 480px; background: #241813; border-radius: 18px 18px 0 0;
+    padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); border-top: 2px solid #e8622a;
+    animation: up .18s ease; max-height: 80vh; overflow-y: auto;
+  }
+  @keyframes up { from { transform: translateY(30px); opacity:.5 } to { transform: none; opacity:1 } }
+  .sheet h3 { margin: 0 0 14px; text-align: center; font-size: 17px; color: #ffcf9e; }
+  .cf-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .cf-table td { padding: 6px 0; vertical-align: top; }
+  .cf-table td.k { color: #b9a99c; width: 88px; }
+  .cf-table tr.sep td { border-top: 1px solid #3a2a22; padding-top: 10px; }
+  .sheet-actions { display: flex; gap: 10px; margin-top: 16px; }
+  .btn-back {
+    flex: 1; padding: 14px; font-size: 15px; border-radius: 12px;
+    border: 1px solid #5a4438; background: #2e2019; color: #ffcf9e; font-weight: bold;
+  }
+  .btn-ok {
+    flex: 2; padding: 14px; font-size: 16px; border: none; border-radius: 12px;
+    background: linear-gradient(180deg,#ff7b3d,#e8541f); color: #fff; font-weight: bold;
+    box-shadow: 0 3px 0 #a83a12;
+  }
+  .btn-ok:disabled { background: #5a4438; box-shadow: none; color: #9a887c; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>串焼<span style="color:#ff7b3d">KEMURI屋</span></h1>
+  <div class="sub">オードブル Web予約</div>
+  <div class="notice" id="noticeLabel"></div>
+</header>
+
+<div id="loading">よみこみ中…</div>
+
+<div id="closed">
+  <div class="big">🙇</div>
+  <h2>ご予約の受付は終了しました</h2>
+  <p style="color:#9a887c; font-size:13px;">お問い合わせはお電話でお願いします</p>
+</div>
+
+<div class="wrap" id="app" style="display:none">
+
+  <div class="card">
+    <label class="ttl">🍢 ご注文内容（数量をえらんでね）</label>
+    <!-- イメージ写真：order-photo.jpg という名前で同じ場所に置くと表示されます -->
+    <img class="photo" id="photo" src="order-photo.jpg" alt="オードブルのイメージ写真"
+         onerror="this.classList.add('hide')">
+    <div id="menuList"></div>
+    <div class="total-line" style="margin-top:12px; border-top:1px solid #3a2a22; padding-top:12px;">
+      <span class="lbl">合計（税込）</span>
+      <span class="amt"><small>¥</small><span id="totalAmt">0</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="ttl">📅 お受け取り日時</label>
+    <div class="fixed-date" id="fixedDateLabel"></div>
+    <select id="pTime"></select>
+    <div class="note-hint" id="timeHint"></div>
+  </div>
+
+  <div class="card">
+    <label class="ttl">👤 お客さま情報</label>
+    <input type="text" id="cName" placeholder="お名前（例：山田 太郎）" autocomplete="name">
+    <div style="height:10px"></div>
+    <input type="tel" id="cTel" placeholder="お電話番号（例：09012345678）" autocomplete="tel">
+    <div class="note-hint">当日ご連絡がつく番号をお願いします</div>
+  </div>
+
+  <div class="card">
+    <label class="ttl">📝 ご要望・アレルギーなど（任意）</label>
+    <textarea id="note" rows="3" placeholder="例：エビ抜きでお願いします など"></textarea>
+  </div>
+
+  <button class="send" id="sendBtn" onclick="openConfirm()">予約内容を確認する</button>
+  <div class="note-hint" style="text-align:center; margin-top:10px;">
+    お支払いはお受け取り時に店頭でお願いします
+  </div>
+</div>
+
+<div id="thanks">
+  <div class="big">🎉</div>
+  <h2>ご予約ありがとうございます！</h2>
+  <div>ご予約番号</div>
+  <div class="odr" id="orderIdLabel">-</div>
+  <div id="thanksDetail"></div>
+  <p style="color:#9a887c; font-size:13px;">内容の変更・キャンセルはお電話でお願いします</p>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="sheet">
+    <h3>この内容でご予約します</h3>
+    <table class="cf-table" id="cfTable"></table>
+    <div class="sheet-actions">
+      <button class="btn-back" onclick="closeConfirm()">もどる</button>
+      <button class="btn-ok" id="okBtn" onclick="submitOrder()">予約を確定する</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ▼▼▼ GAS（order-gas.gs）をデプロイしたときに出る「ウェブアプリのURL」をここに貼る ▼▼▼
+  const GAS_URL = "";
+  // ▲▲▲ https://script.google.com/macros/s/～/exec の形 ▲▲▲
+
+  // GASにつながらないとき用の初期設定（GAS側の「メニュー」「設定」シートで上書きできる）
+  const DEFAULT_INFO = {
+    items: [
+      { name: "オードブル", desc: "串焼KEMURI屋 特製オードブル", price: 8000 }
+    ],
+    fixedDate: "2026-08-27",   // お渡し日（この日限定）
+    deadline: "2026-08-25",    // 予約のしめきり（この日まで受付）
+    timeFrom: 12, timeTo: 17, timeStep: 0.5,  // 受け取り時間（30分きざみ）
+    imageUrl: "",              // 空なら同じ場所の order-photo.jpg を表示
+    notice: "8月27日お渡し限定・ご予約は8月25日まで"
+  };
+
+  let INFO = null;
+  let QTY = {};   // QTY[i] = 数量
+
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove("show"), 2600);
+  }
+  function yen(n){ return Number(n).toLocaleString("ja-JP"); }
+  function fmtT(v){ const h=Math.floor(v), m=(v-h)*60; return String(h)+":"+(m?"30":"00"); }
+  function todayYmd(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  const WD = ["日","月","火","水","木","金","土"];
+  function fmtDateJa(s){ const [y,m,d]=s.split("-").map(Number); const wd=WD[new Date(y,m-1,d).getDay()]; return m+"月"+d+"日（"+wd+"）"; }
+
+  async function init() {
+    INFO = DEFAULT_INFO;
+    if (GAS_URL.indexOf("http") === 0) {
+      try {
+        const res = await fetch(GAS_URL);
+        const r = await res.json();
+        if (r && r.ok) INFO = Object.assign({}, DEFAULT_INFO, r);
+      } catch (e) { /* つながらなければ初期設定で表示 */ }
+    }
+    buildUI();
+  }
+
+  function buildUI() {
+    document.getElementById("loading").style.display="none";
+    document.getElementById("noticeLabel").textContent = INFO.notice || "";
+
+    // しめきりを過ぎていたら受付終了
+    if (INFO.deadline && todayYmd() > INFO.deadline) {
+      document.getElementById("closed").style.display="block";
+      return;
+    }
+
+    // イメージ写真（設定シートの写真URLがあればそちらを優先）
+    if (INFO.imageUrl) document.getElementById("photo").src = INFO.imageUrl;
+
+    // メニュー
+    const list = document.getElementById("menuList");
+    list.innerHTML = "";
+    INFO.items.forEach((it, i) => {
+      QTY[i] = 0;
+      const div = document.createElement("div");
+      div.className = "item"; div.id = "item"+i;
+      div.innerHTML =
+        '<div class="info">' +
+          '<div class="nm"></div>' +
+          (it.desc ? '<div class="ds"></div>' : '') +
+          '<div class="pr">¥'+yen(it.price)+'</div>' +
+        '</div>' +
+        '<div class="stepper">' +
+          '<button onclick="chgQty('+i+',-1)">−</button>' +
+          '<span class="qty" id="qty'+i+'">0</span>' +
+          '<button onclick="chgQty('+i+',1)">＋</button>' +
+        '</div>';
+      div.querySelector(".nm").textContent = it.name;
+      if (it.desc) div.querySelector(".ds").textContent = it.desc;
+      list.appendChild(div);
+    });
+
+    // お渡し日（固定）と受け取り時間
+    document.getElementById("fixedDateLabel").textContent = fmtDateJa(INFO.fixedDate) + " お渡し";
+    const tEl = document.getElementById("pTime");
+    tEl.innerHTML = "";
+    for (let v=INFO.timeFrom; v<=INFO.timeTo; v+=INFO.timeStep) {
+      const o=document.createElement("option"); o.value=fmtT(v); o.textContent=fmtT(v); tEl.appendChild(o);
+    }
+    document.getElementById("timeHint").textContent =
+      fmtT(INFO.timeFrom) + "〜" + fmtT(INFO.timeTo) + " の間でお受け取り時間をえらんでね";
+
+    document.getElementById("app").style.display="block";
+  }
+
+  function chgQty(i, d) {
+    QTY[i] = Math.max(0, Math.min(20, (QTY[i]||0) + d));
+    document.getElementById("qty"+i).textContent = QTY[i];
+    document.getElementById("item"+i).classList.toggle("picked", QTY[i] > 0);
+    updateTotal();
+  }
+  function pickedItems() {
+    return INFO.items.map((it,i)=>({ name:it.name, price:it.price, qty:QTY[i]||0 })).filter(x=>x.qty>0);
+  }
+  function updateTotal() {
+    const total = pickedItems().reduce((s,x)=>s+x.price*x.qty, 0);
+    document.getElementById("totalAmt").textContent = yen(total);
+  }
+
+  function validate() {
+    const items = pickedItems();
+    if (!items.length) { toast("数量をえらんでね"); return null; }
+    const time = document.getElementById("pTime").value;
+    const name = document.getElementById("cName").value.trim();
+    if (!name) { toast("お名前を入れてね"); return null; }
+    const tel = document.getElementById("cTel").value.replace(/[^0-9]/g,"");
+    if (tel.length < 10 || tel.length > 11) { toast("電話番号を確認してね（10〜11桁）"); return null; }
+    const total = items.reduce((s,x)=>s+x.price*x.qty, 0);
+    return { name, tel, date: INFO.fixedDate, time, items, total, note: document.getElementById("note").value.trim() };
+  }
+
+  let PENDING = null;
+  function openConfirm() {
+    const p = validate();
+    if (!p) return;
+    PENDING = p;
+    const tbl = document.getElementById("cfTable");
+    let rows = p.items.map(x=>
+      '<tr><td class="k">'+esc(x.name)+'</td><td style="text-align:right">'+x.qty+'個　¥'+yen(x.price*x.qty)+'</td></tr>'
+    ).join("");
+    rows += '<tr class="sep"><td class="k">合計</td><td style="text-align:right; font-weight:bold; color:#ffcf9e">¥'+yen(p.total)+'</td></tr>';
+    rows += '<tr class="sep"><td class="k">お受け取り</td><td>'+fmtDateJa(p.date)+' '+p.time+'</td></tr>';
+    rows += '<tr><td class="k">お名前</td><td>'+esc(p.name)+' さま</td></tr>';
+    rows += '<tr><td class="k">お電話</td><td>'+esc(p.tel)+'</td></tr>';
+    if (p.note) rows += '<tr><td class="k">ご要望</td><td>'+esc(p.note)+'</td></tr>';
+    tbl.innerHTML = rows;
+    document.getElementById("overlay").classList.add("show");
+  }
+  function closeConfirm(){ document.getElementById("overlay").classList.remove("show"); }
+  function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+
+  async function submitOrder() {
+    if (!PENDING) return;
+    if (GAS_URL.indexOf("http") !== 0) {
+      toast("⚠️ まだ予約の送信先（GAS_URL）が設定されていません"); return;
+    }
+    const btn = document.getElementById("okBtn");
+    btn.disabled = true; btn.textContent = "送信中…";
+    try {
+      const res = await fetch(GAS_URL, { method:"POST", body: JSON.stringify(PENDING) });
+      const r = await res.json();
+      if (!r.ok) throw new Error(r.error || "unknown");
+      closeConfirm();
+      document.getElementById("app").style.display="none";
+      document.getElementById("thanks").style.display="block";
+      document.getElementById("orderIdLabel").textContent = r.orderId || "-";
+      document.getElementById("thanksDetail").innerHTML =
+        PENDING.items.map(x=>esc(x.name)+" × "+x.qty).join("<br>") +
+        "<br>合計 ¥"+yen(PENDING.total) +
+        "<br>お受け取り：" + fmtDateJa(PENDING.date) + " " + PENDING.time;
+      window.scrollTo(0,0);
+    } catch (e) {
+      btn.disabled=false; btn.textContent="予約を確定する";
+      toast("送信に失敗… もう一度お願い🙏");
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>
