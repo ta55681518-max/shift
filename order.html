@@ -172,7 +172,7 @@
 
   <button class="send" id="sendBtn" onclick="openConfirm()">予約内容を確認する</button>
   <div class="note-hint" style="text-align:center; margin-top:10px;">
-    お支払いはお受け取り時に店頭でお願いします
+    お支払いはお受け取り時に現金でお願いします（現金のみ）
   </div>
 </div>
 
@@ -209,10 +209,10 @@
       { name: "オードブル", desc: "串焼KEMURI屋 特製オードブル", price: 8000 }
     ],
     fixedDate: "2026-08-27",   // お渡し日（この日限定）
-    deadline: "2026-08-25",    // 予約のしめきり（この日まで受付）
+    deadline: "2026-08-24",    // 予約のしめきり（この日まで受付）
     timeFrom: 12, timeTo: 17, timeStep: 0.5,  // 受け取り時間（30分きざみ）
     imageUrl: "",              // 空なら同じ場所の order-photo.jpg を表示
-    notice: "8月27日お渡し限定・ご予約は8月25日まで"
+    notice: "8月27日お渡し限定・ご予約は8月24日（月）まで"
   };
 
   let INFO = null;
