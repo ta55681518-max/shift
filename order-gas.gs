@@ -33,7 +33,8 @@ function ensureSheets_() {
   }
   if (!ss.getSheetByName(SHEET_CONF)) {
     const sh = ss.insertSheet(SHEET_CONF);
-    sh.getRange(1, 1, 9, 2).setValues([
+    sh.getRange(1, 1, 10, 2).setValues([
+      ["受付停止", false],  // TRUE にするとすぐに受付を止められる（FALSEに戻すと再開）
       ["受取日", "2026-08-27"],
       ["締切日", "2026-08-24"],
       ["受取開始時刻", 12],
@@ -63,6 +64,14 @@ function conf_() {
   return map;
 }
 
+/** 手動の受付停止スイッチ（設定シート「受付停止」が TRUE / 停止 / ON なら止める） */
+function isStop_(conf) {
+  const v = conf["受付停止"];
+  if (v === true) return true;
+  const s = String(v || "").trim().toUpperCase();
+  return s === "TRUE" || s === "ON" || s === "停止";
+}
+
 /** これまでに予約された個数の合計（「注文」シートの個数列を集計） */
 function soldQty_() {
   let sold = 0;
@@ -86,6 +95,7 @@ function doGet() {
   return json_({
     ok: true,
     items: items,
+    closed: isStop_(conf),
     limit: limit,
     remain: Math.max(0, limit - soldQty_()),
     fixedDate: dateStr_(conf["受取日"], "2026-08-27"),
@@ -115,6 +125,11 @@ function doPost(e) {
     if (!p.name || !p.tel || !p.date || !p.time || !p.items || !p.items.length) {
       return json_({ ok: false, error: "入力が足りません" });
     }
+    // 手動停止中は受け付けない
+    if (isStop_(conf_())) {
+      return json_({ ok: false, error: "closed" });
+    }
+
     const sh = ss_().getSheetByName(SHEET_ORDER);
 
     // 上限チェック（ロック中に集計するので同時アクセスでも超えない）

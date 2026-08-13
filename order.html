@@ -213,6 +213,7 @@
     timeFrom: 12, timeTo: 17, timeStep: 0.5,  // 受け取り時間（30分きざみ）
     limit: 20,                 // 予約上限（全体の個数）。GAS側の設定シートで変更できる
     remain: null,              // 残り個数（GASにつながったときだけ入る）
+    closed: false,             // 手動の受付停止（GAS側の設定シート「受付停止」）
     imageUrl: "",              // 空なら同じ場所の order-photo.jpg を表示
     notice: "8月27日お渡し限定・ご予約は8月24日（月）まで"
   };
@@ -258,6 +259,11 @@
     document.getElementById("loading").style.display="none";
     document.getElementById("noticeLabel").textContent = INFO.notice || "";
 
+    // お店が手動で受付を止めているとき
+    if (INFO.closed) {
+      showClosed("ご予約の受付は終了しました");
+      return;
+    }
     // しめきりを過ぎていたら受付終了
     if (INFO.deadline && todayYmd() > INFO.deadline) {
       showClosed("ご予約の受付は終了しました");
@@ -387,7 +393,10 @@
       window.scrollTo(0,0);
     } catch (e) {
       btn.disabled=false; btn.textContent="予約を確定する";
-      if (e && e.message === "limit") {
+      if (e && e.message === "closed") {
+        closeConfirm();
+        showClosed("ご予約の受付は終了しました");
+      } else if (e && e.message === "limit") {
         if (LAST_REMAIN > 0) {
           INFO.remain = LAST_REMAIN;
           closeConfirm();
