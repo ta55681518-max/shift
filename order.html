@@ -131,7 +131,7 @@
 
 <div id="closed">
   <div class="big">🙇</div>
-  <h2>ご予約の受付は終了しました</h2>
+  <h2 id="closedMsg">ご予約の受付は終了しました</h2>
   <p style="color:#9a887c; font-size:13px;">お問い合わせはお電話でお願いします</p>
 </div>
 
@@ -211,6 +211,8 @@
     fixedDate: "2026-08-27",   // お渡し日（この日限定）
     deadline: "2026-08-24",    // 予約のしめきり（この日まで受付）
     timeFrom: 12, timeTo: 17, timeStep: 0.5,  // 受け取り時間（30分きざみ）
+    limit: 20,                 // 予約上限（全体の個数）。GAS側の設定シートで変更できる
+    remain: null,              // 残り個数（GASにつながったときだけ入る）
     imageUrl: "",              // 空なら同じ場所の order-photo.jpg を表示
     notice: "8月27日お渡し限定・ご予約は8月24日（月）まで"
   };
@@ -241,13 +243,29 @@
     buildUI();
   }
 
+  function showClosed(msg) {
+    document.getElementById("closedMsg").textContent = msg;
+    document.getElementById("app").style.display="none";
+    document.getElementById("closed").style.display="block";
+    window.scrollTo(0,0);
+  }
+  // いま予約できる残り個数（GAS未接続のときは1回あたり20個だけ制限）
+  function maxQty() {
+    return (INFO.remain != null) ? Math.max(0, Math.min(20, INFO.remain)) : 20;
+  }
+
   function buildUI() {
     document.getElementById("loading").style.display="none";
     document.getElementById("noticeLabel").textContent = INFO.notice || "";
 
     // しめきりを過ぎていたら受付終了
     if (INFO.deadline && todayYmd() > INFO.deadline) {
-      document.getElementById("closed").style.display="block";
+      showClosed("ご予約の受付は終了しました");
+      return;
+    }
+    // 上限に達していたら受付停止
+    if (INFO.remain != null && INFO.remain <= 0) {
+      showClosed("ご予約が上限に達したため受付を終了しました");
       return;
     }
 
@@ -291,7 +309,15 @@
   }
 
   function chgQty(i, d) {
-    QTY[i] = Math.max(0, Math.min(20, (QTY[i]||0) + d));
+    const cap = maxQty();
+    const next = (QTY[i]||0) + d;
+    if (d > 0 && next > cap) {
+      toast((INFO.remain != null && INFO.remain < 20)
+        ? "申し訳ありません、ご予約は残り" + cap + "個までです"
+        : "1回のご予約は20個までです");
+      return;
+    }
+    QTY[i] = Math.max(0, next);
     document.getElementById("qty"+i).textContent = QTY[i];
     document.getElementById("item"+i).classList.toggle("picked", QTY[i] > 0);
     updateTotal();
@@ -307,6 +333,8 @@
   function validate() {
     const items = pickedItems();
     if (!items.length) { toast("数量をえらんでね"); return null; }
+    const totalQty = items.reduce((s,x)=>s+x.qty, 0);
+    if (totalQty > maxQty()) { toast("申し訳ありません、ご予約は残り" + maxQty() + "個までです"); return null; }
     const time = document.getElementById("pTime").value;
     const name = document.getElementById("cName").value.trim();
     if (!name) { toast("お名前を入れてね"); return null; }
@@ -317,6 +345,7 @@
   }
 
   let PENDING = null;
+  let LAST_REMAIN = 0;
   function openConfirm() {
     const p = validate();
     if (!p) return;
@@ -346,7 +375,7 @@
     try {
       const res = await fetch(GAS_URL, { method:"POST", body: JSON.stringify(PENDING) });
       const r = await res.json();
-      if (!r.ok) throw new Error(r.error || "unknown");
+      if (!r.ok) { LAST_REMAIN = (r.remain != null) ? r.remain : 0; throw new Error(r.error || "unknown"); }
       closeConfirm();
       document.getElementById("app").style.display="none";
       document.getElementById("thanks").style.display="block";
@@ -358,7 +387,18 @@
       window.scrollTo(0,0);
     } catch (e) {
       btn.disabled=false; btn.textContent="予約を確定する";
-      toast("送信に失敗… もう一度お願い🙏");
+      if (e && e.message === "limit") {
+        if (LAST_REMAIN > 0) {
+          INFO.remain = LAST_REMAIN;
+          closeConfirm();
+          toast("申し訳ありません、ご予約は残り" + LAST_REMAIN + "個までです");
+        } else {
+          closeConfirm();
+          showClosed("ご予約が上限に達したため受付を終了しました");
+        }
+      } else {
+        toast("送信に失敗… もう一度お願い🙏");
+      }
     }
   }
 
