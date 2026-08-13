@@ -34,7 +34,7 @@ function ensureSheets_() {
   if (!ss.getSheetByName(SHEET_CONF)) {
     const sh = ss.insertSheet(SHEET_CONF);
     sh.getRange(1, 1, 10, 2).setValues([
-      ["受付停止", false],  // TRUE にするとすぐに受付を止められる（FALSEに戻すと再開）
+      ["受付停止", "受付中"],  // プルダウンで「停止」にするとすぐ受付停止（「受付中」で再開）
       ["受取日", "2026-08-27"],
       ["締切日", "2026-08-24"],
       ["受取開始時刻", 12],
@@ -46,6 +46,7 @@ function ensureSheets_() {
       ["通知メール", ""],  // 入れると新規予約のたびにメールが届く
     ]);
   }
+  ensureStopDropdown_();
   if (!ss.getSheetByName(SHEET_ORDER)) {
     const sh = ss.insertSheet(SHEET_ORDER);
     sh.getRange(1, 1, 1, 10).setValues([[
@@ -64,7 +65,39 @@ function conf_() {
   return map;
 }
 
-/** 手動の受付停止スイッチ（設定シート「受付停止」が TRUE / 停止 / ON なら止める） */
+/** 設定シートの「受付停止」を「受付中／停止」のプルダウンにそろえる */
+function ensureStopDropdown_() {
+  const sh = ss_().getSheetByName(SHEET_CONF);
+  if (!sh) return;
+  const vals = sh.getDataRange().getValues();
+  let row = -1;
+  for (let i = 0; i < vals.length; i++) {
+    if (String(vals[i][0]) === "受付停止") { row = i + 1; break; }
+  }
+  if (row === -1) {
+    sh.insertRowBefore(1);
+    sh.getRange(1, 1, 1, 2).setValues([["受付停止", "受付中"]]);
+    row = 1;
+  }
+  const cell = sh.getRange(row, 2);
+  const v = cell.getValue();
+  // むかしの TRUE/FALSE 形式が入っていたら言葉に直す
+  if (v === true || String(v).trim().toUpperCase() === "TRUE" || String(v).trim().toUpperCase() === "ON") {
+    cell.setValue("停止");
+  } else if (v !== "停止" && v !== "受付中") {
+    cell.setValue("受付中");
+  }
+  if (!cell.getDataValidation()) {
+    cell.setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInList(["受付中", "停止"], true)
+        .setAllowInvalid(false)
+        .build()
+    );
+  }
+}
+
+/** 手動の受付停止スイッチ（設定シート「受付停止」が「停止」なら止める） */
 function isStop_(conf) {
   const v = conf["受付停止"];
   if (v === true) return true;
