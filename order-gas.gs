@@ -35,11 +35,11 @@ function ensureSheets_() {
     const sh = ss.insertSheet(SHEET_CONF);
     sh.getRange(1, 1, 8, 2).setValues([
       ["受取日", "2026-08-27"],
-      ["締切日", "2026-08-25"],
+      ["締切日", "2026-08-24"],
       ["受取開始時刻", 12],
       ["受取終了時刻", 17],
       ["受取刻み(時間)", 0.5],
-      ["お知らせ", "8月27日お渡し限定・ご予約は8月25日まで"],
+      ["お知らせ", "8月27日お渡し限定・ご予約は8月24日（月）まで"],
       ["写真URL", ""],  // 入れるとページの写真がこのURLに差し替わる
       ["通知メール", ""],  // 入れると新規予約のたびにメールが届く
     ]);
@@ -76,7 +76,7 @@ function doGet() {
     ok: true,
     items: items,
     fixedDate: dateStr_(conf["受取日"], "2026-08-27"),
-    deadline: dateStr_(conf["締切日"], "2026-08-25"),
+    deadline: dateStr_(conf["締切日"], "2026-08-24"),
     timeFrom: Number(conf["受取開始時刻"]) || 12,
     timeTo: Number(conf["受取終了時刻"]) || 17,
     timeStep: Number(conf["受取刻み(時間)"]) || 0.5,
