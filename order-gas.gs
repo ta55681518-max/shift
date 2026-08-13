@@ -140,14 +140,18 @@ function doPost(e) {
       return json_({ ok: false, error: "limit", remain: Math.max(0, remain) });
     }
 
-    // 予約番号：K + 月日 + その日の連番（例 K0815-3）
+    // 予約番号：ページ側で発行した番号をそのまま使う（例 K0813-1338A）。
+    // 万一なければサーバー側で連番を発行する
     const now = new Date();
-    const mmdd = Utilities.formatDate(now, "Asia/Tokyo", "MMdd");
-    let seq = 1;
-    sh.getDataRange().getValues().slice(1).forEach(function (r) {
-      if (String(r[1]).indexOf("K" + mmdd + "-") === 0) seq++;
-    });
-    const orderId = "K" + mmdd + "-" + seq;
+    let orderId = String(p.orderId || "").replace(/[^A-Za-z0-9\-]/g, "").slice(0, 20);
+    if (!orderId) {
+      const mmdd = Utilities.formatDate(now, "Asia/Tokyo", "MMdd");
+      let seq = 1;
+      sh.getDataRange().getValues().slice(1).forEach(function (r) {
+        if (String(r[1]).indexOf("K" + mmdd + "-") === 0) seq++;
+      });
+      orderId = "K" + mmdd + "-" + seq;
+    }
 
     const itemsText = p.items.map(function (x) { return x.name + "×" + x.qty; }).join(" / ");
     const total = p.items.reduce(function (s, x) { return s + Number(x.price) * Number(x.qty); }, 0);
