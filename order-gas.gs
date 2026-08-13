@@ -33,12 +33,13 @@ function ensureSheets_() {
   }
   if (!ss.getSheetByName(SHEET_CONF)) {
     const sh = ss.insertSheet(SHEET_CONF);
-    sh.getRange(1, 1, 8, 2).setValues([
+    sh.getRange(1, 1, 9, 2).setValues([
       ["受取日", "2026-08-27"],
       ["締切日", "2026-08-24"],
       ["受取開始時刻", 12],
       ["受取終了時刻", 17],
       ["受取刻み(時間)", 0.5],
+      ["予約上限", 20],  // 全体で受け付ける個数の上限。達すると自動で受付停止
       ["お知らせ", "8月27日お渡し限定・ご予約は8月24日（月）まで"],
       ["写真URL", ""],  // 入れるとページの写真がこのURLに差し替わる
       ["通知メール", ""],  // 入れると新規予約のたびにメールが届く
@@ -46,8 +47,8 @@ function ensureSheets_() {
   }
   if (!ss.getSheetByName(SHEET_ORDER)) {
     const sh = ss.insertSheet(SHEET_ORDER);
-    sh.getRange(1, 1, 1, 9).setValues([[
-      "受付日時", "予約番号", "お名前", "電話番号", "受取日", "受取時間", "注文内容", "合計", "備考",
+    sh.getRange(1, 1, 1, 10).setValues([[
+      "受付日時", "予約番号", "お名前", "電話番号", "受取日", "受取時間", "注文内容", "個数", "合計", "備考",
     ]]);
     sh.setFrozenRows(1);
   }
@@ -62,6 +63,15 @@ function conf_() {
   return map;
 }
 
+/** これまでに予約された個数の合計（「注文」シートの個数列を集計） */
+function soldQty_() {
+  let sold = 0;
+  ss_().getSheetByName(SHEET_ORDER).getDataRange().getValues().slice(1).forEach(function (r) {
+    sold += Number(r[7]) || 0;
+  });
+  return sold;
+}
+
 /** お客さまページが開いたときに呼ばれる：メニューと設定を返す */
 function doGet() {
   ensureSheets_();
@@ -72,9 +82,12 @@ function doGet() {
       items.push({ name: String(r[0]), desc: String(r[1] || ""), price: Number(r[2]) || 0 });
     }
   });
+  const limit = Number(conf["予約上限"]) || 20;
   return json_({
     ok: true,
     items: items,
+    limit: limit,
+    remain: Math.max(0, limit - soldQty_()),
     fixedDate: dateStr_(conf["受取日"], "2026-08-27"),
     deadline: dateStr_(conf["締切日"], "2026-08-24"),
     timeFrom: Number(conf["受取開始時刻"]) || 12,
@@ -104,6 +117,14 @@ function doPost(e) {
     }
     const sh = ss_().getSheetByName(SHEET_ORDER);
 
+    // 上限チェック（ロック中に集計するので同時アクセスでも超えない）
+    const qty = p.items.reduce(function (s, x) { return s + (Number(x.qty) || 0); }, 0);
+    const limit = Number(conf_()["予約上限"]) || 20;
+    const remain = limit - soldQty_();
+    if (qty > remain) {
+      return json_({ ok: false, error: "limit", remain: Math.max(0, remain) });
+    }
+
     // 予約番号：K + 月日 + その日の連番（例 K0815-3）
     const now = new Date();
     const mmdd = Utilities.formatDate(now, "Asia/Tokyo", "MMdd");
@@ -119,7 +140,7 @@ function doPost(e) {
     sh.appendRow([
       Utilities.formatDate(now, "Asia/Tokyo", "yyyy-MM-dd HH:mm:ss"),
       orderId, String(p.name), "'" + String(p.tel), String(p.date), String(p.time),
-      itemsText, total, String(p.note || ""),
+      itemsText, qty, total, String(p.note || ""),
     ]);
 
     // 通知メール（設定シートにアドレスがあれば）
@@ -134,7 +155,8 @@ function doPost(e) {
         "受取：" + p.date + " " + p.time + "\n" +
         "内容：" + itemsText + "\n" +
         "合計：¥" + total + "\n" +
-        "備考：" + (p.note || "なし")
+        "備考：" + (p.note || "なし") + "\n" +
+        "累計：" + (limit - remain + qty) + "個／上限" + limit + "個（残り" + (remain - qty) + "個）"
       );
     }
 
