@@ -357,6 +357,7 @@
       <button class="mini go" onclick="autoPickKushi()">「串」がつく商品を自動で選ぶ</button>
       <button class="mini" onclick="pickAllKushi(false)">ぜんぶ外す</button>
     </div>
+    <div id="genre-pick" class="gap"></div>
     <div id="pick-list">—</div>
   </div>
 
@@ -629,6 +630,16 @@ function zMaterials() {
   return [...s].sort();
 }
 function zDays() { const z = readZaiko(); return z ? (z.days || {}) : {}; }
+/* 材料をジャンルごとにまとめる（ジャンル未設定の材料は入れない） */
+function zGenreGroups() {
+  const z = readZaiko(); if (!z) return {};
+  const by = {};
+  (z.ingredients || []).forEach(g => {
+    if (!g || !g.name || !g.genre) return;
+    (by[g.genre] = by[g.genre] || []).push(g.name);
+  });
+  return by;
+}
 
 /* 串在庫の合計本数を zaiko の在庫（本数）へ書き戻す */
 function syncToZaiko(reason, force) {
@@ -1316,6 +1327,21 @@ function renderSetup() {
     ? `この端末のzaikoに書き戻せるさ（自動反映：<b>${KDB.syncZaiko ? 'ON' : 'OFF'}</b>）`
     : '※いまは同じ端末のzaikoが見つからないさ。zaikoをこの端末で一度ひらいてね';
 
+  // zaikoの材料ジャンルから、まとめて登録するボタン
+  const gp = document.getElementById('genre-pick');
+  if (gp) {
+    const by = zGenreGroups();
+    const gs = Object.keys(by).sort((a, b) => by[b].length - by[a].length);
+    gp.innerHTML = gs.length
+      ? '<div class="muted" style="margin-bottom:4px">zaikoの材料ジャンルから、まとめて登録もできるさ：</div>' +
+        gs.map(g => {
+          const total = by[g].length, done = by[g].filter(n => KDB.items[n] != null).length;
+          const q = esc(g).replace(/'/g, "\\'");
+          return `<button class="mini ${done === total ? '' : 'go'}" onclick="addGenreBulk('${q}')">${esc(g)}（${done}/${total}）${done === total ? '✓' : 'をまとめて登録'}</button>`;
+        }).join(' ')
+      : '';
+  }
+
   const prods = zProducts();
   PICK = prods;
   const box = document.getElementById('pick-list');
@@ -1334,6 +1360,15 @@ function autoPickKushi() {
   zProducts().forEach(n => { if (isKushiName(n) && !KDB.items[n]) { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; added++; } });
   save(); renderSetup();
   toast(added ? added + '種の串を選んださ（在庫タブで本数・原価を入れてね）' : '「串」がつく新しい商品は無かったさ');
+}
+/* zaikoの材料ジャンル（例：串）の材料を、まとめて串として登録 */
+function addGenreBulk(genre) {
+  const names = zGenreGroups()[genre] || [];
+  if (!names.length) { toast('このジャンルの材料が見つからないさ'); return; }
+  let added = 0;
+  names.forEach(n => { if (!KDB.items[n]) { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; added++; } });
+  save(); renderSetup();
+  toast(added ? 'ジャンル「' + genre + '」から ' + added + '種を登録したさ（在庫タブで本数・原価を入れてね）' : 'ジャンル「' + genre + '」は もう全部登録ずみさ');
 }
 function pickAllKushi(on) {
   if (!on) { ask('選んだ串をぜんぶ外すさ？（本数・ロットの記録も消えるよ）', () => { KDB.items = {}; save(); renderSetup(); toast('外したさ'); }); }
