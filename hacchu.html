@@ -244,12 +244,29 @@ function seed(){
   return { suppliers:sup, products:p, order:{}, done:{}, sentToday:{}, history:[] };
 }
 
+/* 既存データにジャンルを自動で振る（初期商品のみ・データはそのまま） */
+function migrate(st){
+  const defaultCats = {
+    "鶏もも肉":"お肉","鶏皮":"お肉","豚バラ":"お肉","手羽先":"お肉","牛タン":"お肉","ウインナー":"お肉",
+    "卵":"その他食材","サラダ油":"調味料・油",
+    "冷凍ポテト":"冷凍食品","冷凍枝豆":"冷凍食品","唐揚げ粉":"調味料・粉","マヨネーズ":"調味料・粉",
+    "竹串":"消耗品","割り箸":"消耗品","紙おしぼり":"消耗品","ラップ":"消耗品",
+    "生ビール樽":"ビール","瓶ビール":"ビール","泡盛":"泡盛・焼酎","焼酎":"泡盛・焼酎",
+    "サワー原液":"サワー・ソフドリ","炭酸":"サワー・ソフドリ","ウーロン茶":"サワー・ソフドリ","コーラ":"サワー・ソフドリ",
+    "キャベツ":"野菜","玉ねぎ":"野菜","長ネギ":"野菜","ピーマン":"野菜","しいたけ":"野菜","大葉":"野菜","トマト":"野菜","レモン":"果物",
+  };
+  (st.products || []).forEach(p => {
+    if (p.cat === undefined) p.cat = defaultCats[p.name] || "";
+  });
+  return st;
+}
+
 function load(){
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return migrate(JSON.parse(raw));
   } catch(e){}
-  return seed();
+  return migrate(seed());
 }
 function save(){ try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch(e){} }
 
@@ -387,18 +404,26 @@ function missingItems(){
 }
 
 /* ---- 商品・仕入れ先の編集 ---- */
+function catsOf(sid){
+  const seen = [];
+  S.products.filter(x => x.sid === sid && x.cat).forEach(x => { if (!seen.includes(x.cat)) seen.push(x.cat); });
+  return seen;
+}
+
 function editProduct(pid){
   const p = prod(pid);
+  const sid = p ? p.sid : view.sid;
   openFormModal(p ? "商品を編集" : "商品を追加", [
     {key:"name", label:"商品名", value:p ? p.name : ""},
     {key:"unit", label:"単位（kg・ケース・本 など）", value:p ? p.unit : "個"},
+    {key:"cat",  label:"ジャンル（お肉・野菜 など・空欄でもOK）", value:p ? (p.cat || "") : "", list:catsOf(sid)},
     {key:"pin",  label:"📌 ピン留め（いつも上に表示）", type:"check", value:p ? p.pin : false},
   ], (vals) => {
     if (!vals.name.trim()) { toast("商品名を入れてね"); return false; }
     if (p) {
-      p.name = vals.name.trim(); p.unit = vals.unit.trim() || "個"; p.pin = vals.pin;
+      p.name = vals.name.trim(); p.unit = vals.unit.trim() || "個"; p.cat = vals.cat.trim(); p.pin = vals.pin;
     } else {
-      S.products.push({id:uid(), sid:view.sid, name:vals.name.trim(), unit:vals.unit.trim() || "個", pin:vals.pin, freq:0, last:null});
+      S.products.push({id:uid(), sid:view.sid, name:vals.name.trim(), unit:vals.unit.trim() || "個", cat:vals.cat.trim(), pin:vals.pin, freq:0, last:null});
     }
     save(); render(); return true;
   }, p ? () => {
@@ -481,6 +506,13 @@ function openFormModal(title, fields, onSave, onDelete){
       const lab = document.createElement("label"); lab.textContent = f.label;
       const inp = document.createElement("input"); inp.type = "text"; inp.value = f.value || "";
       box.appendChild(lab); box.appendChild(inp);
+      if (f.list && f.list.length) {
+        const dlId = "dl-" + f.key;
+        const dl = document.createElement("datalist"); dl.id = dlId;
+        f.list.forEach(v => { const o = document.createElement("option"); o.value = v; dl.appendChild(o); });
+        inp.setAttribute("list", dlId);
+        box.appendChild(dl);
+      }
       inputs[f.key] = () => inp.value;
     }
   });
@@ -709,7 +741,23 @@ function renderSupplier(){
       listWrap.appendChild(e);
       return;
     }
-    list.forEach(p => listWrap.appendChild(prodRow(p)));
+    /* ジャンルごとにまとめて表示（並び順は頻度・ピン優先のまま） */
+    const groups = [];
+    list.forEach(p => {
+      const cat = p.cat || "";
+      let g = groups.find(x => x.cat === cat);
+      if (!g) { g = {cat, items:[]}; groups.push(g); }
+      g.items.push(p);
+    });
+    groups.sort((a,b) => (a.cat === "" ? 1 : 0) - (b.cat === "" ? 1 : 0));
+    groups.forEach(g => {
+      if (groups.length > 1 || g.cat) {
+        const t = el("div","section-title", g.cat || "未分類");
+        t.style.marginTop = groups.indexOf(g) === 0 ? "0" : "18px";
+        listWrap.appendChild(t);
+      }
+      g.items.forEach(p => listWrap.appendChild(prodRow(p)));
+    });
   }
 }
 
