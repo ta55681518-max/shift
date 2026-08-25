@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#ffffff">
+<title>KEMURI屋 発注アプリ</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    background:#fff; color:#222; font-size:16px;
+    -webkit-user-select:none; user-select:none;
+    overscroll-behavior:none;
+  }
+  #app { max-width:520px; margin:0 auto; padding-bottom:76px; min-height:100%; }
+
+  /* ヘッダー */
+  .header {
+    position:sticky; top:0; z-index:20; background:#fff;
+    padding:14px 16px 10px; border-bottom:1px solid #eee;
+    display:flex; align-items:center; gap:10px;
+  }
+  .header h1 { font-size:19px; font-weight:700; flex:1; }
+  .header .sub { font-size:13px; color:#888; font-weight:400; }
+  .backbtn {
+    border:none; background:#f2f2f2; border-radius:12px;
+    width:44px; height:44px; font-size:20px; flex-shrink:0;
+  }
+
+  /* ボタン共通 */
+  button { font-family:inherit; cursor:pointer; }
+  .btn {
+    display:block; width:100%; border:none; border-radius:14px;
+    padding:15px; font-size:17px; font-weight:700; text-align:center;
+  }
+  .btn-primary { background:#e8531f; color:#fff; }
+  .btn-green   { background:#06c755; color:#fff; }
+  .btn-gray    { background:#f2f2f2; color:#333; }
+  .btn-line    { background:#06c755; color:#fff; }
+  .btn-danger  { background:#fff0ee; color:#d33; }
+  .btn-sm { padding:10px 14px; font-size:14px; width:auto; border-radius:11px; }
+
+  /* 仕入れ先カード */
+  .sup-card {
+    display:flex; align-items:center; gap:14px;
+    width:100%; border:1.5px solid #e5e5e5; background:#fff;
+    border-radius:16px; padding:16px; margin-bottom:12px; text-align:left;
+  }
+  .sup-card:active { background:#fafafa; }
+  .sup-emoji { font-size:30px; }
+  .sup-name { font-size:18px; font-weight:700; }
+  .sup-meta { font-size:13px; color:#999; margin-top:2px; }
+  .sup-badge {
+    margin-left:auto; background:#e8531f; color:#fff;
+    border-radius:999px; min-width:30px; height:30px; padding:0 9px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:15px; font-weight:700;
+  }
+  .sup-badge.zero { background:#eee; color:#aaa; }
+
+  /* 商品行 */
+  .prod-row {
+    display:flex; align-items:center; gap:10px;
+    border:1.5px solid #e8e8e8; border-radius:14px;
+    padding:6px 8px 6px 14px; margin-bottom:9px; min-height:58px;
+    background:#fff;
+  }
+  .prod-row.selected { border-color:#e8531f; background:#fff5f1; }
+  .prod-row .tapzone { flex:1; display:flex; align-items:center; gap:8px; min-height:46px; }
+  .prod-name { font-size:17px; font-weight:600; }
+  .prod-unit { font-size:12.5px; color:#999; }
+  .pin-mark { font-size:14px; }
+  .freq-mark { font-size:11px; color:#c9c9c9; }
+
+  /* 数量ステッパー */
+  .stepper { display:flex; align-items:center; gap:2px; flex-shrink:0; }
+  .stepper button {
+    width:44px; height:44px; border:none; border-radius:12px;
+    background:#ffe4d9; color:#e8531f; font-size:22px; font-weight:700;
+  }
+  .stepper .qty { min-width:40px; text-align:center; font-size:18px; font-weight:700; }
+  .editbtn {
+    width:40px; height:44px; border:none; background:none;
+    font-size:17px; color:#bbb; flex-shrink:0;
+  }
+
+  /* 検索 */
+  .search-box {
+    width:100%; border:1.5px solid #ddd; border-radius:13px;
+    padding:13px 15px; font-size:16px; margin-bottom:14px;
+    background:#fafafa; outline:none;
+  }
+  .search-box:focus { border-color:#e8531f; background:#fff; }
+
+  .section { padding:16px; }
+  .section-title { font-size:14px; font-weight:700; color:#888; margin:18px 0 10px; }
+
+  /* 発注書グループ */
+  .order-group { border:1.5px solid #e5e5e5; border-radius:16px; padding:14px; margin-bottom:14px; }
+  .order-group h3 { font-size:17px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .order-group h3 .cnt { font-size:13px; color:#999; font-weight:400; }
+
+  /* 買い物行 */
+  .shop-row {
+    display:flex; align-items:center; gap:12px; width:100%;
+    border:none; background:#fff; border-bottom:1px solid #f0f0f0;
+    padding:16px 6px; text-align:left; font-size:18px; min-height:60px;
+  }
+  .shop-check {
+    width:30px; height:30px; border-radius:9px; border:2px solid #ccc;
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; color:#fff; flex-shrink:0;
+  }
+  .shop-row.done .shop-check { background:#06c755; border-color:#06c755; }
+  .shop-row.done .shop-label { text-decoration:line-through; color:#bbb; }
+  .shop-qty { margin-left:auto; font-size:15px; color:#888; flex-shrink:0; }
+  .shop-row.done .shop-qty { color:#ccc; }
+
+  /* 発注モードカード */
+  .send-card { border:1.5px solid #e5e5e5; border-radius:16px; padding:14px; margin-bottom:16px; }
+  .send-card h3 { font-size:17px; margin-bottom:10px; }
+  .send-card textarea {
+    width:100%; border:1.5px solid #e0e0e0; border-radius:12px;
+    padding:12px; font-size:15px; font-family:inherit; line-height:1.6;
+    min-height:150px; resize:vertical; background:#fafafa; outline:none;
+    -webkit-user-select:text; user-select:text;
+  }
+  .send-btns { display:flex; gap:8px; margin-top:10px; }
+  .send-btns .btn { flex:1; padding:13px 4px; font-size:14.5px; }
+  .sent-mark { color:#06c755; font-size:14px; font-weight:700; }
+
+  /* 下部ナビ */
+  .tabbar {
+    position:fixed; bottom:0; left:0; right:0; z-index:30;
+    background:#fff; border-top:1px solid #e5e5e5;
+    display:flex; max-width:520px; margin:0 auto;
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  .tabbar button {
+    flex:1; border:none; background:none; padding:9px 0 7px;
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+    font-size:11px; color:#999; position:relative;
+  }
+  .tabbar button .ticon { font-size:22px; }
+  .tabbar button.active { color:#e8531f; font-weight:700; }
+  .tab-badge {
+    position:absolute; top:3px; right:calc(50% - 26px);
+    background:#e8531f; color:#fff; font-size:10.5px; font-weight:700;
+    border-radius:999px; min-width:18px; height:18px; padding:0 5px;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* モーダル */
+  .modal-bg {
+    position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:50;
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  .modal {
+    background:#fff; border-radius:20px 20px 0 0; width:100%; max-width:520px;
+    padding:22px 18px calc(22px + env(safe-area-inset-bottom));
+  }
+  .modal h3 { font-size:18px; margin-bottom:16px; }
+  .modal label { display:block; font-size:13px; color:#888; margin:12px 0 5px; font-weight:700; }
+  .modal input[type=text] {
+    width:100%; border:1.5px solid #ddd; border-radius:12px;
+    padding:13px; font-size:17px; outline:none;
+    -webkit-user-select:text; user-select:text;
+  }
+  .modal input[type=text]:focus { border-color:#e8531f; }
+  .check-row {
+    display:flex; align-items:center; gap:10px; margin-top:16px;
+    font-size:16px; font-weight:600;
+  }
+  .check-row input { width:24px; height:24px; accent-color:#e8531f; }
+  .modal-btns { display:flex; gap:10px; margin-top:22px; }
+  .modal-btns .btn { flex:1; }
+
+  /* トースト */
+  #toast {
+    position:fixed; bottom:96px; left:50%; transform:translateX(-50%);
+    background:#333; color:#fff; padding:12px 22px; border-radius:999px;
+    font-size:15px; font-weight:600; z-index:99; opacity:0; transition:opacity .25s;
+    pointer-events:none; white-space:nowrap;
+  }
+  #toast.show { opacity:1; }
+
+  .empty { text-align:center; color:#aaa; padding:50px 20px; font-size:15px; line-height:1.9; }
+  .empty .big { font-size:44px; display:block; margin-bottom:10px; }
+
+  /* 漏れチェックバナー */
+  .miss-banner {
+    display:flex; align-items:center; gap:10px; width:100%;
+    background:#fff8e5; border:1.5px solid #f5d576; border-radius:14px;
+    padding:14px; margin-bottom:14px; font-size:15px; font-weight:700; color:#8a6d00;
+    text-align:left;
+  }
+  .add-row {
+    display:flex; align-items:center; gap:10px;
+    border:1.5px dashed #f0c000; background:#fffdf5;
+    border-radius:14px; padding:10px 8px 10px 14px; margin-bottom:9px; min-height:56px;
+  }
+  .add-row .info { flex:1; }
+  .add-row .addbtn {
+    border:none; background:#e8531f; color:#fff; border-radius:11px;
+    padding:11px 16px; font-size:15px; font-weight:700; flex-shrink:0;
+  }
+  .progress-note { font-size:14px; color:#888; margin-bottom:10px; font-weight:700; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ================= データ ================= */
+const LS_KEY = "kemuri_hacchu_v1";
+let S = load();
+
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear() + "/" + (d.getMonth()+1) + "/" + d.getDate();
+}
+
+function seed(){
+  const sup = [
+    {id:"s1", name:"丸大",           emoji:"🥩"},
+    {id:"s2", name:"業務スーパー",   emoji:"🛒"},
+    {id:"s3", name:"酒屋",           emoji:"🍶"},
+    {id:"s4", name:"青果",           emoji:"🥬"},
+  ];
+  const p = [];
+  const add = (sid, arr) => arr.forEach(([name,unit]) => p.push({id:uid()+p.length, sid, name, unit, pin:false, freq:0, last:null}));
+  add("s1", [["鶏もも肉","kg"],["鶏皮","kg"],["豚バラ","kg"],["手羽先","kg"],["牛タン","kg"],["ウインナー","袋"],["卵","パック"],["サラダ油","本"]]);
+  add("s2", [["冷凍ポテト","袋"],["冷凍枝豆","袋"],["唐揚げ粉","袋"],["マヨネーズ","本"],["竹串","箱"],["割り箸","袋"],["紙おしぼり","袋"],["ラップ","本"]]);
+  add("s3", [["生ビール樽","樽"],["瓶ビール","ケース"],["泡盛","本"],["焼酎","本"],["サワー原液","本"],["炭酸","ケース"],["ウーロン茶","ケース"],["コーラ","ケース"]]);
+  add("s4", [["キャベツ","玉"],["玉ねぎ","kg"],["長ネギ","束"],["ピーマン","袋"],["しいたけ","パック"],["レモン","個"],["大葉","束"],["トマト","個"]]);
+  return { suppliers:sup, products:p, order:{}, done:{}, sentToday:{}, history:[] };
+}
+
+function load(){
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch(e){}
+  return seed();
+}
+function save(){ try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch(e){} }
+
+/* order: { productId: qty }  done: { productId: true }  sentToday: { supplierId: 日付 } */
+
+function prod(pid){ return S.products.find(p => p.id === pid); }
+function supName(sid){ const s = S.suppliers.find(x => x.id === sid); return s ? s.name : "?"; }
+function orderCount(){ return Object.keys(S.order).length; }
+function orderCountBySup(sid){
+  return Object.keys(S.order).filter(pid => { const p = prod(pid); return p && p.sid === sid; }).length;
+}
+function sortedProducts(sid){
+  return S.products
+    .filter(p => p.sid === sid)
+    .sort((a,b) => (b.pin - a.pin) || (b.freq - a.freq) || a.name.localeCompare(b.name,"ja"));
+}
+
+/* ================= 画面状態 ================= */
+let view = { name:"home", sid:null };
+let editMode = false;
+let searchText = "";
+let supSearch = "";
+
+function go(name, sid){
+  view = { name, sid: sid || null };
+  editMode = false;
+  supSearch = "";
+  if (name !== "home") searchText = "";
+  render();
+  window.scrollTo(0,0);
+}
+
+/* ================= 操作 ================= */
+function toggleProduct(pid){
+  if (S.order[pid] !== undefined) {
+    delete S.order[pid];
+    delete S.done[pid];
+  } else {
+    S.order[pid] = 1;
+  }
+  save(); render();
+}
+function changeQty(pid, d){
+  const q = (S.order[pid] || 1) + d;
+  if (q <= 0) { delete S.order[pid]; delete S.done[pid]; }
+  else S.order[pid] = q;
+  save(); render();
+}
+function toggleDone(pid){
+  if (S.done[pid]) delete S.done[pid]; else S.done[pid] = true;
+  save(); render();
+}
+
+function copyLastOrder(sid){
+  const h = [...S.history].reverse().find(h => h.sid === sid);
+  if (!h) { toast("前回の発注データがまだないよ"); return; }
+  let n = 0;
+  h.items.forEach(it => {
+    const p = prod(it.pid);
+    if (p && S.order[p.id] === undefined) { S.order[p.id] = it.qty; n++; }
+  });
+  save(); render();
+  toast(n > 0 ? "前回の" + n + "品を追加したよ" : "前回の分は全部入ってるよ");
+}
+
+function clearAll(){
+  openModal("発注書を空にする?", [
+    {label:"全部消す", cls:"btn-danger", fn(){ S.order = {}; S.done = {}; S.sentToday = {}; save(); closeModal(); render(); toast("発注書をクリアしたよ"); }},
+    {label:"やめる", cls:"btn-gray", fn:closeModal},
+  ]);
+}
+
+/* ---- 発注文 ---- */
+function buildOrderText(sid){
+  const items = Object.keys(S.order)
+    .map(pid => prod(pid)).filter(p => p && p.sid === sid);
+  if (!items.length) return "";
+  let t = "いつもお世話になっております。\n串焼KEMURI屋です。\n発注をお願いします。\n\n";
+  items.forEach(p => { t += "・" + p.name + "　" + S.order[p.id] + p.unit + "\n"; });
+  t += "\nよろしくお願いします!";
+  return t;
+}
+
+function copyText(text, msg){
+  const ok = () => toast(msg || "コピーしたよ");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(ok).catch(() => fallbackCopy(text, ok));
+  } else fallbackCopy(text, ok);
+}
+function fallbackCopy(text, ok){
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); ok(); } catch(e){ toast("コピーできなかった…"); }
+  document.body.removeChild(ta);
+}
+
+function sendLine(sid){
+  const ta = document.getElementById("ta-" + sid);
+  const text = ta ? ta.value : buildOrderText(sid);
+  copyText(text, "文もコピーしたよ");
+  location.href = "https://line.me/R/share?text=" + encodeURIComponent(text);
+}
+
+function markSent(sid){
+  const items = Object.keys(S.order)
+    .map(pid => prod(pid)).filter(p => p && p.sid === sid);
+  if (!items.length) return;
+  S.history.push({
+    date: todayStr(), sid,
+    items: items.map(p => ({pid:p.id, name:p.name, unit:p.unit, qty:S.order[p.id]})),
+  });
+  if (S.history.length > 200) S.history = S.history.slice(-200);
+  items.forEach(p => {
+    p.freq = (p.freq || 0) + 1;
+    p.last = todayStr();
+  });
+  S.sentToday[sid] = todayStr();
+  save(); render();
+  toast(supName(sid) + " 送信済みにしたよ");
+}
+
+/* ---- 発注漏れ ---- */
+function missingItems(){
+  const out = [];
+  S.suppliers.forEach(s => {
+    if (S.sentToday[s.id] === todayStr()) return;
+    sortedProducts(s.id).forEach(p => {
+      if ((p.freq >= 3 || p.pin) && S.order[p.id] === undefined) {
+        out.push(p);
+      }
+    });
+  });
+  return out;
+}
+
+/* ---- 商品・仕入れ先の編集 ---- */
+function editProduct(pid){
+  const p = prod(pid);
+  openFormModal(p ? "商品を編集" : "商品を追加", [
+    {key:"name", label:"商品名", value:p ? p.name : ""},
+    {key:"unit", label:"単位（kg・ケース・本 など）", value:p ? p.unit : "個"},
+    {key:"pin",  label:"📌 ピン留め（いつも上に表示）", type:"check", value:p ? p.pin : false},
+  ], (vals) => {
+    if (!vals.name.trim()) { toast("商品名を入れてね"); return false; }
+    if (p) {
+      p.name = vals.name.trim(); p.unit = vals.unit.trim() || "個"; p.pin = vals.pin;
+    } else {
+      S.products.push({id:uid(), sid:view.sid, name:vals.name.trim(), unit:vals.unit.trim() || "個", pin:vals.pin, freq:0, last:null});
+    }
+    save(); render(); return true;
+  }, p ? () => {
+    openModal("「" + p.name + "」を削除する?", [
+      {label:"削除する", cls:"btn-danger", fn(){
+        S.products = S.products.filter(x => x.id !== pid);
+        delete S.order[pid]; delete S.done[pid];
+        save(); closeModal(); render(); toast("削除したよ");
+      }},
+      {label:"やめる", cls:"btn-gray", fn:closeModal},
+    ]);
+  } : null);
+}
+
+function editSupplier(sid){
+  const s = sid ? S.suppliers.find(x => x.id === sid) : null;
+  openFormModal(s ? "仕入れ先を編集" : "仕入れ先を追加", [
+    {key:"name",  label:"仕入れ先の名前", value:s ? s.name : ""},
+    {key:"emoji", label:"アイコン（絵文字1つ）", value:s ? s.emoji : "🏪"},
+  ], (vals) => {
+    if (!vals.name.trim()) { toast("名前を入れてね"); return false; }
+    if (s) { s.name = vals.name.trim(); s.emoji = vals.emoji.trim() || "🏪"; }
+    else S.suppliers.push({id:uid(), name:vals.name.trim(), emoji:vals.emoji.trim() || "🏪"});
+    save(); render(); return true;
+  }, s ? () => {
+    openModal("「" + s.name + "」を商品ごと削除する?", [
+      {label:"削除する", cls:"btn-danger", fn(){
+        S.products.filter(p => p.sid === sid).forEach(p => { delete S.order[p.id]; delete S.done[p.id]; });
+        S.products = S.products.filter(p => p.sid !== sid);
+        S.suppliers = S.suppliers.filter(x => x.id !== sid);
+        save(); closeModal(); go("home"); toast("削除したよ");
+      }},
+      {label:"やめる", cls:"btn-gray", fn:closeModal},
+    ]);
+  } : null);
+}
+
+/* ================= モーダル ================= */
+let modalEl = null;
+function closeModal(){ if (modalEl){ modalEl.remove(); modalEl = null; } }
+
+function openModal(title, btns){
+  closeModal();
+  modalEl = document.createElement("div");
+  modalEl.className = "modal-bg";
+  const box = document.createElement("div");
+  box.className = "modal";
+  const h = document.createElement("h3"); h.textContent = title;
+  box.appendChild(h);
+  const bs = document.createElement("div"); bs.className = "modal-btns";
+  btns.forEach(b => {
+    const el = document.createElement("button");
+    el.className = "btn " + b.cls; el.textContent = b.label; el.onclick = b.fn;
+    bs.appendChild(el);
+  });
+  box.appendChild(bs);
+  modalEl.appendChild(box);
+  modalEl.onclick = e => { if (e.target === modalEl) closeModal(); };
+  document.body.appendChild(modalEl);
+}
+
+function openFormModal(title, fields, onSave, onDelete){
+  closeModal();
+  modalEl = document.createElement("div");
+  modalEl.className = "modal-bg";
+  const box = document.createElement("div");
+  box.className = "modal";
+  const h = document.createElement("h3"); h.textContent = title;
+  box.appendChild(h);
+  const inputs = {};
+  fields.forEach(f => {
+    if (f.type === "check") {
+      const row = document.createElement("label"); row.className = "check-row";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!f.value;
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(f.label));
+      box.appendChild(row);
+      inputs[f.key] = () => cb.checked;
+    } else {
+      const lab = document.createElement("label"); lab.textContent = f.label;
+      const inp = document.createElement("input"); inp.type = "text"; inp.value = f.value || "";
+      box.appendChild(lab); box.appendChild(inp);
+      inputs[f.key] = () => inp.value;
+    }
+  });
+  const bs = document.createElement("div"); bs.className = "modal-btns";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn btn-primary"; saveBtn.textContent = "保存する";
+  saveBtn.onclick = () => {
+    const vals = {}; Object.keys(inputs).forEach(k => vals[k] = inputs[k]());
+    if (onSave(vals) !== false) closeModal();
+  };
+  const cancel = document.createElement("button");
+  cancel.className = "btn btn-gray"; cancel.textContent = "やめる"; cancel.onclick = closeModal;
+  bs.appendChild(saveBtn); bs.appendChild(cancel);
+  box.appendChild(bs);
+  if (onDelete) {
+    const del = document.createElement("button");
+    del.className = "btn btn-danger"; del.style.marginTop = "10px"; del.textContent = "🗑 削除する";
+    del.onclick = onDelete;
+    box.appendChild(del);
+  }
+  modalEl.appendChild(box);
+  modalEl.onclick = e => { if (e.target === modalEl) closeModal(); };
+  document.body.appendChild(modalEl);
+}
+
+/* ================= トースト ================= */
+let toastTimer = null;
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+/* ================= 描画 ================= */
+const app = document.getElementById("app");
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function render(){
+  app.innerHTML = "";
+  if (view.name === "home") renderHome();
+  else if (view.name === "supplier") renderSupplier();
+  else if (view.name === "order") renderOrder();
+  else if (view.name === "send") renderSend();
+  else if (view.name === "shop") renderShop();
+  else if (view.name === "missing") renderMissing();
+  renderTabbar();
+}
+
+/* ---- 商品1行（共通） ---- */
+function prodRow(p, opts){
+  opts = opts || {};
+  const inOrder = S.order[p.id] !== undefined;
+  const row = el("div", "prod-row" + (inOrder ? " selected" : ""));
+
+  const tap = el("button", "tapzone");
+  tap.style.cssText = "border:none;background:none;text-align:left;padding:0;font-family:inherit;";
+  if (p.pin) tap.appendChild(el("span","pin-mark","📌"));
+  const nm = el("span","prod-name", p.name);
+  tap.appendChild(nm);
+  const meta = el("span","prod-unit", p.unit + (opts.showSup ? "・" + supName(p.sid) : ""));
+  tap.appendChild(meta);
+  if (!opts.showSup && p.freq >= 3 && !p.pin) tap.appendChild(el("span","freq-mark","🔥"));
+  tap.onclick = () => {
+    if (editMode) { editProduct(p.id); return; }
+    toggleProduct(p.id);
+    if (!inOrder) toast(p.name + " を発注書に入れたよ");
+  };
+  row.appendChild(tap);
+
+  if (editMode) {
+    const eb = el("button","editbtn","✏️");
+    eb.onclick = () => editProduct(p.id);
+    row.appendChild(eb);
+  } else if (inOrder) {
+    const st = el("div","stepper");
+    const minus = el("button",null,"−");
+    minus.onclick = () => changeQty(p.id,-1);
+    const q = el("div","qty", String(S.order[p.id]));
+    const plus = el("button",null,"＋");
+    plus.onclick = () => changeQty(p.id,1);
+    st.appendChild(minus); st.appendChild(q); st.appendChild(plus);
+    row.appendChild(st);
+  }
+  return row;
+}
+
+/* ---- ホーム ---- */
+function renderHome(){
+  const head = el("div","header");
+  const h1 = el("h1",null,"KEMURI屋 発注");
+  h1.appendChild(el("div","sub", todayStr() + " の発注書：" + orderCount() + "品"));
+  head.appendChild(h1);
+  const eb = el("button","btn btn-gray btn-sm", editMode ? "完了" : "編集");
+  eb.onclick = () => { editMode = !editMode; render(); };
+  head.appendChild(eb);
+  app.appendChild(head);
+
+  const sec = el("div","section");
+
+  /* 検索 */
+  const sb = document.createElement("input");
+  sb.className = "search-box"; sb.type = "search";
+  sb.placeholder = "🔍 全部の商品から検索";
+  sb.value = searchText;
+  sb.oninput = () => { searchText = sb.value; renderHomeList(listWrap); };
+  sec.appendChild(sb);
+
+  /* 漏れバナー */
+  const miss = missingItems();
+  if (miss.length && !searchText) {
+    const b = el("button","miss-banner");
+    b.appendChild(el("span",null,"⚠️"));
+    b.appendChild(el("span",null,"発注漏れかも？ " + miss.length + "品をチェック"));
+    b.onclick = () => go("missing");
+    sec.appendChild(b);
+  }
+
+  const listWrap = el("div");
+  sec.appendChild(listWrap);
+  renderHomeList(listWrap);
+  app.appendChild(sec);
+
+  function renderHomeList(wrap){
+    wrap.innerHTML = "";
+    const q = searchText.trim();
+    if (q) {
+      const hits = S.products.filter(p => p.name.includes(q));
+      if (!hits.length) {
+        const e = el("div","empty"); e.appendChild(el("span","big","🔍"));
+        e.appendChild(document.createTextNode("「" + q + "」は見つからなかったさ"));
+        wrap.appendChild(e);
+        return;
+      }
+      hits.forEach(p => wrap.appendChild(prodRow(p,{showSup:true})));
+      return;
+    }
+    S.suppliers.forEach(s => {
+      const card = el("button","sup-card");
+      card.appendChild(el("span","sup-emoji", s.emoji));
+      const mid = el("div");
+      mid.appendChild(el("div","sup-name", s.name));
+      const cnt = S.products.filter(p => p.sid === s.id).length;
+      const sent = S.sentToday[s.id] === todayStr() ? "・✅送信済み" : "";
+      mid.appendChild(el("div","sup-meta","商品 " + cnt + "件" + sent));
+      card.appendChild(mid);
+      const n = orderCountBySup(s.id);
+      card.appendChild(el("span","sup-badge" + (n ? "" : " zero"), String(n)));
+      card.onclick = () => { if (editMode) editSupplier(s.id); else go("supplier", s.id); };
+      wrap.appendChild(card);
+    });
+    if (editMode) {
+      const add = el("button","btn btn-gray","＋ 仕入れ先を追加");
+      add.onclick = () => editSupplier(null);
+      wrap.appendChild(add);
+    }
+  }
+}
+
+/* ---- 仕入れ先の商品一覧 ---- */
+function renderSupplier(){
+  const s = S.suppliers.find(x => x.id === view.sid);
+  if (!s) { go("home"); return; }
+
+  const head = el("div","header");
+  const back = el("button","backbtn","←");
+  back.onclick = () => go("home");
+  head.appendChild(back);
+  const h1 = el("h1",null, s.emoji + " " + s.name);
+  h1.appendChild(el("div","sub","タップで発注書に入れる・もう一度タップで外す"));
+  head.appendChild(h1);
+  const eb = el("button","btn btn-gray btn-sm", editMode ? "完了" : "編集");
+  eb.onclick = () => { editMode = !editMode; render(); };
+  head.appendChild(eb);
+  app.appendChild(head);
+
+  const sec = el("div","section");
+
+  const sb = document.createElement("input");
+  sb.className = "search-box"; sb.type = "search";
+  sb.placeholder = "🔍 " + s.name + "の商品を検索";
+  sb.value = supSearch;
+  sb.oninput = () => { supSearch = sb.value; renderList(); };
+  sec.appendChild(sb);
+
+  const copyBtn = el("button","btn btn-gray","📋 前回の発注をコピー");
+  copyBtn.style.marginBottom = "14px";
+  copyBtn.onclick = () => copyLastOrder(s.id);
+  sec.appendChild(copyBtn);
+
+  const listWrap = el("div");
+  sec.appendChild(listWrap);
+  renderList();
+
+  const add = el("button","btn btn-gray","＋ 商品を追加");
+  add.onclick = () => { editMode = true; editProduct(null); };
+  sec.appendChild(add);
+  app.appendChild(sec);
+
+  function renderList(){
+    listWrap.innerHTML = "";
+    const q = supSearch.trim();
+    let list = sortedProducts(s.id);
+    if (q) list = list.filter(p => p.name.includes(q));
+    if (!list.length) {
+      const e = el("div","empty"); e.appendChild(el("span","big","📦"));
+      e.appendChild(document.createTextNode(q ? "見つからなかったさ" : "商品がまだないよ。「＋商品を追加」から登録してね"));
+      listWrap.appendChild(e);
+      return;
+    }
+    list.forEach(p => listWrap.appendChild(prodRow(p)));
+  }
+}
+
+/* ---- 今日の発注書 ---- */
+function renderOrder(){
+  const head = el("div","header");
+  const h1 = el("h1",null,"📝 今日の発注書");
+  h1.appendChild(el("div","sub", todayStr() + "・" + orderCount() + "品"));
+  head.appendChild(h1);
+  if (orderCount()) {
+    const cb = el("button","btn btn-gray btn-sm","クリア");
+    cb.onclick = clearAll;
+    head.appendChild(cb);
+  }
+  app.appendChild(head);
+
+  const sec = el("div","section");
+
+  const miss = missingItems();
+  if (miss.length) {
+    const b = el("button","miss-banner");
+    b.appendChild(el("span",null,"⚠️"));
+    b.appendChild(el("span",null,"発注漏れかも？ " + miss.length + "品をチェック"));
+    b.onclick = () => go("missing");
+    sec.appendChild(b);
+  }
+
+  if (!orderCount()) {
+    const e = el("div","empty");
+    e.appendChild(el("span","big","📝"));
+    e.appendChild(document.createTextNode("発注書はまだ空っぽ。ホームから商品をタップして入れてね"));
+    sec.appendChild(e);
+  } else {
+    S.suppliers.forEach(s => {
+      const items = sortedProducts(s.id).filter(p => S.order[p.id] !== undefined);
+      if (!items.length) return;
+      const g = el("div","order-group");
+      const h3 = el("h3",null, s.emoji + " " + s.name + " ");
+      h3.appendChild(el("span","cnt", items.length + "品"));
+      if (S.sentToday[s.id] === todayStr()) h3.appendChild(el("span","sent-mark","　✅送信済み"));
+      g.appendChild(h3);
+      items.forEach(p => g.appendChild(prodRow(p)));
+      sec.appendChild(g);
+    });
+    const goSend = el("button","btn btn-primary","📤 発注モードへ進む");
+    goSend.onclick = () => go("send");
+    sec.appendChild(goSend);
+  }
+  app.appendChild(sec);
+}
+
+/* ---- 発注モード ---- */
+function renderSend(){
+  const head = el("div","header");
+  const h1 = el("h1",null,"📤 発注モード");
+  h1.appendChild(el("div","sub","業者ごとの発注文をLINEで送ろう"));
+  head.appendChild(h1);
+  app.appendChild(head);
+
+  const sec = el("div","section");
+  let any = false;
+
+  S.suppliers.forEach(s => {
+    const text = buildOrderText(s.id);
+    if (!text) return;
+    any = true;
+    const card = el("div","send-card");
+    const h3 = el("h3",null, s.emoji + " " + s.name);
+    if (S.sentToday[s.id] === todayStr()) h3.appendChild(el("span","sent-mark","　✅送信済み"));
+    card.appendChild(h3);
+
+    const ta = document.createElement("textarea");
+    ta.id = "ta-" + s.id;
+    ta.value = text;
+    card.appendChild(ta);
+
+    const btns = el("div","send-btns");
+    const cp = el("button","btn btn-gray","📋 コピー");
+    cp.onclick = () => copyText(ta.value);
+    const ln = el("button","btn btn-line","💬 LINEで送る");
+    ln.onclick = () => sendLine(s.id);
+    const dn = el("button","btn btn-primary","✅ 送信済み");
+    dn.onclick = () => markSent(s.id);
+    btns.appendChild(cp); btns.appendChild(ln); btns.appendChild(dn);
+    card.appendChild(btns);
+    sec.appendChild(card);
+  });
+
+  if (!any) {
+    const e = el("div","empty");
+    e.appendChild(el("span","big","📤"));
+    e.appendChild(document.createTextNode("発注書に商品が入ってないよ。ホームから商品をタップしてね"));
+    sec.appendChild(e);
+  }
+  app.appendChild(sec);
+}
+
+/* ---- 買い物モード ---- */
+function renderShop(){
+  const head = el("div","header");
+  const h1 = el("h1",null,"🛒 買い物モード");
+  h1.appendChild(el("div","sub","買ったらタップでチェック"));
+  head.appendChild(h1);
+  app.appendChild(head);
+
+  const sec = el("div","section");
+  const total = orderCount();
+  const doneN = Object.keys(S.done).filter(pid => S.order[pid] !== undefined).length;
+
+  if (!total) {
+    const e = el("div","empty");
+    e.appendChild(el("span","big","🛒"));
+    e.appendChild(document.createTextNode("リストが空っぽ。発注書に商品を入れるとここに出るよ"));
+    sec.appendChild(e);
+    app.appendChild(sec);
+    return;
+  }
+
+  sec.appendChild(el("div","progress-note","✅ " + doneN + " / " + total + " 品 完了"));
+
+  S.suppliers.forEach(s => {
+    const items = sortedProducts(s.id).filter(p => S.order[p.id] !== undefined);
+    if (!items.length) return;
+    sec.appendChild(el("div","section-title", s.emoji + " " + s.name));
+    items.forEach(p => {
+      const done = !!S.done[p.id];
+      const row = el("button","shop-row" + (done ? " done" : ""));
+      row.appendChild(el("span","shop-check", done ? "✓" : ""));
+      row.appendChild(el("span","shop-label", p.name));
+      row.appendChild(el("span","shop-qty", S.order[p.id] + p.unit));
+      row.onclick = () => toggleDone(p.id);
+      sec.appendChild(row);
+    });
+  });
+
+  if (doneN > 0) {
+    const clr = el("button","btn btn-gray","🧹 チェック済みをリストから消す");
+    clr.style.marginTop = "18px";
+    clr.onclick = () => {
+      Object.keys(S.done).forEach(pid => { if (S.order[pid] !== undefined) { delete S.order[pid]; } delete S.done[pid]; });
+      save(); render(); toast("チェック済みを消したよ");
+    };
+    sec.appendChild(clr);
+  }
+  app.appendChild(sec);
+}
+
+/* ---- 発注漏れチェック ---- */
+function renderMissing(){
+  const head = el("div","header");
+  const back = el("button","backbtn","←");
+  back.onclick = () => go("order");
+  head.appendChild(back);
+  const h1 = el("h1",null,"⚠️ 発注漏れチェック");
+  h1.appendChild(el("div","sub","よく頼む物・ピン留めで今日入ってない物"));
+  head.appendChild(h1);
+  app.appendChild(head);
+
+  const sec = el("div","section");
+  const miss = missingItems();
+
+  if (!miss.length) {
+    const e = el("div","empty");
+    e.appendChild(el("span","big","🎉"));
+    e.appendChild(document.createTextNode("発注漏れなし！ばっちりさ〜"));
+    sec.appendChild(e);
+    app.appendChild(sec);
+    return;
+  }
+
+  let curSid = null;
+  miss.forEach(p => {
+    if (p.sid !== curSid) {
+      curSid = p.sid;
+      const s = S.suppliers.find(x => x.id === p.sid);
+      sec.appendChild(el("div","section-title", (s ? s.emoji + " " + s.name : "")));
+    }
+    const row = el("div","add-row");
+    const info = el("div","info");
+    const nm = el("div","prod-name", (p.pin ? "📌 " : "") + p.name);
+    info.appendChild(nm);
+    info.appendChild(el("div","prod-unit", "これまで " + (p.freq || 0) + "回発注" + (p.last ? "・前回 " + p.last : "")));
+    row.appendChild(info);
+    const add = el("button","addbtn","＋ 追加");
+    add.onclick = () => { S.order[p.id] = 1; save(); render(); toast(p.name + " を追加したよ"); };
+    row.appendChild(add);
+    sec.appendChild(row);
+  });
+  app.appendChild(sec);
+}
+
+/* ---- 下部ナビ ---- */
+function renderTabbar(){
+  const old = document.querySelector(".tabbar");
+  if (old) old.remove();
+  const bar = el("div","tabbar");
+  const tabs = [
+    {key:"home",  icon:"🏠", label:"ホーム"},
+    {key:"order", icon:"📝", label:"発注書", badge:orderCount()},
+    {key:"send",  icon:"📤", label:"発注"},
+    {key:"shop",  icon:"🛒", label:"買い物"},
+  ];
+  tabs.forEach(t => {
+    const b = el("button", (view.name === t.key || (t.key === "home" && view.name === "supplier")) ? "active" : "");
+    b.appendChild(el("span","ticon", t.icon));
+    b.appendChild(el("span",null, t.label));
+    if (t.badge) b.appendChild(el("span","tab-badge", String(t.badge)));
+    b.onclick = () => go(t.key);
+    bar.appendChild(b);
+  });
+  document.body.appendChild(bar);
+}
+
+render();
+</script>
+</body>
+</html>
