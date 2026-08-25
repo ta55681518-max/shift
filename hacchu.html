@@ -575,7 +575,7 @@ function prodRow(p, opts){
 function renderHome(){
   const head = el("div","header");
   const h1 = el("h1",null,"KEMURI屋 発注");
-  h1.appendChild(el("div","sub", todayStr() + " の発注書：" + orderCount() + "品"));
+  h1.appendChild(el("div","sub", editMode ? "業者をタップで名前・アイコン変更" : todayStr() + " の発注書：" + orderCount() + "品"));
   head.appendChild(h1);
   const eb = el("button","btn btn-gray btn-sm", editMode ? "完了" : "編集");
   eb.onclick = () => { editMode = !editMode; render(); };
@@ -634,6 +634,11 @@ function renderHome(){
       card.appendChild(el("span","sup-badge" + (n ? "" : " zero"), String(n)));
       card.onclick = () => { if (editMode) editSupplier(s.id); else go("supplier", s.id); };
       wrap.appendChild(card);
+      if (editMode) {
+        const pen = el("span",null,"✏️");
+        pen.style.cssText = "font-size:20px;margin-left:8px;";
+        card.insertBefore(pen, card.querySelector(".sup-badge"));
+      }
     });
     if (editMode) {
       const add = el("button","btn btn-gray","＋ 仕入れ先を追加");
@@ -653,7 +658,7 @@ function renderSupplier(){
   back.onclick = () => go("home");
   head.appendChild(back);
   const h1 = el("h1",null, s.emoji + " " + s.name);
-  h1.appendChild(el("div","sub","タップで発注書に入れる・もう一度タップで外す"));
+  h1.appendChild(el("div","sub", editMode ? "商品をタップで名前・単位を変更" : "タップで発注書に入れる・もう一度タップで外す"));
   head.appendChild(h1);
   const eb = el("button","btn btn-gray btn-sm", editMode ? "完了" : "編集");
   eb.onclick = () => { editMode = !editMode; render(); };
@@ -668,6 +673,13 @@ function renderSupplier(){
   sb.value = supSearch;
   sb.oninput = () => { supSearch = sb.value; renderList(); };
   sec.appendChild(sb);
+
+  if (editMode) {
+    const supEdit = el("button","btn btn-gray","✏️ この仕入れ先の名前・アイコンを変更");
+    supEdit.style.marginBottom = "14px";
+    supEdit.onclick = () => editSupplier(s.id);
+    sec.appendChild(supEdit);
+  }
 
   const copyBtn = el("button","btn btn-gray","📋 前回の発注をコピー");
   copyBtn.style.marginBottom = "14px";
