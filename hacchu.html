@@ -192,6 +192,19 @@
   .empty { text-align:center; color:#aaa; padding:50px 20px; font-size:15px; line-height:1.9; }
   .empty .big { font-size:44px; display:block; margin-bottom:10px; }
 
+  /* 注文日 */
+  .date-row {
+    display:flex; align-items:center; gap:10px;
+    border:1.5px solid #e5e5e5; border-radius:14px;
+    padding:10px 14px; margin-bottom:14px; background:#fff;
+  }
+  .date-row .dlabel { font-weight:700; font-size:15px; flex-shrink:0; }
+  .date-row input[type=date] {
+    flex:1; border:none; font-size:17px; font-weight:700; font-family:inherit;
+    background:none; outline:none; padding:8px 0; min-width:0; color:#222;
+  }
+  .date-row .yobi { font-size:16px; font-weight:700; color:#e8531f; flex-shrink:0; }
+
   /* 漏れチェックバナー */
   .miss-banner {
     display:flex; align-items:center; gap:10px; width:100%;
@@ -258,7 +271,18 @@ function migrate(st){
   (st.products || []).forEach(p => {
     if (p.cat === undefined) p.cat = defaultCats[p.name] || "";
   });
+  /* 注文日: 未設定か過去日なら明日にする */
+  const now = new Date();
+  const iso = d => d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  const tom = new Date(); tom.setDate(tom.getDate() + 1);
+  if (!st.orderDate || st.orderDate < iso(now)) st.orderDate = iso(tom);
   return st;
+}
+
+function orderDateLabel(){
+  const d = new Date(S.orderDate + "T00:00:00");
+  const yobi = ["日","月","火","水","木","金","土"][d.getDay()];
+  return (d.getMonth()+1) + "月" + d.getDate() + "日（" + yobi + "）";
 }
 
 function load(){
@@ -344,7 +368,7 @@ function buildOrderText(sid){
   const items = Object.keys(S.order)
     .map(pid => prod(pid)).filter(p => p && p.sid === sid);
   if (!items.length) return "";
-  let t = "いつもお世話になっております。\n串焼KEMURI屋です。\n発注をお願いします。\n\n";
+  let t = "いつもお世話になっております。\n串焼KEMURI屋です。\n" + orderDateLabel() + "の注文をお願いします。\n\n";
   items.forEach(p => { t += "・" + p.name + "　" + S.order[p.id] + p.unit + "\n"; });
   t += "\nよろしくお願いします!";
   return t;
@@ -568,6 +592,24 @@ function render(){
   renderTabbar();
 }
 
+/* ---- 注文日の選択行（共通） ---- */
+function dateRow(){
+  const row = el("div","date-row");
+  row.appendChild(el("span","dlabel","📅 注文日"));
+  const inp = document.createElement("input");
+  inp.type = "date"; inp.value = S.orderDate;
+  const iso = d => d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  inp.min = iso(new Date());
+  inp.onchange = () => {
+    if (!inp.value) return;
+    S.orderDate = inp.value; save(); render();
+    toast("注文日を " + orderDateLabel() + " にしたよ");
+  };
+  row.appendChild(inp);
+  row.appendChild(el("span","yobi", orderDateLabel().replace(/^.*（/,"（")));
+  return row;
+}
+
 /* ---- 商品1行（共通） ---- */
 function prodRow(p, opts){
   opts = opts || {};
@@ -776,6 +818,8 @@ function renderOrder(){
 
   const sec = el("div","section");
 
+  sec.appendChild(dateRow());
+
   const miss = missingItems();
   if (miss.length) {
     const b = el("button","miss-banner");
@@ -818,6 +862,7 @@ function renderSend(){
   app.appendChild(head);
 
   const sec = el("div","section");
+  sec.appendChild(dateRow());
   let any = false;
 
   S.suppliers.forEach(s => {
