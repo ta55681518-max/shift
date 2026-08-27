@@ -271,16 +271,29 @@ function migrate(st){
   (st.products || []).forEach(p => {
     if (p.cat === undefined) p.cat = defaultCats[p.name] || "";
   });
-  /* 注文日: 未設定か過去日なら明日にする */
-  const now = new Date();
-  const iso = d => d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  /* 注文日: 業者ごとに持つ。未設定か過去日なら明日にする */
+  if (!st.supDates) st.supDates = {};
   const tom = new Date(); tom.setDate(tom.getDate() + 1);
-  if (!st.orderDate || st.orderDate < iso(now)) st.orderDate = iso(tom);
+  const def = (st.orderDate && st.orderDate >= isoDate(new Date())) ? st.orderDate : isoDate(tom);
+  (st.suppliers || []).forEach(s => {
+    if (!st.supDates[s.id] || st.supDates[s.id] < isoDate(new Date())) st.supDates[s.id] = def;
+  });
   return st;
 }
 
-function orderDateLabel(){
-  const d = new Date(S.orderDate + "T00:00:00");
+function isoDate(d){
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function supDate(sid){
+  if (!S.supDates) S.supDates = {};
+  if (!S.supDates[sid] || S.supDates[sid] < isoDate(new Date())) {
+    const t = new Date(); t.setDate(t.getDate() + 1);
+    S.supDates[sid] = isoDate(t);
+  }
+  return S.supDates[sid];
+}
+function dateLabelFor(sid){
+  const d = new Date(supDate(sid) + "T00:00:00");
   const yobi = ["日","月","火","水","木","金","土"][d.getDay()];
   return (d.getMonth()+1) + "月" + d.getDate() + "日（" + yobi + "）";
 }
@@ -368,7 +381,7 @@ function buildOrderText(sid){
   const items = Object.keys(S.order)
     .map(pid => prod(pid)).filter(p => p && p.sid === sid);
   if (!items.length) return "";
-  let t = "いつもお世話になっております。\n串焼KEMURI屋です。\n" + orderDateLabel() + "の注文をお願いします。\n\n";
+  let t = "いつもお世話になっております。\n串焼KEMURI屋です。\n" + dateLabelFor(sid) + "の注文をお願いします。\n\n";
   items.forEach(p => { t += "・" + p.name + "　" + S.order[p.id] + p.unit + "\n"; });
   t += "\nよろしくお願いします!";
   return t;
@@ -592,21 +605,20 @@ function render(){
   renderTabbar();
 }
 
-/* ---- 注文日の選択行（共通） ---- */
-function dateRow(){
+/* ---- 注文日の選択行（業者ごと） ---- */
+function dateRow(sid){
   const row = el("div","date-row");
   row.appendChild(el("span","dlabel","📅 注文日"));
   const inp = document.createElement("input");
-  inp.type = "date"; inp.value = S.orderDate;
-  const iso = d => d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
-  inp.min = iso(new Date());
+  inp.type = "date"; inp.value = supDate(sid);
+  inp.min = isoDate(new Date());
   inp.onchange = () => {
     if (!inp.value) return;
-    S.orderDate = inp.value; save(); render();
-    toast("注文日を " + orderDateLabel() + " にしたよ");
+    S.supDates[sid] = inp.value; save(); render();
+    toast(supName(sid) + " の注文日を " + dateLabelFor(sid) + " にしたよ");
   };
   row.appendChild(inp);
-  row.appendChild(el("span","yobi", orderDateLabel().replace(/^.*（/,"（")));
+  row.appendChild(el("span","yobi", dateLabelFor(sid).replace(/^.*（/,"（")));
   return row;
 }
 
@@ -818,8 +830,6 @@ function renderOrder(){
 
   const sec = el("div","section");
 
-  sec.appendChild(dateRow());
-
   const miss = missingItems();
   if (miss.length) {
     const b = el("button","miss-banner");
@@ -843,6 +853,7 @@ function renderOrder(){
       h3.appendChild(el("span","cnt", items.length + "品"));
       if (S.sentToday[s.id] === todayStr()) h3.appendChild(el("span","sent-mark","　✅送信済み"));
       g.appendChild(h3);
+      g.appendChild(dateRow(s.id));
       items.forEach(p => g.appendChild(prodRow(p)));
       sec.appendChild(g);
     });
@@ -862,7 +873,6 @@ function renderSend(){
   app.appendChild(head);
 
   const sec = el("div","section");
-  sec.appendChild(dateRow());
   let any = false;
 
   S.suppliers.forEach(s => {
@@ -873,6 +883,7 @@ function renderSend(){
     const h3 = el("h3",null, s.emoji + " " + s.name);
     if (S.sentToday[s.id] === todayStr()) h3.appendChild(el("span","sent-mark","　✅送信済み"));
     card.appendChild(h3);
+    card.appendChild(dateRow(s.id));
 
     const ta = document.createElement("textarea");
     ta.id = "ta-" + s.id;
