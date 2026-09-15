@@ -17,8 +17,10 @@
   }
   #app{max-width:560px;margin:0 auto;background:#fff;min-height:100%;
        padding-bottom:calc(92px + env(safe-area-inset-bottom));}
-  button{font-family:inherit;cursor:pointer;color:inherit;}
-  input,select{font-family:inherit;}
+  button,.step div,.file-btn{font-family:inherit;cursor:pointer;color:inherit;touch-action:manipulation;}
+  input,select,textarea{font-family:inherit;touch-action:manipulation;
+    -webkit-user-select:text;user-select:text;}
+  .chk:active,.stp button:active,.bigqty button:active{background:#ececee;}
 
   /* ヘッダー */
   .header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid #ececec;
@@ -44,7 +46,7 @@
        border-radius:15px;padding:14px 14px;margin-bottom:9px;text-align:left;}
   .row:active{background:#fafafa;}
   .row.ng{border-color:#ffc9bf;background:#fffaf9;}
-  .row .nm{flex:1;font-size:19px;font-weight:700;letter-spacing:.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .row .nm{flex:1;font-size:19px;font-weight:700;letter-spacing:.3px;line-height:1.3;word-break:break-word;}
   .row .qty{font-size:28px;font-weight:800;min-width:54px;text-align:right;font-variant-numeric:tabular-nums;}
   .row .st{min-width:72px;text-align:center;border-radius:999px;font-weight:800;padding:7px 0;font-size:15px;}
   .st.ok{background:#eafaf1;color:#0a9d55;font-size:19px;}
@@ -82,7 +84,7 @@
 
   /* 数量ステッパー */
   .stp{display:flex;align-items:center;gap:8px;border:1.5px solid #ededed;border-radius:15px;padding:11px 12px;margin-bottom:9px;}
-  .stp .nm{flex:1;font-size:17px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .stp .nm{flex:1;font-size:17px;font-weight:700;line-height:1.3;word-break:break-word;}
   .stp .now{font-size:12px;color:#aaa;font-weight:600;margin-top:2px;display:block;}
   .stp button{width:44px;height:44px;border-radius:12px;border:none;background:#f1f1f3;font-size:23px;font-weight:700;flex:0 0 auto;}
   .stp input{width:62px;height:44px;border:1.5px solid #e2e2e2;border-radius:12px;text-align:center;
@@ -91,7 +93,7 @@
 
   /* POS */
   .step{display:flex;gap:6px;margin-bottom:14px;}
-  .step div{flex:1;text-align:center;font-size:12px;font-weight:700;color:#bbb;padding:8px 2px;border-radius:10px;background:#f6f6f8;}
+  .step div{flex:1;text-align:center;font-size:13px;font-weight:700;color:#bbb;padding:14px 2px;border-radius:12px;background:#f6f6f8;}
   .step div.on{background:#e8531f;color:#fff;}
   .prev{display:flex;align-items:center;gap:8px;padding:12px 4px;border-bottom:1px solid #f2f2f2;}
   .prev .nm{flex:1;font-size:17px;font-weight:700;}
@@ -124,6 +126,7 @@
   .tabbar button{flex:1;border:none;background:none;padding:9px 0 8px;font-size:11px;font-weight:700;color:#aaa;position:relative;}
   .tabbar button .ic{display:block;font-size:21px;line-height:1.25;}
   .tabbar button.on{color:#e8531f;}
+  .tabbar.hide{display:none;}
   .tabbar button .bdg{position:absolute;top:4px;left:calc(50% + 6px);background:#d92d20;color:#fff;
        border-radius:999px;min-width:18px;height:18px;font-size:11px;line-height:18px;padding:0 5px;}
 
@@ -169,7 +172,7 @@
 </div>
 <div class="toast" id="toast"></div>
 
-<input type="file" id="csvfile" accept=".csv,.txt,.tsv,text/csv" onchange="onPickFile(this)">
+<input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
 
 <script>
 /* ============================================================
@@ -344,7 +347,7 @@ function drawAdjust(){
     +   '<button onclick="adjStep(1)">＋</button>'
     + '</div>'
     + '<label class="lab">実在庫を直接入力</label>'
-    + '<input class="txt" id="adj-in" type="number" inputmode="numeric" value="'+ADJ.val+'" onchange="adjSet(this.value)">'
+    + '<input class="txt" id="adj-in" type="text" inputmode="numeric" pattern="[0-9]*" value="'+ADJ.val+'" onchange="adjSet(this.value)">'
     + '<label class="lab">変更の理由</label>'
     + '<div class="chips">'
     +   REASONS.map(r=>'<button class="'+(ADJ.reason===r?'on':'')+'" onclick="adjReason(\''+r+'\')">'+r+'</button>').join('')
@@ -449,7 +452,7 @@ function viewArrive(){
     h += '<div class="stp '+(arrOn(it.id)?'on':'')+'" id="stp-'+it.id+'">'
        +  '<span class="nm">'+esc(it.name)+'<span class="now">'+(ARR.mode==='in'?'在庫 ':'いま ')+it.stock+'</span></span>'
        +  '<button onclick="arrQ('+it.id+',-1)">－</button>'
-       +  '<input id="q-'+it.id+'" type="number" inputmode="numeric" value="'+q+'" onchange="arrQset('+it.id+',this.value)">'
+       +  '<input id="q-'+it.id+'" type="text" inputmode="numeric" pattern="[0-9]*" value="'+q+'" onchange="arrQset('+it.id+',this.value)">'
        +  '<button onclick="arrQ('+it.id+',1)">＋</button>'
        + '</div>';
   });
@@ -506,13 +509,15 @@ function countCommit(){
    applySales() から先（対応付け・二重防止・在庫減算）は共通なので
    取込方法を変えても在庫のしくみは触らなくてよい。
    ============================================================ */
+function userErr(msg){ const e = new Error(msg); e.userMsg = msg; return e; }
 const CsvPosSource = {
   id:'csv', label:'CSV取込',
   /* file -> { rows, headIdx, cols } */
   async read(file){
     const text = await decodeFile(file);
+    if(text.slice(0,2)==='PK') throw userErr('エクセル形式（.xlsx）は取り込めません。POSからCSVで書き出してください');
     const rows = parseCSV(text);
-    if(!rows.length) throw new Error('中身が読み取れませんでした');
+    if(!rows.length) throw userErr('中身が読み取れませんでした');
     const headIdx = guessHeadRow(rows);
     const cols = guessCols(rows[headIdx]);
     return { file:file.name, rows, headIdx, cols };
@@ -624,7 +629,8 @@ function viewPos(){
 
   if(POS.step===1){
     h += '<label class="file-btn" for="csvfile">📄 POS CSVを選択</label>';
-    h += '<div class="muted gap">エクストリンクPOSから書き出した売上CSVを選んでください。文字コード（Shift_JIS／UTF-8）は自動で判定します。</div>';
+    h += '<div class="muted gap">エクストリンクPOSから書き出した売上CSVを選んでください。文字コード（Shift_JIS／UTF-8）は自動で判定します。'
+       + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
     const last = DB.imports.filter(x=>!x.undone)[0];
     if(last) h += '<div class="info gap">前回の取込：'+fmtDT(last.at)+'　'+esc(last.file)+'（'+last.rows+'件）<br>同じ期間をもう一度取り込んでも、同じ売上は二重で引かれません。</div>';
     h += '</div>'; return h;
@@ -699,7 +705,7 @@ async function onPickFile(el){
   try{
     POS.parsed = await CsvPosSource.read(f);
     POS.step = 2; TAB='pos'; render();
-  }catch(e){ toast('CSVを読めませんでした'); }
+  }catch(e){ toast((e && e.userMsg) || 'CSVを読めませんでした'); }
 }
 function posReset(){ POS = { step:1, parsed:null, sales:null }; render(); }
 function posHead(i){
@@ -861,11 +867,11 @@ function drawItem(){
   const pos = EDIT.id ? posNamesOf(EDIT.id) : [];
   let h = '<h3>'+(EDIT.id? '商品の設定':'商品を追加')+'</h3><div class="sh-sub">　</div>'
     + '<label class="lab">商品名</label><input class="txt" id="e-name" value="'+esc(EDIT.name)+'" onchange="EDIT.name=this.value">'
-    + '<label class="lab">発注ライン（この数以下で「発注」）</label><input class="txt" type="number" inputmode="numeric" value="'+EDIT.min+'" onchange="EDIT.min=Math.max(0,num(this.value))">'
-    + '<label class="lab">POS販売1あたり 減らす在庫数</label><input class="txt" type="number" inputmode="numeric" value="'+EDIT.per+'" onchange="EDIT.per=Math.max(1,num(this.value))">'
+    + '<label class="lab">発注ライン（この数以下で「発注」）</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.min+'" onchange="EDIT.min=Math.max(0,num(this.value))">'
+    + '<label class="lab">POS販売1あたり 減らす在庫数</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.per+'" onchange="EDIT.per=Math.max(1,num(this.value))">'
     + '<div class="muted" style="margin-top:6px">1皿で2個使うなら 2 にします。</div>';
   if(!EDIT.id){
-    h += '<label class="lab">いまの在庫</label><input class="txt" type="number" inputmode="numeric" value="'+EDIT.stock+'" onchange="EDIT.stock=Math.max(0,num(this.value))">';
+    h += '<label class="lab">いまの在庫</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.stock+'" onchange="EDIT.stock=Math.max(0,num(this.value))">';
   }else{
     h += '<label class="lab">POSの商品名（'+pos.length+'）</label>'
        + (pos.length? '<div class="chips">'+pos.map(p=>'<button class="on" onclick="delMap(\''+esc(norm(p)).replace(/'/g,"\\'")+'\');openItem('+EDIT.id+')">'+esc(p)+' ✕</button>').join('')+'</div>'
@@ -928,6 +934,17 @@ function openSheet(html){
   document.getElementById('ov').classList.add('show');
 }
 function closeSheet(){ document.getElementById('ov').classList.remove('show'); }
+
+/* ---------- iPhone向けの細かい調整 ---------- */
+function isField(el){ return el && el.matches && el.matches('input,select,textarea'); }
+document.addEventListener('focusin', e=>{
+  if(!isField(e.target)) return;
+  document.getElementById('tabbar').classList.add('hide');       // キーボードに隠されないように
+  if(e.target.inputMode==='numeric') setTimeout(()=>{ try{ e.target.select(); }catch(err){} }, 0); // 打ち替えやすく全選択
+});
+document.addEventListener('focusout', ()=>{
+  setTimeout(()=>{ if(!isField(document.activeElement)) document.getElementById('tabbar').classList.remove('hide'); }, 120);
+});
 
 /* ---------- 起動 ---------- */
 (function init(){
