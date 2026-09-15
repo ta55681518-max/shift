@@ -251,6 +251,13 @@ function fmtDT(iso){
   const p = n=>('0'+n).slice(-2);
   return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());
 }
+function fmtDay(iso){ const d = new Date(iso); return isNaN(d)? '' : (d.getMonth()+1)+'/'+d.getDate(); }
+function agoText(iso){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  const a = new Date(), day = 24*60*60*1000;
+  const n = Math.floor((new Date(a.getFullYear(),a.getMonth(),a.getDate()) - new Date(d.getFullYear(),d.getMonth(),d.getDate()))/day);
+  return n<=0 ? '今日' : (n===1 ? '昨日' : n+'日前');
+}
 function toast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -342,7 +349,10 @@ function viewStock(){
        + '</button>';
   });
   h += '</div>';
-  h += '<div class="pad" style="padding-top:0"><div class="muted">商品をタップすると ＋ － ／ 実在庫の入力ができます。</div></div>';
+  const lastCount = DB.history.find(x=>x.reason===REASONS[0]);
+  h += '<div class="pad" style="padding-top:0"><div class="muted">'
+     + (lastCount ? '最後の棚卸：'+fmtDay(lastCount.at)+'（'+agoText(lastCount.at)+'）' : 'まだ棚卸をしていません')
+     + '<br>商品をタップすると ＋ － ／ 実在庫の入力ができます。</div></div>';
   return h;
 }
 
@@ -745,7 +755,7 @@ function viewPos(){
     const shown = POS.showAll ? un : un.slice(0,8);
     h += '<div class="warn gap">在庫の商品と対応していないものが '+un.length+' 件あります（ドリンクやコースなど）。'
        + '冷凍在庫にあるものだけ選んでください。一度選べば次回から自動で対応します。'
-       + '<br>選ばなかったものは在庫を動かしません。</div>';
+       + '<br>盛り合わせ・コース・飲み放題は「使わない」でOK（ズレは棚卸で直します）。</div>';
     h += '<div class="gap">';
     shown.forEach(u=>{
       h += '<div class="map-row"><div class="nm">'+esc(u.name)+'<span class="sl" style="font-weight:400;color:#888"> 　出数 '+u.qty+'</span></div>'
