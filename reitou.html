@@ -192,6 +192,26 @@ const SEED = [
   ['豚バラ串',5],['やげん',5]
 ];
 
+/* エクストリンクPOSの実際の商品名 → 冷凍在庫の対応（初期設定。設定タブで変更・解除できる）
+   ※シーザーサラダは燻製ベーコンを使うため、売れたら燻製ベーコンの在庫を引く */
+const SEED_POS = [
+  ['茶豆','枝豆'],
+  ['手造りカマンベールチーズフライ','カマンベールチーズフライ'],
+  ['イカゲソ唐揚げ','イカゲソ'],
+  ['鶏皮ギョウザ','鶏皮餃子'],
+  ['レバーペースト（バケット5枚付き）','レバーペースト'],
+  ['長崎産アジフライ','アジフライ'],
+  ['鹿児島産鶏モモタタキ','ももたたき'],
+  ['鶏むね昆布締めタタキ','昆布締めたたき'],
+  ['馬レバ刺し','うまれば'],
+  ['鶏みそ串カツ','串カツ'],
+  ['串カツおろしポン酢','串カツ'],
+  ['クルミとブルーチーズの春巻','春巻き'],
+  ['シーザーサラダ','燻製ベーコン'],
+  ['炙りシメサバ','しめさば'],
+  ['県産豚バラ串','豚バラ串'],
+  ['ヤゲンなんこつ','やげん']
+];
 const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼした','数え間違い','その他'];
 
 /* ---------- データ ----------
@@ -220,7 +240,19 @@ function load(){
     d.items.push({ id, name, stock:min, min, per:1 });
     d.map[norm(name)] = { item:id, label:name };
   });
+  applySeedPos(d);
+  d.posSeeded = 1;
   return d;
+}
+/* POS名の初期対応を入れる（すでに設定済みのものは触らない） */
+function applySeedPos(d){
+  let changed = false;
+  SEED_POS.forEach(([pos,name])=>{
+    const it = d.items.find(i=>i.name===name); if(!it) return;
+    const k = norm(pos);
+    if(!d.map[k]){ d.map[k] = { item:it.id, label:pos }; changed = true; }
+  });
+  return changed;
 }
 function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ toast('保存できんかった…'); } }
 
@@ -1129,6 +1161,7 @@ document.addEventListener('focusout', ()=>{
   });
   if(!DB.ordered) DB.ordered = {};
   if(!DB.applied) DB.applied = {};
+  if(!DB.posSeeded){ applySeedPos(DB); DB.posSeeded = 1; }
   save();
   render();
 })();
