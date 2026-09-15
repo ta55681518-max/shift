@@ -204,7 +204,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    imports[] … { id, at, file, rows, lines:[{itemId,qty}], keys:[], undone }
 */
 function blank(){
-  return { v:1, seq:1, items:[], map:{}, seen:{}, history:[], imports:[], csvMap:null, ordered:{} };
+  return { v:1, seq:1, items:[], map:{}, seen:{}, applied:{}, history:[], imports:[], csvMap:null, ordered:{} };
 }
 let DB = load();
 let TAB = 'stock';
@@ -510,6 +510,15 @@ function countCommit(){
    取込方法を変えても在庫のしくみは触らなくてよい。
    ============================================================ */
 function userErr(msg){ const e = new Error(msg); e.userMsg = msg; return e; }
+/* 日時の文字列から「日」だけ取り出す（2026/09/14 18:20 → 2026-09-14） */
+function dayOf(at){
+  const t = String(at||'');
+  let m = t.match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/);
+  if(m) return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
+  m = t.match(/(\d{1,2})\D(\d{1,2})/);
+  if(m) return ('0'+m[1]).slice(-2)+'-'+('0'+m[2]).slice(-2);
+  return t.trim();
+}
 const CsvPosSource = {
   id:'csv', label:'CSV取込',
   /* file -> { rows, headIdx, cols } */
@@ -537,10 +546,11 @@ const CsvPosSource = {
       const ticket = cols.ticket>=0 ? String(r[cols.ticket]||'').trim() : '';
       /* 二重取込よけのキー。伝票番号があればそれを軸に、無ければ日時を軸に。
          同じ内容の行が複数あっても数が合うように連番を付ける。 */
+      const day = dayOf(at);
       const base = ticket ? ('T\u0001'+ticket+'\u0001'+norm(name)+'\u0001'+qty)
                           : ('D\u0001'+at+'\u0001'+norm(name)+'\u0001'+qty);
       cnt[base] = (cnt[base]||0)+1;
-      out.push({ key: base+'#'+cnt[base], at, ticket, posName:name, qty });
+      out.push({ key: base+'#'+cnt[base], at, day, ticket, posName:name, qty });
     }
     return out;
   }
@@ -651,7 +661,9 @@ function viewPos(){
     h += '<label class="lab">販売数の列</label><select class="sel" onchange="posCol(\'qty\',this.value)">'+opts(p.cols.qty)+'</select>';
     h += '<label class="lab">日時の列</label><select class="sel" onchange="posCol(\'at\',this.value)">'+opts(p.cols.at)+'</select>';
     h += '<label class="lab">伝票番号の列</label><select class="sel" onchange="posCol(\'ticket\',this.value)">'+opts(p.cols.ticket)+'</select>';
-    h += '<div class="muted gap">伝票番号があると、同じ売上の二重取込をより正確に防げます。</div>';
+    h += (p.cols.ticket<0 && p.cols.at<0)
+       ? '<div class="warn gap">二重取込を防ぐために、<b>日時</b>か<b>伝票番号</b>のどちらかは選んでください。</div>'
+       : '<div class="muted gap">伝票番号があると明細1行ずつ、無い場合は日付×商品ごとに、二重取込を防ぎます。</div>';
     h += '<div class="card gap"><h2>先頭の中身</h2><div class="scroll"><table class="peek">'
        + p.rows.slice(p.headIdx, p.headIdx+5).map((r,i)=>'<tr class="'+(i===0?'head':'')+'">'
          + r.slice(0,8).map(c=>'<td>'+esc(String(c).slice(0,18))+'</td>').join('') + '</tr>').join('')
@@ -664,9 +676,14 @@ function viewPos(){
   /* step 3：プレビュー */
   const pv = buildPreview(POS.sales);
   h += '<div class="card"><h2>'+esc(p.file)+'</h2>'
-     + '<div class="muted">読み取り '+POS.sales.length+' 行／今回引くのは <b>'+pv.newRows+' 行</b>'
-     + (pv.dupRows? '<br>取込済み '+pv.dupRows+' 行は引きません（二重防止）':'')
+     + '<div class="muted">読み取り '+POS.sales.length+' 行／今回引くのは <b>'+pv.newRows+' 件</b>'
+     + (pv.dupRows? '<br>取込済み '+pv.dupRows+' 件は引きません（二重防止）':'')
+     + (pv.sumMode? '<br>集計形式のCSVとして、日付×商品ごとに<b>すでに引いたぶんを除いた差だけ</b>を反映します。':'')
      + '</div></div>';
+  if(pv.noKey){
+    h += '<div class="warn">日時の列も伝票番号の列も選ばれていません。このままだと同じ売上を二重に引く／引き忘れる可能性があります。'
+       + '「列の設定に戻る」で<b>日時の列</b>を選んでください。</div>';
+  }
 
   if(pv.lines.length){
     h += '<div class="card"><h2>在庫の動き</h2>';
@@ -725,24 +742,48 @@ function posPreview(){
 }
 
 /* SaleRecord[] → 反映プレビュー */
+/* 取込プレビュー
+   ・明細形式（伝票番号あり）… 売上1行ずつをキーにして取込済みなら引かない
+   ・集計形式（伝票番号なし）… 「日付×商品」ごとに、すでに引いた数との差だけ引く
+     （同じ日を何度書き出し直しても、増えたぶんだけ正しく引ける）        */
 function buildPreview(sales){
-  const byItem = {}, unknown = {}, seenInFile = {};
-  let newRows = 0, dupRows = 0;
+  const byItem = {}, unknown = {}, seenInFile = {}, sums = {}, skipSums = [];
+  let newRows = 0, dupRows = 0, sumMode = false, noKey = false;
+  const bucket = it => byItem[it.id] = byItem[it.id] ||
+        { id:it.id, name:it.name, per:it.per||1, qty:0, keys:[], sums:[] };
+  const unk = s => (unknown[s.posName] = unknown[s.posName] || { name:s.posName, qty:0 }).qty += s.qty;
+
   sales.forEach(s=>{
-    if(DB.seen[s.key] || seenInFile[s.key]){ dupRows++; return; }
-    seenInFile[s.key] = 1;
     const m = DB.map[norm(s.posName)];
-    if(!m){ (unknown[s.posName] = unknown[s.posName] || { name:s.posName, qty:0 }).qty += s.qty; return; }
-    newRows++;
-    if(m.item === '__skip__') return;
-    const it = item(m.item);
-    if(!it){ (unknown[s.posName] = unknown[s.posName] || { name:s.posName, qty:0 }).qty += s.qty; return; }
-    const b = byItem[it.id] = byItem[it.id] || { id:it.id, name:it.name, per:it.per||1, qty:0, keys:[] };
-    b.qty += s.qty; b.keys.push(s.key);
+    if(!m){ unk(s); return; }
+    if(s.ticket){                                   /* 明細形式 */
+      if(DB.seen[s.key] || seenInFile[s.key]){ dupRows++; return; }
+      seenInFile[s.key] = 1; newRows++;
+      if(m.item === '__skip__') return;
+      const it = item(m.item); if(!it){ unk(s); return; }
+      const b = bucket(it); b.qty += s.qty; b.keys.push(s.key);
+    }else{                                          /* 集計形式 */
+      sumMode = true;
+      if(!s.day) noKey = true;
+      const k = 'S\u0001'+s.day+'\u0001'+norm(s.posName);
+      const g = sums[k] = sums[k] || { key:k, posName:s.posName, qty:0, m:m };
+      g.qty += s.qty;
+    }
   });
+
+  Object.values(sums).forEach(g=>{
+    const done = DB.applied[g.key] || 0;
+    const delta = g.qty - done;
+    if(delta <= 0){ dupRows++; return; }
+    newRows++;
+    if(g.m.item === '__skip__'){ skipSums.push({ key:g.key, total:g.qty }); return; }
+    const it = item(g.m.item); if(!it){ unk({ posName:g.posName, qty:delta }); return; }
+    const b = bucket(it); b.qty += delta; b.sums.push({ key:g.key, total:g.qty });
+  });
+
   const lines = Object.values(byItem).map(b=>Object.assign(b, { move: -(b.qty * (b.per||1)) }))
                  .sort((a,b)=>a.move-b.move);
-  return { lines, unknown:Object.values(unknown), newRows, dupRows };
+  return { lines, unknown:Object.values(unknown), newRows, dupRows, sumMode, noKey, skipSums };
 }
 function setMap(v, name){
   if(!v) return;
@@ -751,20 +792,23 @@ function setMap(v, name){
 }
 function posApply(){
   const pv = buildPreview(POS.sales);
-  const rec = { id:DB.seq++, at:nowISO(), file:POS.parsed.file, rows:0, lines:[], keys:[], undone:false };
+  const rec = { id:DB.seq++, at:nowISO(), file:POS.parsed.file, rows:0, lines:[], keys:[], applied:[], undone:false };
+  const markSum = a=>{ rec.applied.push({ key:a.key, prev:DB.applied[a.key]||0, total:a.total }); DB.applied[a.key] = a.total; };
   pv.lines.forEach(l=>{
     const it = item(l.id); if(!it) return;
     const amount = l.qty * (l.per||1);
     move(it, it.stock - amount, 'POS売上（'+l.qty+'個）');
     rec.lines.push({ itemId:it.id, qty:amount });
     l.keys.forEach(k=>{ DB.seen[k] = 1; rec.keys.push(k); });
+    l.sums.forEach(markSum);
   });
+  pv.skipSums.forEach(markSum);
   /* 「使わない」に設定済みの行も取込済みにしておく（毎回出てこないように） */
   POS.sales.forEach(s=>{
     const m = DB.map[norm(s.posName)];
     if(m && m.item==='__skip__' && !DB.seen[s.key]){ DB.seen[s.key]=1; rec.keys.push(s.key); }
   });
-  rec.rows = rec.keys.length;
+  rec.rows = rec.keys.length + rec.applied.length;
   DB.imports.unshift(rec);
   if(DB.imports.length>30) DB.imports.length = 30;
   pruneSeen();
@@ -776,11 +820,16 @@ function posApply(){
 }
 /* seenが増えすぎないように、古い取込のキーから捨てる */
 function pruneSeen(){
-  const keys = Object.keys(DB.seen);
-  if(keys.length <= 30000) return;
-  const keep = {};
-  DB.imports.slice(0,10).forEach(r=>r.keys.forEach(k=>keep[k]=1));
-  DB.seen = keep;
+  if(Object.keys(DB.seen).length > 30000){
+    const keep = {};
+    DB.imports.slice(0,10).forEach(r=>r.keys.forEach(k=>keep[k]=1));
+    DB.seen = keep;
+  }
+  if(Object.keys(DB.applied).length > 20000){
+    const keep = {};
+    DB.imports.slice(0,10).forEach(r=>(r.applied||[]).forEach(a=>keep[a.key]=DB.applied[a.key]));
+    DB.applied = keep;
+  }
 }
 function undoImport(id){
   const rec = DB.imports.find(r=>r.id===id);
@@ -788,6 +837,7 @@ function undoImport(id){
   if(!confirm('この取込を取り消して、引いた在庫を戻しますか？')) return;
   rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
+  (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
   rec.undone = true;
   save(); render(); toast('取込を取り消しました');
 }
@@ -954,6 +1004,7 @@ document.addEventListener('focusout', ()=>{
     if(it.stock==null) it.stock = 0;
   });
   if(!DB.ordered) DB.ordered = {};
+  if(!DB.applied) DB.applied = {};
   save();
   render();
 })();
