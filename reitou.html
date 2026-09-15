@@ -226,6 +226,7 @@ function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e
 
 /* ---------- 小道具 ---------- */
 function num(v){ const n = parseFloat(String(v==null?'':v).replace(/[^\d.\-]/g,'')); return isNaN(n)?0:n; }
+function escArg(s){ return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function norm(s){ return String(s==null?'':s).normalize('NFKC').replace(/[\s　]/g,'').toLowerCase(); }
 function item(id){ return DB.items.find(i=>i.id===id); }
@@ -234,11 +235,30 @@ function item(id){ return DB.items.find(i=>i.id===id); }
 function posVariants(name){
   const v = [], add = x=>{ x = String(x||'').trim(); if(x && v.indexOf(x)<0) v.push(x); };
   add(name);
-  const bare = String(name||'').replace(/^[\s★☆◆◇●○◎■□▲△▼▽※・\-]+/,'');
+  const bare = String(name||'').replace(/^[\s★☆◆◇♦●○◎■□▲△▼▽※・?？\-]+/,'');
   add(bare);
   const parts = bare.split('/');
   if(parts.length>1){ add(parts[parts.length-1]); add(parts.slice(1).join('/')); }
   return v;
+}
+/* 候補さがし用のゆるい正規化：カタカナ→ひらがな、記号・かっこを落とす */
+function loose(s){
+  return String(s||'').normalize('NFKC').toLowerCase()
+    .replace(/[\u30a1-\u30f6]/g, c=>String.fromCharCode(c.charCodeAt(0)-0x60))
+    .replace(/餃子/g,'ぎょうざ').replace(/唐揚/g,'からあげ').replace(/揚げ?物/g,'あげもの')
+    .replace(/[\s　()（）\[\]【】「」・,，、。.／\/\-－—–~〜～*★☆◆◇●○◎■□▲△▼▽※?？!！]/g,'');
+}
+/* POS商品名から在庫商品の候補を1つ提案する（対応づけるかは人が決める） */
+function suggestItem(posName){
+  const t = loose(posName); if(!t) return null;
+  let best = null;
+  DB.items.forEach(it=>{
+    const n = loose(it.name); if(n.length < 2) return;
+    const n2 = n.replace(/[ぁ-ん]$/,'');            // 「春巻き」→「春巻」の送り仮名ゆれ
+    const hit = t.indexOf(n) >= 0 || (n2.length >= 2 && t.indexOf(n2) >= 0);
+    if(hit && (!best || n.length > loose(best.name).length)) best = it;
+  });
+  return best;
 }
 function lookup(name){
   const vs = posVariants(name);
@@ -658,6 +678,14 @@ function guessCols(head){
 let POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false };
 function todayStr(){ const d=new Date(), z=n=>('0'+n).slice(-2); return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
 /* 前回と同じ月なら同じ開始日を引き継ぐ（POSの「当月」で書き出す運用に合わせる） */
+/* CSVの「抽出期間：」2026-09-01～2026-09-15 から期間を読み取る */
+function periodFromRows(rows, headIdx){
+  const txt = rows.slice(0, Math.max(headIdx,1)).map(r=>r.join(' ')).join(' ');
+  const m = txt.match(/(\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})\D{0,4}?[～~〜](\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})/);
+  if(!m) return null;
+  const z = n=>('0'+n).slice(-2);
+  return { from:m[1]+'-'+z(m[2])+'-'+z(m[3]), to:m[4]+'-'+z(m[5])+'-'+z(m[6]), auto:true };
+}
 function defaultPeriod(){
   const t = todayStr(), m = t.slice(0,7);
   const last = DB.imports.find(r=>!r.undone && r.period && r.period.from);
@@ -698,9 +726,12 @@ function viewPos(){
     h += '<label class="lab">日時の列</label><select class="sel" onchange="posCol(\'at\',this.value)">'+opts(p.cols.at)+'</select>';
     h += '<label class="lab">伝票番号の列</label><select class="sel" onchange="posCol(\'ticket\',this.value)">'+opts(p.cols.ticket)+'</select>';
     if(needPeriod()){
-      h += '<div class="warn gap">このCSVには日付の列がありません。POSで指定した<b>集計の期間</b>を入れてください。'
-         + '同じ期間を何度取り込んでも、二重で引かないために使います。</div>'
-         + '<label class="lab">集計の期間（POSで指定した期間）</label>'
+      h += (POS.period.auto
+            ? '<div class="info gap">CSVの「抽出期間」から <b>'+esc(POS.period.from)+' 〜 '+esc(POS.period.to)+'</b> を読み取りました。'
+              + 'この期間をもとに、同じ売上を二重で引かないようにします。</div>'
+            : '<div class="warn gap">このCSVには日付の列がありません。POSで指定した<b>集計の期間</b>を入れてください。'
+              + '同じ期間を何度取り込んでも、二重で引かないために使います。</div>')
+         + '<label class="lab">集計の期間</label>'
          + '<div style="display:flex;gap:8px;align-items:center">'
          +   '<input class="txt" type="date" value="'+POS.period.from+'" onchange="POS.period.from=this.value">'
          +   '<span style="color:#888">〜</span>'
@@ -752,23 +783,38 @@ function viewPos(){
 
   if(pv.unknown.length){
     const un = pv.unknown.slice().sort((a,b)=>b.qty-a.qty);
-    const shown = POS.showAll ? un : un.slice(0,8);
-    h += '<div class="warn gap">在庫の商品と対応していないものが '+un.length+' 件あります（ドリンクやコースなど）。'
-       + '冷凍在庫にあるものだけ選んでください。一度選べば次回から自動で対応します。'
-       + '<br>盛り合わせ・コース・飲み放題は「使わない」でOK（ズレは棚卸で直します）。</div>';
-    h += '<div class="gap">';
-    shown.forEach(u=>{
-      h += '<div class="map-row"><div class="nm">'+esc(u.name)+'<span class="sl" style="font-weight:400;color:#888"> 　出数 '+u.qty+'</span></div>'
-         + '<select class="sel" onchange="setMap(this.value,\''+esc(u.name).replace(/'/g,"\\'")+'\')">'
+    const sug = un.filter(u=>u.suggest), rest = un.filter(u=>!u.suggest);
+    const opts = u => '<select class="sel" onchange="setMap(this.value,\''+escArg(u.name)+'\')">'
          +   '<option value="">在庫商品を選ぶ…</option>'
          +   DB.items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')
          +   '<option value="__skip__">この商品は使わない（在庫なし）</option>'
-         + '</select></div>';
-    });
-    h += '</div>';
-    if(un.length > shown.length)
-      h += '<button class="btn btn-out gap" onclick="POS.showAll=true;render()">残り '+(un.length-shown.length)+' 件も表示する</button>';
-    h += '<button class="btn btn-gray gap" onclick="skipAllUnknown()">残り '+un.length+' 件をまとめて「使わない」にする</button>';
+         + '</select>';
+
+    if(sug.length){
+      h += '<div class="warn gap">冷凍在庫らしい商品が '+sug.length+' 件あります。'
+         + 'ボタンを押すと対応づけて、次回から自動で在庫を引きます。</div><div class="gap">';
+      sug.forEach(u=>{
+        h += '<div class="map-row"><div class="nm">'+esc(u.name)+'<span class="sl" style="font-weight:400;color:#888"> 　出数 '+u.qty+'</span></div>'
+           + '<button class="btn btn-primary" style="padding:13px;font-size:16px;margin-bottom:8px" '
+           +   'onclick="setMap(\''+u.suggest.id+'\',\''+escArg(u.name)+'\')">「'+esc(u.suggest.name)+'」に対応づける</button>'
+           + opts(u) + '</div>';
+      });
+      h += '</div>';
+    }
+    if(rest.length){
+      const shown = POS.showAll ? rest : rest.slice(0,8);
+      h += '<div class="muted gap" style="font-weight:700">その他 '+rest.length+' 件（ドリンク・コース・たれ／塩など）</div>'
+         + '<div class="muted">冷凍在庫にあるものだけ選んでください。盛り合わせ・コース・飲み放題は「使わない」でOKです。</div><div class="gap">';
+      shown.forEach(u=>{
+        h += '<div class="map-row"><div class="nm">'+esc(u.name)+'<span class="sl" style="font-weight:400;color:#888"> 　出数 '+u.qty+'</span></div>'
+           + opts(u) + '</div>';
+      });
+      h += '</div>';
+      if(rest.length > shown.length)
+        h += '<button class="btn btn-out gap" onclick="POS.showAll=true;render()">残り '+(rest.length-shown.length)+' 件も表示する</button>';
+    }
+    h += '<button class="btn btn-gray gap" onclick="skipAllUnknown()">未対応の '+(POS.showAll||!rest.length? un.length : rest.length)
+       + ' 件をまとめて「使わない」にする</button>';
   }
   h += '<button class="btn btn-primary gap" '+(pv.lines.length?'':'disabled')+' onclick="posApply()">在庫に反映する</button>';
   h += '<button class="btn btn-gray gap" onclick="POS.step=2;render()">列の設定に戻る</button>';
@@ -781,7 +827,8 @@ async function onPickFile(el){
   if(!f) return;
   try{
     POS.parsed = await CsvPosSource.read(f);
-    POS.period = defaultPeriod(); POS.showAll = false;
+    POS.period = periodFromRows(POS.parsed.rows, POS.parsed.headIdx) || defaultPeriod();
+    POS.showAll = false;
     POS.step = 2; TAB='pos'; render();
   }catch(e){ toast((e && e.userMsg) || 'CSVを読めませんでした'); }
 }
@@ -845,13 +892,16 @@ function buildPreview(sales){
 
   const lines = Object.values(byItem).map(b=>Object.assign(b, { move: -(b.qty * (b.per||1)) }))
                  .sort((a,b)=>a.move-b.move);
-  return { lines, unknown:Object.values(unknown), newRows, dupRows, sumMode, noKey, skipSums };
+  const un = Object.values(unknown).map(u=>Object.assign(u, { suggest: suggestItem(u.name) }));
+  return { lines, unknown:un, newRows, dupRows, sumMode, noKey, skipSums };
 }
 /* 在庫に関係ない商品（ドリンク・コースなど）をまとめて「使わない」に */
 function skipAllUnknown(){
-  const un = buildPreview(POS.sales).unknown;
+  const all = buildPreview(POS.sales).unknown;
+  const rest = all.filter(u=>!u.suggest);
+  const un = (POS.showAll || !rest.length) ? all : rest;   // 候補が出ているものは残す
   if(!un.length) return;
-  if(!confirm(un.length+'件を「使わない」に設定します。\n在庫商品が混ざっていないか確認してください。（設定タブでやり直せます）')) return;
+  if(!confirm(un.length+'件を「使わない」に設定します。\n（設定タブでやり直せます）')) return;
   un.forEach(u=>{ DB.map[norm(u.name)] = { item:'__skip__', label:u.name }; });
   save(); render(); toast(un.length+'件を「使わない」にしました');
 }
