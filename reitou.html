@@ -720,6 +720,19 @@ function periodFromRows(rows, headIdx){
   const z = n=>('0'+n).slice(-2);
   return { from:m[1]+'-'+z(m[2])+'-'+z(m[3]), to:m[4]+'-'+z(m[5])+'-'+z(m[6]), auto:true };
 }
+function nextDay(d){
+  const t = new Date(String(d)+'T00:00:00'); if(isNaN(t)) return d;
+  t.setDate(t.getDate()+1);
+  const z = n=>('0'+n).slice(-2);
+  return t.getFullYear()+'-'+z(t.getMonth()+1)+'-'+z(t.getDate());
+}
+function prevDay(d){
+  const t = new Date(String(d)+'T00:00:00'); if(isNaN(t)) return d;
+  t.setDate(t.getDate()-1);
+  const z = n=>('0'+n).slice(-2);
+  return t.getFullYear()+'-'+z(t.getMonth()+1)+'-'+z(t.getDate());
+}
+function lastImport(){ return DB.imports.find(r=>!r.undone && r.period && r.period.to); }
 function defaultPeriod(){
   const t = todayStr(), m = t.slice(0,7);
   const last = DB.imports.find(r=>!r.undone && r.period && r.period.from);
@@ -730,7 +743,7 @@ function needPeriod(){ const c = POS.parsed.cols; return c.at<0 && c.ticket<0; }
 function viewPos(){
   let h = '<div class="pad">';
   h += '<div class="step">'
-     +  '<div class="'+(POS.step===1?'on':'')+'">① CSVを選択</div>'
+     +  '<div class="'+(POS.step===1?'on':'')+'">① CSVを選ぶ</div>'
      +  '<div class="'+(POS.step===2?'on':'')+'">② 内容確認</div>'
      +  '<div class="'+(POS.step===3?'on':'')+'">③ 在庫に反映</div>'
      + '</div>';
@@ -790,6 +803,12 @@ function viewPos(){
      + (pv.dupRows? '<br>取込済み '+pv.dupRows+' 件は引きません（二重防止）':'')
      + (pv.sumMode? '<br>集計形式のCSVとして、日付×商品ごとに<b>すでに引いたぶんを除いた差だけ</b>を反映します。':'')
      + '</div></div>';
+  const li = lastImport();
+  if(li) h += '<div class="muted" style="margin:-4px 0 12px">前回の取込：'+esc(li.period.from)+' 〜 '+esc(li.period.to||'')+' まで反映済み</div>';
+  if(li && li.period.to && POS.period && POS.period.from > nextDay(li.period.to)){
+    h += '<div class="warn">⚠️ <b>'+esc(nextDay(li.period.to))+' 〜 '+esc(prevDay(POS.period.from))+'</b> の売上が抜けます。'
+       + '<br>POSで期間を <b>'+esc(nextDay(li.period.to))+'</b> から出し直すか、先に前の期間ぶんを取り込んでください。</div>';
+  }
   const ov = needPeriod() && POS.period && POS.period.from ? DB.imports.find(r=>!r.undone && r.period && r.period.from
         && !(POS.period.to && POS.period.to < r.period.from) && !(r.period.to && POS.period.from > r.period.to)
         && r.period.from !== POS.period.from) : null;
@@ -863,7 +882,11 @@ async function onPickFile(el){
     POS.parsed = await CsvPosSource.read(f);
     POS.period = periodFromRows(POS.parsed.rows, POS.parsed.headIdx) || defaultPeriod();
     POS.showAll = false;
-    POS.step = 2; TAB='pos'; render();
+    TAB = 'pos';
+    /* 商品名・販売数の列が分かり、期間も読み取れていれば、確認画面を飛ばしてプレビューへ */
+    const c = POS.parsed.cols;
+    if(c.name>=0 && c.qty>=0 && (!needPeriod() || POS.period.auto)) posPreview();
+    else { POS.step = 2; render(); }
   }catch(e){ toast((e && e.userMsg) || 'CSVを読めませんでした'); }
 }
 function posReset(){ POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false }; render(); }
