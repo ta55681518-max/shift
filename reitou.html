@@ -782,7 +782,8 @@ function viewPos(){
        + '貼った時点で読み取ります。CSVの中身をそのまま貼ってもOKです。</div>'
        + '<textarea id="paste" class="gap" placeholder="例）&#10;ポテトフライ&#9;36&#10;茶豆&#9;22" '
        +   'onpaste="setTimeout(pasteImport,80)"></textarea>'
-       + '<button class="btn btn-dark gap" onclick="pasteImport()">貼り付けた内容を読み取る</button></div>';
+       + '<button class="btn btn-dark gap" onclick="pasteImport()">貼り付けた内容を読み取る</button>'
+       + '<a href="reitou-button.html" style="display:block;text-align:center;margin-top:10px;color:#e8531f;font-weight:700;font-size:14px">取り込みボタンの入れ方 →</a></div>';
     h += '<label class="file-btn gap" for="csvfile">📄 CSVファイルから取り込む</label>';
     h += '<div class="muted gap">エクストリンクPOSから書き出した売上CSVを選んでください。文字コード（Shift_JIS／UTF-8）は自動で判定します。'
        + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
