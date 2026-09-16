@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="冷凍在庫">
+<title>KEMURI屋 冷凍在庫</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    background:#f2f2f4;color:#1a1a1a;font-size:16px;
+    -webkit-user-select:none;user-select:none;overscroll-behavior:none;
+  }
+  #app{max-width:560px;margin:0 auto;background:#fff;min-height:100%;
+       padding-bottom:calc(92px + env(safe-area-inset-bottom));}
+  button,.step div,.file-btn{font-family:inherit;cursor:pointer;color:inherit;touch-action:manipulation;}
+  input,select,textarea{font-family:inherit;touch-action:manipulation;
+    -webkit-user-select:text;user-select:text;}
+  .chk:active,.stp button:active,.bigqty button:active{background:#ececee;}
+
+  /* ヘッダー */
+  .header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid #ececec;
+          padding:calc(12px + env(safe-area-inset-top)) 16px 10px;display:flex;align-items:center;gap:10px;}
+  .header h1{font-size:19px;font-weight:700;flex:1;}
+  .header .sub{font-size:12px;color:#999;font-weight:400;display:block;margin-top:2px;}
+  .pad{padding:14px 16px 20px;}
+
+  /* 発注サマリー */
+  .summary{margin:14px 16px 6px;border-radius:18px;padding:18px 16px;text-align:center;}
+  .summary.ng{background:#ffefec;border:2px solid #ffc9bf;}
+  .summary.ok{background:#eafaf1;border:2px solid #b9ebd0;}
+  .summary .big{font-size:40px;font-weight:800;line-height:1.1;}
+  .summary.ng .big{color:#d92d20;}
+  .summary.ok .big{color:#0a9d55;}
+  .summary .lab{font-size:15px;font-weight:700;margin-top:4px;color:#555;}
+  .summary .go{margin-top:12px;background:#d92d20;color:#fff;border:none;border-radius:13px;
+               padding:13px 18px;font-size:16px;font-weight:700;width:100%;}
+
+  /* 在庫リスト */
+  .list{padding:6px 12px 16px;}
+  .row{display:flex;align-items:center;gap:10px;width:100%;background:#fff;border:1.5px solid #ededed;
+       border-radius:15px;padding:14px 14px;margin-bottom:9px;text-align:left;}
+  .row:active{background:#fafafa;}
+  .row.ng{border-color:#ffc9bf;background:#fffaf9;}
+  .row .nm{flex:1;font-size:19px;font-weight:700;letter-spacing:.3px;line-height:1.3;word-break:break-word;}
+  .row .qty{font-size:28px;font-weight:800;min-width:54px;text-align:right;font-variant-numeric:tabular-nums;}
+  .row .st{min-width:72px;text-align:center;border-radius:999px;font-weight:800;padding:7px 0;font-size:15px;}
+  .st.ok{background:#eafaf1;color:#0a9d55;font-size:19px;}
+  .st.few{background:#fff6e0;color:#c07d00;font-size:19px;}
+  .st.ng{background:#d92d20;color:#fff;}
+  .sec{font-size:13px;color:#999;font-weight:700;margin:14px 4px 8px;}
+  .legend{display:flex;gap:14px;justify-content:center;font-size:12px;color:#888;padding:2px 0 10px;flex-wrap:wrap;}
+
+  /* 汎用ボタン・カード */
+  .btn{display:block;width:100%;border:none;border-radius:14px;padding:16px;font-size:17px;font-weight:700;text-align:center;}
+  .btn-primary{background:#e8531f;color:#fff;}
+  .btn-dark{background:#222;color:#fff;}
+  .btn-gray{background:#f1f1f3;color:#333;}
+  .btn-out{background:#fff;border:1.5px solid #ddd;color:#333;}
+  .btn-danger{background:#fff0ee;color:#d33;}
+  .btn:disabled{background:#ededed;color:#aaa;}
+  .btn-sm{width:auto;padding:11px 15px;font-size:15px;border-radius:12px;}
+  .card{border:1.5px solid #ededed;border-radius:16px;padding:14px;margin-bottom:12px;}
+  .card h2{font-size:15px;font-weight:700;margin-bottom:10px;}
+  .muted{font-size:13px;color:#8a8a8a;line-height:1.6;}
+  .gap{margin-top:10px;}
+  .warn{background:#fff8e6;border:1.5px solid #ffe0a3;border-radius:14px;padding:12px 14px;font-size:14px;color:#8a6100;line-height:1.6;}
+  .info{background:#f4f7ff;border:1.5px solid #d8e3ff;border-radius:14px;padding:12px 14px;font-size:14px;color:#3a4d8f;line-height:1.6;}
+
+  /* 発注チェックリスト */
+  .chk{display:flex;align-items:center;gap:13px;width:100%;border:1.5px solid #ededed;background:#fff;
+       border-radius:15px;padding:15px 14px;margin-bottom:9px;text-align:left;}
+  .chk .box{width:30px;height:30px;border-radius:9px;border:2.5px solid #ccc;flex:0 0 auto;
+            display:flex;align-items:center;justify-content:center;font-size:19px;color:#fff;font-weight:800;}
+  .chk.on{background:#f7fbf8;border-color:#b9ebd0;}
+  .chk.on .box{background:#0a9d55;border-color:#0a9d55;}
+  .chk .nm{flex:1;font-size:19px;font-weight:700;}
+  .chk.on .nm{color:#8a8a8a;text-decoration:line-through;}
+  .chk .now{font-size:13px;color:#999;font-weight:600;}
+
+  /* 数量ステッパー */
+  .stp{display:flex;align-items:center;gap:8px;border:1.5px solid #ededed;border-radius:15px;padding:11px 12px;margin-bottom:9px;}
+  .stp .nm{flex:1;font-size:17px;font-weight:700;line-height:1.3;word-break:break-word;}
+  .stp .now{font-size:12px;color:#aaa;font-weight:600;margin-top:2px;display:block;}
+  .stp button{width:44px;height:44px;border-radius:12px;border:none;background:#f1f1f3;font-size:23px;font-weight:700;flex:0 0 auto;}
+  .stp input{width:62px;height:44px;border:1.5px solid #e2e2e2;border-radius:12px;text-align:center;
+             font-size:21px;font-weight:800;background:#fff;}
+  .stp.on{border-color:#ffd0bd;background:#fffaf8;}
+
+  /* POS */
+  .step{display:flex;gap:6px;margin-bottom:14px;}
+  .step div{flex:1;text-align:center;font-size:13px;font-weight:700;color:#bbb;padding:14px 2px;border-radius:12px;background:#f6f6f8;}
+  .step div.on{background:#e8531f;color:#fff;}
+  .prev{display:flex;align-items:center;gap:8px;padding:12px 4px;border-bottom:1px solid #f2f2f2;}
+  .prev .nm{flex:1;font-size:17px;font-weight:700;}
+  .prev .sl{font-size:13px;color:#888;}
+  .prev .mv{font-size:20px;font-weight:800;color:#d92d20;min-width:54px;text-align:right;}
+  .prev .mv.plus{color:#0a9d55;}
+  .map-row{border:1.5px solid #ffe0a3;background:#fffdf6;border-radius:14px;padding:12px;margin-bottom:9px;}
+  .map-row .nm{font-size:17px;font-weight:700;margin-bottom:8px;}
+  select.sel{width:100%;padding:13px;font-size:16px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
+  label.lab{display:block;font-size:13px;color:#888;font-weight:700;margin:12px 0 6px;}
+  input.txt{width:100%;padding:13px;font-size:17px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
+  .file-btn{display:block;text-align:center;background:#e8531f;color:#fff;border-radius:14px;padding:18px;font-size:18px;font-weight:700;}
+  input[type=file]{display:none;}
+  table.peek{width:100%;border-collapse:collapse;font-size:11px;color:#666;}
+  table.peek td{border:1px solid #eee;padding:4px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px;}
+  table.peek tr.head td{background:#f6f6f8;font-weight:700;color:#333;}
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+
+  /* 履歴 */
+  .hist{display:flex;gap:10px;padding:11px 2px;border-bottom:1px solid #f2f2f2;font-size:14px;align-items:baseline;}
+  .hist .t{font-size:11px;color:#aaa;min-width:82px;}
+  .hist .n{font-weight:700;flex:1;}
+  .hist .d{font-weight:800;}
+  .hist .r{font-size:11px;color:#999;}
+
+  /* タブバー */
+  .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(255,255,255,.97);
+          border-top:1px solid #ececec;display:flex;max-width:560px;margin:0 auto;
+          padding-bottom:env(safe-area-inset-bottom);backdrop-filter:blur(8px);}
+  .tabbar button{flex:1;border:none;background:none;padding:9px 0 8px;font-size:11px;font-weight:700;color:#aaa;position:relative;}
+  .tabbar button .ic{display:block;font-size:21px;line-height:1.25;}
+  .tabbar button.on{color:#e8531f;}
+  .tabbar.hide{display:none;}
+  .tabbar button .bdg{position:absolute;top:4px;left:calc(50% + 6px);background:#d92d20;color:#fff;
+       border-radius:999px;min-width:18px;height:18px;font-size:11px;line-height:18px;padding:0 5px;}
+
+  /* シート */
+  .ov{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:60;display:none;align-items:flex-end;justify-content:center;}
+  .ov.show{display:flex;}
+  .sheet{width:100%;max-width:560px;background:#fff;border-radius:20px 20px 0 0;
+         padding:18px 16px calc(20px + env(safe-area-inset-bottom));max-height:92vh;overflow-y:auto;animation:up .18s ease;}
+  @keyframes up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}
+  .sheet h3{font-size:19px;font-weight:700;text-align:center;margin-bottom:4px;}
+  .sheet .sh-sub{font-size:12px;color:#999;text-align:center;margin-bottom:14px;}
+  .bigqty{display:flex;align-items:center;justify-content:center;gap:16px;margin:8px 0 14px;}
+  .bigqty button{width:70px;height:70px;border-radius:22px;border:none;background:#f1f1f3;font-size:34px;font-weight:700;}
+  .bigqty .v{font-size:52px;font-weight:800;min-width:96px;text-align:center;font-variant-numeric:tabular-nums;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .chips button{border:1.5px solid #e2e2e2;background:#fff;border-radius:999px;padding:10px 15px;font-size:14px;font-weight:700;color:#666;}
+  .chips button.on{border-color:#e8531f;background:#fff4ef;color:#e8531f;}
+  .two{display:flex;gap:10px;margin-top:14px;}
+  .two .btn{flex:1;}
+  textarea{width:100%;min-height:110px;padding:12px;font-size:13px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
+  .toast{position:fixed;left:50%;bottom:calc(100px + env(safe-area-inset-bottom));transform:translateX(-50%);
+         background:#222;color:#fff;padding:13px 20px;border-radius:24px;font-size:15px;font-weight:700;
+         opacity:0;transition:opacity .25s;pointer-events:none;z-index:90;max-width:90%;text-align:center;}
+  .toast.show{opacity:.96;}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header">
+    <div style="flex:1">
+      <h1 id="h-title">冷凍在庫</h1>
+      <span class="sub" id="h-sub">串焼KEMURI屋</span>
+    </div>
+    <button id="h-act" class="btn btn-gray btn-sm" style="display:none"></button>
+  </div>
+  <div id="view"></div>
+</div>
+
+<nav class="tabbar" id="tabbar"></nav>
+
+<div class="ov" id="ov" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet" id="sheet"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
+
+<script>
+/* ============================================================
+   串焼KEMURI屋 冷凍在庫アプリ
+   ・保存先 … localStorage['kemuri_reitou_v1']（この端末のみ）
+   ・考え方 … 1人前 ＝ 在庫1。POSで売れたぶんを自動で引く。
+   ============================================================ */
+const LS_KEY = 'kemuri_reitou_v1';
+const FEW    = 2;   // 発注ライン＋この数までを「△ 残り少ない」とする
+
+/* 最初に登録する冷凍在庫と発注ライン（名前, 発注ライン） */
+const SEED = [
+  ['ポテトフライ',5],['枝豆',5],['カマンベールチーズフライ',5],['イカゲソ',5],
+  ['鶏皮餃子',5],['レバーペースト',4],['アジフライ',2],['ごぼうの唐揚げ',3],
+  ['ももたたき',3],['昆布締めたたき',3],['うまれば',3],['手羽先唐揚げ',10],
+  ['串カツ',10],['春巻き',5],['燻製ベーコン',5],['しめさば',4],
+  ['豚バラ串',5],['やげん',5]
+];
+
+/* エクストリンクPOSの実際の商品名 → 冷凍在庫の対応（初期設定。設定タブで変更・解除できる）
+   ※シーザーサラダは燻製ベーコンを使うため、売れたら燻製ベーコンの在庫を引く */
+const SEED_POS = [
+  ['茶豆','枝豆'],
+  ['手造りカマンベールチーズフライ','カマンベールチーズフライ'],
+  ['イカゲソ唐揚げ','イカゲソ'],
+  ['鶏皮ギョウザ','鶏皮餃子'],
+  ['レバーペースト（バケット5枚付き）','レバーペースト'],
+  ['長崎産アジフライ','アジフライ'],
+  ['鹿児島産鶏モモタタキ','ももたたき'],
+  ['鶏むね昆布締めタタキ','昆布締めたたき'],
+  ['馬レバ刺し','うまれば'],
+  ['鶏みそ串カツ','串カツ'],
+  ['串カツおろしポン酢','串カツ'],
+  ['クルミとブルーチーズの春巻','春巻き'],
+  ['シーザーサラダ','燻製ベーコン'],
+  ['炙りシメサバ','しめさば'],
+  ['県産豚バラ串','豚バラ串'],
+  ['ヤゲンなんこつ','やげん']
+];
+const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼした','数え間違い','その他'];
+
+/* ---------- データ ----------
+   items[] = { id, name, stock, min, per }
+       min … 発注ライン（この数以下で「発注」）
+       per … POS販売1に対して減らす在庫数（1皿で2個使うなら2）
+   map   … POS商品名(正規化) -> { item:itemId | '__skip__', label:表示名 }
+   seen  … 取込済み売上行のキー（同じ売上を二重で引かないため）
+   history[] … { at, name, before, after, reason }
+   imports[] … { id, at, file, rows, lines:[{itemId,qty}], keys:[], undone }
+*/
+function blank(){
+  return { v:1, seq:1, items:[], map:{}, seen:{}, applied:{}, history:[], imports:[], csvMap:null, ordered:{} };
+}
+let DB = load();
+let TAB = 'stock';
+
+function load(){
+  try{
+    const r = localStorage.getItem(LS_KEY);
+    if(r) return Object.assign(blank(), JSON.parse(r));
+  }catch(e){}
+  const d = blank();
+  SEED.forEach(([name,min])=>{
+    const id = d.seq++;
+    d.items.push({ id, name, stock:min, min, per:1 });
+    d.map[norm(name)] = { item:id, label:name };
+  });
+  applySeedPos(d);
+  d.posSeeded = 1;
+  return d;
+}
+/* POS名の初期対応を入れる（すでに設定済みのものは触らない） */
+function applySeedPos(d){
+  let changed = false;
+  SEED_POS.forEach(([pos,name])=>{
+    const it = d.items.find(i=>i.name===name); if(!it) return;
+    const k = norm(pos);
+    if(!d.map[k]){ d.map[k] = { item:it.id, label:pos }; changed = true; }
+  });
+  return changed;
+}
+function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ toast('保存できんかった…'); } }
+
+/* ---------- 小道具 ---------- */
+function num(v){ const n = parseFloat(String(v==null?'':v).replace(/[^\d.\-]/g,'')); return isNaN(n)?0:n; }
+function escArg(s){ return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function norm(s){ return String(s==null?'':s).normalize('NFKC').replace(/[\s　]/g,'').toLowerCase(); }
+function item(id){ return DB.items.find(i=>i.id===id); }
+/* POSの商品名は「揚物/ポテトフライ」「★ポテトフライ」のように書かれることがあるので、
+   そのまま → 先頭の記号を外す → 「/」の後ろ、の順に対応表を照合する */
+function posVariants(name){
+  const v = [], add = x=>{ x = String(x||'').trim(); if(x && v.indexOf(x)<0) v.push(x); };
+  add(name);
+  const bare = String(name||'').replace(/^[\s★☆◆◇♦●○◎■□▲△▼▽※・?？\-]+/,'');
+  add(bare);
+  const parts = bare.split('/');
+  if(parts.length>1){ add(parts[parts.length-1]); add(parts.slice(1).join('/')); }
+  return v;
+}
+/* 候補さがし用のゆるい正規化：カタカナ→ひらがな、記号・かっこを落とす */
+function loose(s){
+  return String(s||'').normalize('NFKC').toLowerCase()
+    .replace(/[\u30a1-\u30f6]/g, c=>String.fromCharCode(c.charCodeAt(0)-0x60))
+    .replace(/餃子/g,'ぎょうざ').replace(/唐揚/g,'からあげ').replace(/揚げ?物/g,'あげもの')
+    .replace(/[\s　()（）\[\]【】「」・,，、。.／\/\-－—–~〜～*★☆◆◇●○◎■□▲△▼▽※?？!！]/g,'');
+}
+/* POS商品名から在庫商品の候補を1つ提案する（対応づけるかは人が決める） */
+function suggestItem(posName){
+  const t = loose(posName); if(!t) return null;
+  let best = null;
+  DB.items.forEach(it=>{
+    const n = loose(it.name); if(n.length < 2) return;
+    const n2 = n.replace(/[ぁ-ん]$/,'');            // 「春巻き」→「春巻」の送り仮名ゆれ
+    const hit = t.indexOf(n) >= 0 || (n2.length >= 2 && t.indexOf(n2) >= 0);
+    if(hit && (!best || n.length > loose(best.name).length)) best = it;
+  });
+  return best;
+}
+function lookup(name){
+  const vs = posVariants(name);
+  for(let i=0;i<vs.length;i++){ const m = DB.map[norm(vs[i])]; if(m) return m; }
+  return null;
+}
+function nowISO(){ return new Date().toISOString(); }
+function fmtDT(iso){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  const p = n=>('0'+n).slice(-2);
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function fmtDay(iso){ const d = new Date(iso); return isNaN(d)? '' : (d.getMonth()+1)+'/'+d.getDate(); }
+function agoText(iso){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  const a = new Date(), day = 24*60*60*1000;
+  const n = Math.floor((new Date(a.getFullYear(),a.getMonth(),a.getDate()) - new Date(d.getFullYear(),d.getMonth(),d.getDate()))/day);
+  return n<=0 ? '今日' : (n===1 ? '昨日' : n+'日前');
+}
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+/* 状態判定：発注 / △ / ○ */
+function state(it){
+  if(it.stock <= it.min) return 'ng';
+  if(it.stock <= it.min + FEW) return 'few';
+  return 'ok';
+}
+function stateLabel(s){ return s==='ng' ? '発注' : (s==='few' ? '△' : '○'); }
+function needList(){ return DB.items.filter(i=>state(i)==='ng'); }
+
+/* 在庫を動かす（履歴つき） */
+function move(it, after, reason){
+  const before = it.stock;
+  it.stock = Math.max(0, Math.round(after*10)/10);
+  if(before === it.stock) return;
+  DB.history.unshift({ at:nowISO(), name:it.name, before, after:it.stock, reason });
+  if(DB.history.length > 500) DB.history.length = 500;
+}
+
+/* ============================================================
+   画面
+   ============================================================ */
+const TABS = [
+  ['stock','在庫','📦'], ['order','発注','📝'], ['arrive','入荷','🚚'],
+  ['pos','POS','🧾'], ['set','設定','⚙️']
+];
+
+function go(t){ if(t==='arrive' && TAB!=='arrive') ARR = { mode:'in', qty:{} };
+              TAB = t; window.scrollTo(0,0); render(); }
+
+function render(){
+  const need = needList().length;
+  document.getElementById('tabbar').innerHTML = TABS.map(([k,l,ic])=>
+    '<button class="'+(TAB===k?'on':'')+'" onclick="go(\''+k+'\')"><span class="ic">'+ic+'</span>'+l+
+    (k==='order'&&need? '<span class="bdg">'+need+'</span>':'')+'</button>').join('');
+
+  const titles = { stock:['冷凍在庫','串焼KEMURI屋'], order:['発注リスト','発注ライン以下の商品'],
+                   arrive:['入荷・棚卸',''], pos:['POS CSV取込','エクストリンクPOS'], set:['設定','商品マスタ・履歴'] };
+  document.getElementById('h-title').textContent = titles[TAB][0];
+  document.getElementById('h-sub').textContent   = titles[TAB][1];
+  const act = document.getElementById('h-act'); act.style.display='none'; act.onclick=null;
+
+  const v = document.getElementById('view');
+  if(TAB==='stock')  v.innerHTML = viewStock();
+  if(TAB==='order')  v.innerHTML = viewOrder();
+  if(TAB==='arrive') v.innerHTML = viewArrive();
+  if(TAB==='pos')    v.innerHTML = viewPos();
+  if(TAB==='set')    v.innerHTML = viewSet();
+}
+
+/* ---------- ① 在庫一覧（トップ） ---------- */
+function viewStock(){
+  const rank = { ng:0, few:1, ok:2 };
+  const list = DB.items.slice().sort((a,b)=>{
+    const d = rank[state(a)] - rank[state(b)];
+    if(d) return d;
+    return (a.stock - a.min) - (b.stock - b.min);
+  });
+  const need = needList().length;
+  const first = !DB.history.length;
+  let h = '';
+  if(first){
+    h += '<div class="summary" style="background:#f4f7ff;border:2px solid #d8e3ff">'
+       +   '<div class="big" style="color:#3a4d8f;font-size:24px">まず棚卸から</div>'
+       +   '<div class="lab">冷凍庫を確認して、いまの数を入れてください<br>（最初は発注ラインの数を仮に入れてあります）</div>'
+       +   '<button class="go" style="background:#3a4d8f" onclick="goCount()">実在庫を入力する</button>'
+       + '</div>';
+  }else{
+    h += '<div class="summary '+(need?'ng':'ok')+'">'
+       +   '<div class="big">'+(need? need+'<span style="font-size:20px">種類</span>' : 'OK')+'</div>'
+       +   '<div class="lab">'+(need? '発注が必要です' : '発注が必要な商品はありません')+'</div>'
+       +   (need? '<button class="go" onclick="go(\'order\')">発注リストを見る</button>' : '')
+       + '</div>';
+  }
+  h += '<div class="legend"><span>○ 在庫OK</span><span>△ 残り少ない</span><span>発注 ＝ 発注ライン以下</span></div>';
+
+  h += '<div class="list">';
+  list.forEach(it=>{
+    const s = state(it);
+    h += '<button class="row '+(s==='ng'?'ng':'')+'" onclick="openAdjust('+it.id+')">'
+       +   '<span class="nm">'+esc(it.name)+'</span>'
+       +   '<span class="qty">'+it.stock+'</span>'
+       +   '<span class="st '+s+'">'+stateLabel(s)+'</span>'
+       + '</button>';
+  });
+  h += '</div>';
+  const lastCount = DB.history.find(x=>x.reason===REASONS[0]);
+  h += '<div class="pad" style="padding-top:0"><div class="muted">'
+     + (lastCount ? '最後の棚卸：'+fmtDay(lastCount.at)+'（'+agoText(lastCount.at)+'）' : 'まだ棚卸をしていません')
+     + '<br>商品をタップすると ＋ － ／ 実在庫の入力ができます。</div></div>';
+  return h;
+}
+
+/* ---------- 在庫修正シート ---------- */
+let ADJ = null;
+function openAdjust(id){
+  const it = item(id); if(!it) return;
+  ADJ = { id, val:it.stock, reason:REASONS[0] };
+  drawAdjust();
+}
+function drawAdjust(){
+  const it = item(ADJ.id);
+  let h = '<h3>'+esc(it.name)+'</h3>'
+    + '<div class="sh-sub">いまの在庫 '+it.stock+' ／ 発注ライン '+it.min+'</div>'
+    + '<div class="bigqty">'
+    +   '<button onclick="adjStep(-1)">－</button>'
+    +   '<span class="v" id="adj-v">'+ADJ.val+'</span>'
+    +   '<button onclick="adjStep(1)">＋</button>'
+    + '</div>'
+    + '<label class="lab">実在庫を直接入力</label>'
+    + '<input class="txt" id="adj-in" type="text" inputmode="numeric" pattern="[0-9]*" value="'+ADJ.val+'" onchange="adjSet(this.value)">'
+    + '<label class="lab">変更の理由</label>'
+    + '<div class="chips">'
+    +   REASONS.map(r=>'<button class="'+(ADJ.reason===r?'on':'')+'" onclick="adjReason(\''+r+'\')">'+r+'</button>').join('')
+    + '</div>'
+    + '<div class="two">'
+    +   '<button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
+    +   '<button class="btn btn-primary" onclick="adjSave()">保存する</button>'
+    + '</div>';
+  openSheet(h);
+}
+/* 入力・±のたびに表示だけ書き換える（シート全体を作り直すと入力が飛ぶため） */
+function paintAdj(){
+  const v = document.getElementById('adj-v'), i = document.getElementById('adj-in');
+  if(v) v.textContent = ADJ.val;
+  if(i) i.value = ADJ.val;
+}
+function adjStep(d){ ADJ.val = Math.max(0, ADJ.val + d); paintAdj(); }
+function adjSet(v){ ADJ.val = Math.max(0, num(v)); paintAdj(); }
+function adjReason(r){
+  ADJ.reason = r;
+  document.querySelectorAll('#sheet .chips button').forEach(b=>b.classList.toggle('on', b.textContent===r));
+}
+function adjSave(){
+  const it = item(ADJ.id);
+  if(it.stock === ADJ.val){ closeSheet(); return; }
+  move(it, ADJ.val, ADJ.reason);
+  save(); closeSheet(); render(); toast(it.name+' → '+it.stock);
+}
+
+/* ---------- ② 発注リスト ---------- */
+function viewOrder(){
+  const list = needList().sort((a,b)=>(a.stock-a.min)-(b.stock-b.min));
+  if(!list.length){
+    return '<div class="pad"><div class="summary ok"><div class="big">OK</div>'
+      + '<div class="lab">発注が必要な商品はありません</div></div></div>';
+  }
+  const yet  = list.filter(i=>!DB.ordered[i.id]);
+  const done = list.filter(i=>DB.ordered[i.id]);
+  let h = '<div class="pad">';
+  h += '<div class="muted" style="margin-bottom:12px">発注ライン以下の '+list.length+' 商品です。発注したらタップしてチェック。</div>';
+  if(yet.length){
+    h += '<div class="sec">これから発注（'+yet.length+'）</div>';
+    yet.forEach(it=>{
+      h += '<button class="chk" onclick="toggleOrder('+it.id+')">'
+         +  '<span class="box"></span><span class="nm">'+esc(it.name)+'</span>'
+         +  '<span class="now">残 '+it.stock+' / ライン '+it.min+'</span></button>';
+    });
+  }
+  if(done.length){
+    h += '<div class="sec">発注済み（'+done.length+'）　届いたら「入荷」</div>';
+    done.forEach(it=>{
+      h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:9px">'
+         +  '<button class="chk on" style="margin:0;flex:1" onclick="toggleOrder('+it.id+')">'
+         +    '<span class="box">✓</span><span class="nm">'+esc(it.name)+'</span></button>'
+         +  '<button class="btn btn-primary btn-sm" onclick="openArriveOne('+it.id+')">入荷</button>'
+         + '</div>';
+    });
+  }
+  h += '<button class="btn btn-out gap" onclick="copyOrder()">発注リストをコピー（LINE用）</button>';
+  h += '</div>';
+  return h;
+}
+function toggleOrder(id){
+  if(DB.ordered[id]) delete DB.ordered[id]; else DB.ordered[id] = nowISO();
+  save(); render();
+}
+function copyOrder(){
+  const txt = '【冷凍 発注】\n' + needList().map(i=>'・'+i.name+'（残'+i.stock+'）').join('\n');
+  navigator.clipboard ? navigator.clipboard.writeText(txt).then(()=>toast('コピーしました'), ()=>toast('コピーできんかった'))
+                      : toast('コピーできんかった');
+}
+function openArriveOne(id){
+  const it = item(id);
+  ADJ = { id, val:0 };
+  openSheet('<h3>'+esc(it.name)+' の入荷</h3><div class="sh-sub">いまの在庫 '+it.stock+'</div>'
+    + '<div class="bigqty"><button onclick="arrStep(-1)">－</button><span class="v" id="arr-v">'+ADJ.val+'</span>'
+    + '<button onclick="arrStep(1)">＋</button></div>'
+    + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
+    + '<button class="btn btn-primary" onclick="arrSave()">入荷する</button></div>');
+}
+function arrStep(d){ ADJ.val = Math.max(0, ADJ.val + d); document.getElementById('arr-v').textContent = ADJ.val; }
+function arrSave(){
+  const it = item(ADJ.id);
+  if(ADJ.val>0){ move(it, it.stock + ADJ.val, '入荷'); delete DB.ordered[it.id]; save(); toast(it.name+' +'+ADJ.val); }
+  closeSheet(); render();
+}
+
+/* ---------- ③ 入荷・棚卸 ---------- */
+let ARR = { mode:'in', qty:{} };
+function viewArrive(){
+  let h = '<div class="pad">';
+  h += '<div class="step" style="margin-bottom:14px">'
+     +  '<div class="'+(ARR.mode==='in'?'on':'')+'" onclick="arrMode(\'in\')">🚚 入荷（増やす）</div>'
+     +  '<div class="'+(ARR.mode==='count'?'on':'')+'" onclick="arrMode(\'count\')">🔢 棚卸（実在庫）</div>'
+     + '</div>';
+  h += '<div class="muted" style="margin-bottom:12px">'
+     + (ARR.mode==='in' ? '届いた数を入れて、最後に「まとめて入荷」。複数商品を一度に登録できます。'
+                        : '冷凍庫を数えた実際の数を入れて「まとめて反映」。差は履歴に残ります。')
+     + '</div>';
+  DB.items.forEach(it=>{
+    const q = arrVal(it.id);
+    h += '<div class="stp '+(arrOn(it.id)?'on':'')+'" id="stp-'+it.id+'">'
+       +  '<span class="nm">'+esc(it.name)+'<span class="now">'+(ARR.mode==='in'?'在庫 ':'いま ')+it.stock+'</span></span>'
+       +  '<button onclick="arrQ('+it.id+',-1)">－</button>'
+       +  '<input id="q-'+it.id+'" type="text" inputmode="numeric" pattern="[0-9]*" value="'+q+'" onchange="arrQset('+it.id+',this.value)">'
+       +  '<button onclick="arrQ('+it.id+',1)">＋</button>'
+       + '</div>';
+  });
+  h += ARR.mode==='in'
+     ? '<button class="btn btn-primary gap" id="arr-btn" '+(arrCount()?'':'disabled')+' onclick="arrCommit()">'+arrLabel()+'</button>'
+     : '<button class="btn btn-dark gap" id="arr-btn" onclick="countCommit()">'+arrLabel()+'</button>';
+  h += '</div>';
+  return h;
+}
+function arrVal(id){
+  const it = item(id);
+  return ARR.qty[id]==null ? (ARR.mode==='in' ? 0 : it.stock) : ARR.qty[id];
+}
+function arrOn(id){
+  const it = item(id), q = arrVal(id);
+  return ARR.mode==='in' ? q>0 : q!==it.stock;
+}
+function arrCount(){ return DB.items.filter(i=>arrOn(i.id)).length; }
+function arrLabel(){
+  const n = arrCount();
+  return ARR.mode==='in' ? ('まとめて入荷'+(n?'（'+n+'商品）':'')) : ('まとめて反映（棚卸）'+(n?'　'+n+'商品':''));
+}
+/* 行だけ描き直す（画面ごと作り直すと入力中の値が消えるため） */
+function paintArr(id){
+  const row = document.getElementById('stp-'+id), inp = document.getElementById('q-'+id);
+  if(row) row.classList.toggle('on', arrOn(id));
+  if(inp) inp.value = arrVal(id);
+  const btn = document.getElementById('arr-btn');
+  if(btn){ btn.textContent = arrLabel(); if(ARR.mode==='in') btn.disabled = !arrCount(); }
+}
+function goCount(){ go('arrive'); ARR = { mode:'count', qty:{} }; render(); }
+function arrMode(m){ ARR = { mode:m, qty:{} }; render(); }
+function arrQ(id,d){ ARR.qty[id] = Math.max(0, arrVal(id) + d); paintArr(id); }
+function arrQset(id,v){ ARR.qty[id] = Math.max(0, num(v)); paintArr(id); }
+function arrCommit(){
+  let n=0;
+  DB.items.forEach(it=>{ const q = ARR.qty[it.id]||0; if(q>0){ move(it, it.stock+q, '入荷'); delete DB.ordered[it.id]; n++; } });
+  ARR.qty = {}; save(); render(); toast(n+'商品を入荷しました');
+}
+function countCommit(){
+  let n=0;
+  DB.items.forEach(it=>{ const q = ARR.qty[it.id]; if(q!=null && q!==it.stock){ move(it, q, '棚卸（数え直し）'); n++; } });
+  ARR.qty = {}; save(); render(); toast(n? n+'商品を修正しました' : '変更はありません');
+}
+
+/* ============================================================
+   POS連携
+   ------------------------------------------------------------
+   在庫側は「正規化された販売データ」だけを見る。
+     SaleRecord = { key, at, ticket, posName, qty }
+   ・CsvPosSource … CSVファイル → SaleRecord[]（いまはこれ）
+   ・ApiPosSource … エクストリンクPOSのAPIが使えるようになったら
+                    fetchSales(from,to) を実装して差し替えるだけ。
+   applySales() から先（対応付け・二重防止・在庫減算）は共通なので
+   取込方法を変えても在庫のしくみは触らなくてよい。
+   ============================================================ */
+function userErr(msg){ const e = new Error(msg); e.userMsg = msg; return e; }
+/* 日時の文字列から「日」だけ取り出す（2026/09/14 18:20 → 2026-09-14） */
+function dayOf(at){
+  const t = String(at||'');
+  let m = t.match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/);
+  if(m) return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
+  m = t.match(/(\d{1,2})\D(\d{1,2})/);
+  if(m) return ('0'+m[1]).slice(-2)+'-'+('0'+m[2]).slice(-2);
+  return t.trim();
+}
+const CsvPosSource = {
+  id:'csv', label:'CSV取込',
+  /* file -> { rows, headIdx, cols } */
+  async read(file){
+    const text = await decodeFile(file);
+    if(text.slice(0,2)==='PK') throw userErr('エクセル形式（.xlsx）は取り込めません。POSからCSVで書き出してください');
+    const rows = parseCSV(text);
+    if(!rows.length) throw userErr('中身が読み取れませんでした');
+    const headIdx = guessHeadRow(rows);
+    const cols = guessCols(rows[headIdx]);
+    return { file:file.name, rows, headIdx, cols };
+  },
+  /* 列マッピングに従って SaleRecord[] を作る */
+  toSales(parsed, period){
+    const { rows, headIdx, cols } = parsed;
+    const pf = (period && period.from) || '';
+    const out = [], cnt = {};
+    for(let i=headIdx+1;i<rows.length;i++){
+      const r = rows[i];
+      const name = String(r[cols.name]==null?'':r[cols.name]).trim();
+      if(!name) continue;
+      if(/^(合計|小計|総計|計|.*合計)$/.test(name)) continue;   // 集計行は無視
+      const qty = cols.qty>=0 ? num(r[cols.qty]) : 1;
+      if(!qty) continue;
+      const at     = cols.at>=0     ? String(r[cols.at]||'').trim()     : '';
+      const ticket = cols.ticket>=0 ? String(r[cols.ticket]||'').trim() : '';
+      /* 二重取込よけのキー。伝票番号があればそれを軸に、無ければ日時を軸に。
+         同じ内容の行が複数あっても数が合うように連番を付ける。 */
+      const day = dayOf(at) || pf;   // 日付列が無い集計CSVは、指定した集計期間の開始日を日付として使う
+      const base = ticket ? ('T\u0001'+ticket+'\u0001'+norm(name)+'\u0001'+qty)
+                          : ('D\u0001'+at+'\u0001'+norm(name)+'\u0001'+qty);
+      cnt[base] = (cnt[base]||0)+1;
+      out.push({ key: base+'#'+cnt[base], at, day, ticket, posName:name, qty });
+    }
+    return out;
+  }
+};
+
+/* 将来のAPI連携用のひな形（中身は未実装）。
+   const ApiPosSource = { id:'api', label:'POS API',
+     async fetchSales(from, to){ ... 取得して SaleRecord[] を返す ... } };
+   → 取得できたら applySales(sales, 'API '+from+'〜'+to) を呼ぶだけでよい。 */
+
+/* 文字コード自動判定（UTF-8 / BOM / Shift_JIS） */
+async function decodeFile(file){
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let b = buf;
+  if(b[0]===0xEF && b[1]===0xBB && b[2]===0xBF) b = b.subarray(3);
+  else if(b[0]===0xFF && b[1]===0xFE) return new TextDecoder('utf-16le').decode(b.subarray(2));
+  else if(b[0]===0xFE && b[1]===0xFF) return new TextDecoder('utf-16be').decode(b.subarray(2));
+  try{ return new TextDecoder('utf-8',{fatal:true}).decode(b); }catch(e){}
+  try{ return new TextDecoder('shift_jis').decode(b); }catch(e){}
+  return new TextDecoder().decode(b);
+}
+/* 区切り文字を推測してCSV/TSVを行列に */
+function parseCSV(text){
+  const head = text.slice(0, 3000);
+  const d = (head.split('\t').length > head.split(',').length) ? '\t' : ',';
+  const rows = []; let row = [], cur = '', q = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){ cur+='"'; i++; } else q=false; }
+      else cur += c;
+    }else{
+      if(c==='"') q = true;
+      else if(c===d){ row.push(cur); cur=''; }
+      else if(c==='\r'){}
+      else if(c==='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; }
+      else cur += c;
+    }
+  }
+  if(cur!=='' || row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r=>r.some(c=>String(c).trim()!==''));
+}
+/* ヘッダー行らしい行を探す（タイトル行が上にあるPOS出力にも対応） */
+function guessHeadRow(rows){
+  const kw = /(商品|品名|メニュー|品目|数量|個数|点数|日付|日時|伝票|単価|金額)/;
+  const lim = Math.min(rows.length, 12);
+  for(let i=0;i<lim;i++){
+    const f = rows[i].filter(c=>String(c).trim()!=='');
+    if(f.length>=2 && f.some(c=>kw.test(String(c)))) return i;
+  }
+  let best=0, bn=0;
+  for(let i=0;i<lim;i++){ const n = rows[i].filter(c=>String(c).trim()!=='').length; if(n>bn){bn=n;best=i;} }
+  return best;
+}
+const COL_HINT = {
+  name  : ['商品名','メニュー名','品名','商品','品目','メニュー','アイテム','item','name'],
+  qty   : ['出数','販売数','売上数','数量','個数','点数','数','qty','quantity'],
+  at    : ['会計日時','売上日時','日時','伝票日付','売上日','営業日','日付','年月日','date'],
+  ticket: ['伝票番号','伝票no','伝票ｎｏ','レシート番号','取引番号','会計番号','注文番号','伝票','receipt']
+};
+function guessCols(head){
+  const cells = head.map(c=>norm(c));
+  const pick = key=>{
+    for(const w of COL_HINT[key]){
+      const i = cells.findIndex(c=>c && c.indexOf(norm(w))>=0);
+      if(i>=0) return i;
+    }
+    return -1;
+  };
+  const c = { name:pick('name'), qty:pick('qty'), at:pick('at'), ticket:pick('ticket') };
+  if(c.name<0) c.name = 0;
+  /* 前回と同じ列構成なら前回の設定を使う */
+  if(DB.csvMap && DB.csvMap.sig === cells.join('|')) return Object.assign({}, DB.csvMap.cols);
+  return c;
+}
+
+/* ---------- POS画面（3ステップ） ---------- */
+let POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false };
+function todayStr(){ const d=new Date(), z=n=>('0'+n).slice(-2); return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
+/* 前回と同じ月なら同じ開始日を引き継ぐ（POSの「当月」で書き出す運用に合わせる） */
+/* CSVの「抽出期間：」2026-09-01～2026-09-15 から期間を読み取る */
+function periodFromRows(rows, headIdx){
+  const txt = rows.slice(0, Math.max(headIdx,1)).map(r=>r.join(' ')).join(' ');
+  const m = txt.match(/(\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})\D{0,4}?[～~〜](\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})/);
+  if(!m) return null;
+  const z = n=>('0'+n).slice(-2);
+  return { from:m[1]+'-'+z(m[2])+'-'+z(m[3]), to:m[4]+'-'+z(m[5])+'-'+z(m[6]), auto:true };
+}
+function defaultPeriod(){
+  const t = todayStr(), m = t.slice(0,7);
+  const last = DB.imports.find(r=>!r.undone && r.period && r.period.from);
+  if(last && last.period.from.slice(0,7) === m) return { from:last.period.from, to:t };
+  return { from:m+'-01', to:t };
+}
+function needPeriod(){ const c = POS.parsed.cols; return c.at<0 && c.ticket<0; }
+function viewPos(){
+  let h = '<div class="pad">';
+  h += '<div class="step">'
+     +  '<div class="'+(POS.step===1?'on':'')+'">① CSVを選択</div>'
+     +  '<div class="'+(POS.step===2?'on':'')+'">② 内容確認</div>'
+     +  '<div class="'+(POS.step===3?'on':'')+'">③ 在庫に反映</div>'
+     + '</div>';
+
+  if(POS.step===1){
+    h += '<label class="file-btn" for="csvfile">📄 POS CSVを選択</label>';
+    h += '<div class="muted gap">エクストリンクPOSから書き出した売上CSVを選んでください。文字コード（Shift_JIS／UTF-8）は自動で判定します。'
+       + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
+    const last = DB.imports.filter(x=>!x.undone)[0];
+    if(last) h += '<div class="info gap">前回の取込：'+fmtDT(last.at)+'　'+esc(last.file)+'（'+last.rows+'件）<br>同じ期間をもう一度取り込んでも、同じ売上は二重で引かれません。</div>';
+    h += '</div>'; return h;
+  }
+
+  const p = POS.parsed, head = p.rows[p.headIdx];
+  if(POS.step===2){
+    const opts = (sel)=> '<option value="-1">（使わない）</option>' + head.map((c,i)=>
+      '<option value="'+i+'" '+(sel===i?'selected':'')+'>'+esc(String(c).trim()|| (i+1)+'列目')+'</option>').join('');
+    h += '<div class="card"><h2>'+esc(p.file)+'</h2>'
+       + '<div class="muted">'+(p.rows.length - p.headIdx - 1)+' 行のデータを読み込みました。下の列の対応を確認してください。</div></div>';
+    h += '<label class="lab">ヘッダー行</label>'
+       + '<select class="sel" onchange="posHead(this.value)">'
+       +   p.rows.slice(0, Math.min(p.rows.length,12)).map((r,i)=>
+             '<option value="'+i+'" '+(i===p.headIdx?'selected':'')+'>'+(i+1)+'行目：'+esc(r.slice(0,4).join(' / ').slice(0,40))+'</option>').join('')
+       + '</select>';
+    h += '<label class="lab">商品名の列（必須）</label><select class="sel" onchange="posCol(\'name\',this.value)">'+opts(p.cols.name)+'</select>';
+    h += '<label class="lab">販売数の列</label><select class="sel" onchange="posCol(\'qty\',this.value)">'+opts(p.cols.qty)+'</select>';
+    h += '<label class="lab">日時の列</label><select class="sel" onchange="posCol(\'at\',this.value)">'+opts(p.cols.at)+'</select>';
+    h += '<label class="lab">伝票番号の列</label><select class="sel" onchange="posCol(\'ticket\',this.value)">'+opts(p.cols.ticket)+'</select>';
+    if(needPeriod()){
+      h += (POS.period.auto
+            ? '<div class="info gap">CSVの「抽出期間」から <b>'+esc(POS.period.from)+' 〜 '+esc(POS.period.to)+'</b> を読み取りました。'
+              + 'この期間をもとに、同じ売上を二重で引かないようにします。</div>'
+            : '<div class="warn gap">このCSVには日付の列がありません。POSで指定した<b>集計の期間</b>を入れてください。'
+              + '同じ期間を何度取り込んでも、二重で引かないために使います。</div>')
+         + '<label class="lab">集計の期間</label>'
+         + '<div style="display:flex;gap:8px;align-items:center">'
+         +   '<input class="txt" type="date" value="'+POS.period.from+'" onchange="POS.period.from=this.value">'
+         +   '<span style="color:#888">〜</span>'
+         +   '<input class="txt" type="date" value="'+POS.period.to+'" onchange="POS.period.to=this.value">'
+         + '</div>';
+    }else{
+      h += '<div class="muted gap">伝票番号があると明細1行ずつ、無い場合は日付×商品ごとに、二重取込を防ぎます。</div>';
+    }
+    h += '<div class="card gap"><h2>先頭の中身</h2><div class="scroll"><table class="peek">'
+       + p.rows.slice(p.headIdx, p.headIdx+5).map((r,i)=>'<tr class="'+(i===0?'head':'')+'">'
+         + r.slice(0,8).map(c=>'<td>'+esc(String(c).slice(0,18))+'</td>').join('') + '</tr>').join('')
+       + '</table></div></div>';
+    h += '<button class="btn btn-primary gap" onclick="posPreview()">内容確認へ</button>';
+    h += '<button class="btn btn-gray gap" onclick="posReset()">やめる</button>';
+    h += '</div>'; return h;
+  }
+
+  /* step 3：プレビュー */
+  const pv = buildPreview(POS.sales);
+  h += '<div class="card"><h2>'+esc(p.file)+'</h2>'
+     + '<div class="muted">読み取り '+POS.sales.length+' 行／今回引くのは <b>'+pv.newRows+' 件</b>'
+     + (pv.dupRows? '<br>取込済み '+pv.dupRows+' 件は引きません（二重防止）':'')
+     + (pv.sumMode? '<br>集計形式のCSVとして、日付×商品ごとに<b>すでに引いたぶんを除いた差だけ</b>を反映します。':'')
+     + '</div></div>';
+  const ov = needPeriod() && POS.period && POS.period.from ? DB.imports.find(r=>!r.undone && r.period && r.period.from
+        && !(POS.period.to && POS.period.to < r.period.from) && !(r.period.to && POS.period.from > r.period.to)
+        && r.period.from !== POS.period.from) : null;
+  if(ov){
+    h += '<div class="warn">前回 '+esc(ov.period.from)+' 〜 '+esc(ov.period.to||'')+' を取り込んでいます。'
+       + '今回の期間は開始日が違うため重なったぶんを二重に引く可能性があります。'
+       + '<b>開始日をそろえる</b>（例：毎回 月初〜今日）か、前回の続きの期間にしてください。</div>';
+  }
+  if(pv.noKey){
+    h += '<div class="warn">日時の列も伝票番号の列も選ばれていません。このままだと同じ売上を二重に引く／引き忘れる可能性があります。'
+       + '「列の設定に戻る」で<b>日時の列</b>を選んでください。</div>';
+  }
+
+  if(pv.lines.length){
+    h += '<div class="card"><h2>在庫の動き</h2>';
+    pv.lines.forEach(l=>{
+      h += '<div class="prev"><span class="nm">'+esc(l.name)+'</span>'
+         + '<span class="sl">販売 '+l.qty+(l.per!==1?' ×'+l.per:'')+' → 在庫</span>'
+         + '<span class="mv'+(l.move>0?' plus':'')+'">'+(l.move>0?'+':'')+l.move+'</span></div>';
+    });
+    h += '</div>';
+  }else{
+    h += '<div class="info">今回、在庫から引くものはありません。</div>';
+  }
+
+  if(pv.unknown.length){
+    const un = pv.unknown.slice().sort((a,b)=>b.qty-a.qty);
+    const sug = un.filter(u=>u.suggest), rest = un.filter(u=>!u.suggest);
+    const opts = u => '<select class="sel" onchange="setMap(this.value,\''+escArg(u.name)+'\')">'
+         +   '<option value="">在庫商品を選ぶ…</option>'
+         +   DB.items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+'</option>').join('')
+         +   '<option value="__skip__">この商品は使わない（在庫なし）</option>'
+         + '</select>';
+
+    if(sug.length){
+      h += '<div class="warn gap">冷凍在庫らしい商品が '+sug.length+' 件あります。'
+         + 'ボタンを押すと対応づけて、次回から自動で在庫を引きます。</div><div class="gap">';
+      sug.forEach(u=>{
+        h += '<div class="map-row"><div class="nm">'+esc(u.name)+'<span class="sl" style="font-weight:400;color:#888"> 　出数 '+u.qty+'</span></div>'
+           + '<button class="btn btn-primary" style="padding:13px;font-size:16px;margin-bottom:8px" '
+           +   'onclick="setMap(\''+u.suggest.id+'\',\''+escArg(u.name)+'\')">「'+esc(u.suggest.name)+'」に対応づける</button>'
+           + opts(u) + '</div>';
+      });
+      h += '</div>';
+    }
+    if(rest.length){
+      const shown = POS.showAll ? rest : rest.slice(0,8);
+      h += '<div class="muted gap" style="font-weight:700">その他 '+rest.length+' 件（ドリンク・コース・たれ／塩など）</div>'
+         + '<div class="muted">冷凍在庫にあるものだけ選んでください。盛り合わせ・コース・飲み放題は「使わない」でOKです。</div><div class="gap">';
+      shown.forEach(u=>{
+        h += '<div class="map-row"><div class="nm">'+esc(u.name)+'<span class="sl" style="font-weight:400;color:#888"> 　出数 '+u.qty+'</span></div>'
+           + opts(u) + '</div>';
+      });
+      h += '</div>';
+      if(rest.length > shown.length)
+        h += '<button class="btn btn-out gap" onclick="POS.showAll=true;render()">残り '+(rest.length-shown.length)+' 件も表示する</button>';
+    }
+    h += '<button class="btn btn-gray gap" onclick="skipAllUnknown()">未対応の '+(POS.showAll||!rest.length? un.length : rest.length)
+       + ' 件をまとめて「使わない」にする</button>';
+  }
+  h += '<button class="btn btn-primary gap" '+(pv.lines.length?'':'disabled')+' onclick="posApply()">在庫に反映する</button>';
+  h += '<button class="btn btn-gray gap" onclick="POS.step=2;render()">列の設定に戻る</button>';
+  h += '</div>';
+  return h;
+}
+
+async function onPickFile(el){
+  const f = el.files && el.files[0]; el.value = '';
+  if(!f) return;
+  try{
+    POS.parsed = await CsvPosSource.read(f);
+    POS.period = periodFromRows(POS.parsed.rows, POS.parsed.headIdx) || defaultPeriod();
+    POS.showAll = false;
+    POS.step = 2; TAB='pos'; render();
+  }catch(e){ toast((e && e.userMsg) || 'CSVを読めませんでした'); }
+}
+function posReset(){ POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false }; render(); }
+function posHead(i){
+  POS.parsed.headIdx = parseInt(i,10);
+  POS.parsed.cols = guessCols(POS.parsed.rows[POS.parsed.headIdx]);
+  setTimeout(render, 0);
+}
+function posCol(k,v){ POS.parsed.cols[k] = parseInt(v,10); setTimeout(render, 0); }
+function posPreview(){
+  const p = POS.parsed;
+  if(p.cols.name<0){ toast('商品名の列を選んでください'); return; }
+  if(needPeriod() && !POS.period.from){ toast('集計の期間（開始日）を入れてください'); return; }
+  DB.csvMap = { sig: p.rows[p.headIdx].map(c=>norm(c)).join('|'), cols: Object.assign({},p.cols) };
+  save();
+  POS.sales = CsvPosSource.toSales(p, POS.period);
+  if(!POS.sales.length){ toast('売上の行が見つかりませんでした'); return; }
+  POS.step = 3; render();
+}
+
+/* SaleRecord[] → 反映プレビュー */
+/* 取込プレビュー
+   ・明細形式（伝票番号あり）… 売上1行ずつをキーにして取込済みなら引かない
+   ・集計形式（伝票番号なし）… 「日付×商品」ごとに、すでに引いた数との差だけ引く
+     （同じ日を何度書き出し直しても、増えたぶんだけ正しく引ける）        */
+function buildPreview(sales){
+  const byItem = {}, unknown = {}, seenInFile = {}, sums = {}, skipSums = [];
+  let newRows = 0, dupRows = 0, sumMode = false, noKey = false;
+  const bucket = it => byItem[it.id] = byItem[it.id] ||
+        { id:it.id, name:it.name, per:it.per||1, qty:0, keys:[], sums:[] };
+  const unk = s => (unknown[s.posName] = unknown[s.posName] || { name:s.posName, qty:0 }).qty += s.qty;
+
+  sales.forEach(s=>{
+    const m = lookup(s.posName);
+    if(!m){ unk(s); return; }
+    if(s.ticket){                                   /* 明細形式 */
+      if(DB.seen[s.key] || seenInFile[s.key]){ dupRows++; return; }
+      seenInFile[s.key] = 1; newRows++;
+      if(m.item === '__skip__') return;
+      const it = item(m.item); if(!it){ unk(s); return; }
+      const b = bucket(it); b.qty += s.qty; b.keys.push(s.key);
+    }else{                                          /* 集計形式 */
+      sumMode = true;
+      if(!s.day) noKey = true;
+      const k = 'S\u0001'+s.day+'\u0001'+norm(s.posName);
+      const g = sums[k] = sums[k] || { key:k, posName:s.posName, qty:0, m:m };
+      g.qty += s.qty;
+    }
+  });
+
+  Object.values(sums).forEach(g=>{
+    const done = DB.applied[g.key] || 0;
+    const delta = g.qty - done;
+    if(delta <= 0){ dupRows++; return; }
+    newRows++;
+    if(g.m.item === '__skip__'){ skipSums.push({ key:g.key, total:g.qty }); return; }
+    const it = item(g.m.item); if(!it){ unk({ posName:g.posName, qty:delta }); return; }
+    const b = bucket(it); b.qty += delta; b.sums.push({ key:g.key, total:g.qty });
+  });
+
+  const lines = Object.values(byItem).map(b=>Object.assign(b, { move: -(b.qty * (b.per||1)) }))
+                 .sort((a,b)=>a.move-b.move);
+  const un = Object.values(unknown).map(u=>Object.assign(u, { suggest: suggestItem(u.name) }));
+  return { lines, unknown:un, newRows, dupRows, sumMode, noKey, skipSums };
+}
+/* 在庫に関係ない商品（ドリンク・コースなど）をまとめて「使わない」に */
+function skipAllUnknown(){
+  const all = buildPreview(POS.sales).unknown;
+  const rest = all.filter(u=>!u.suggest);
+  const un = (POS.showAll || !rest.length) ? all : rest;   // 候補が出ているものは残す
+  if(!un.length) return;
+  if(!confirm(un.length+'件を「使わない」に設定します。\n（設定タブでやり直せます）')) return;
+  un.forEach(u=>{ DB.map[norm(u.name)] = { item:'__skip__', label:u.name }; });
+  save(); render(); toast(un.length+'件を「使わない」にしました');
+}
+function setMap(v, name){
+  if(!v) return;
+  DB.map[norm(name)] = { item: v==='__skip__' ? '__skip__' : parseInt(v,10), label:name };
+  save(); setTimeout(render, 0);
+}
+function posApply(){
+  const pv = buildPreview(POS.sales);
+  const pr = POS.period || { from:'', to:'' };
+  const rec = { id:DB.seq++, at:nowISO(), file:POS.parsed.file, period:{ from:pr.from, to:pr.to },
+                rows:0, lines:[], keys:[], applied:[], undone:false };
+  const markSum = a=>{ rec.applied.push({ key:a.key, prev:DB.applied[a.key]||0, total:a.total }); DB.applied[a.key] = a.total; };
+  pv.lines.forEach(l=>{
+    const it = item(l.id); if(!it) return;
+    const amount = l.qty * (l.per||1);
+    move(it, it.stock - amount, 'POS売上（'+l.qty+'個）');
+    rec.lines.push({ itemId:it.id, qty:amount });
+    l.keys.forEach(k=>{ DB.seen[k] = 1; rec.keys.push(k); });
+    l.sums.forEach(markSum);
+  });
+  pv.skipSums.forEach(markSum);
+  /* 「使わない」に設定済みの行も取込済みにしておく（毎回出てこないように） */
+  POS.sales.forEach(s=>{
+    const m = lookup(s.posName);
+    if(m && m.item==='__skip__' && !DB.seen[s.key]){ DB.seen[s.key]=1; rec.keys.push(s.key); }
+    /* 「揚物/ポテトフライ」のような書き方で対応できたものは、そのままの名前も登録して次回を速く */
+    if(m && !DB.map[norm(s.posName)]) DB.map[norm(s.posName)] = { item:m.item, label:s.posName };
+  });
+  rec.rows = rec.keys.length + rec.applied.length;
+  DB.imports.unshift(rec);
+  if(DB.imports.length>30) DB.imports.length = 30;
+  pruneSeen();
+  save();
+  const n = rec.lines.length;
+  POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false };
+  render(); toast(n+'商品の在庫に反映しました');
+  go('stock');
+}
+/* seenが増えすぎないように、古い取込のキーから捨てる */
+function pruneSeen(){
+  if(Object.keys(DB.seen).length > 30000){
+    const keep = {};
+    DB.imports.slice(0,10).forEach(r=>r.keys.forEach(k=>keep[k]=1));
+    DB.seen = keep;
+  }
+  if(Object.keys(DB.applied).length > 20000){
+    const keep = {};
+    DB.imports.slice(0,10).forEach(r=>(r.applied||[]).forEach(a=>keep[a.key]=DB.applied[a.key]));
+    DB.applied = keep;
+  }
+}
+function undoImport(id){
+  const rec = DB.imports.find(r=>r.id===id);
+  if(!rec || rec.undone) return;
+  if(!confirm('この取込を取り消して、引いた在庫を戻しますか？')) return;
+  rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
+  rec.keys.forEach(k=>{ delete DB.seen[k]; });
+  (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
+  rec.undone = true;
+  save(); render(); toast('取込を取り消しました');
+}
+
+/* ---------- ⑤ 設定 ---------- */
+function viewSet(){
+  let h = '<div class="pad">';
+
+  h += '<div class="card"><h2>商品マスタ（'+DB.items.length+'）</h2>'
+     + '<div class="muted">タップして 発注ライン・POSの商品名・1販売あたりの消費数を設定できます。</div><div class="gap">';
+  DB.items.forEach(it=>{
+    const pos = posNamesOf(it.id);
+    h += '<button class="row" style="margin-bottom:8px" onclick="openItem('+it.id+')">'
+       +  '<span class="nm" style="font-size:17px">'+esc(it.name)
+       +   '<span style="display:block;font-size:11px;color:#aaa;font-weight:500">ライン '+it.min+' ／ 1販売で '+it.per+' 減 ／ POS名 '+(pos.length||0)+'件</span></span>'
+       +  '<span class="qty" style="font-size:20px">'+it.stock+'</span></button>';
+  });
+  h += '</div><button class="btn btn-out gap" onclick="openItem(0)">＋ 商品を追加</button></div>';
+
+  const unmapped = Object.keys(DB.map).length;
+  h += '<div class="card"><h2>POS商品名の対応（'+unmapped+'）</h2>'
+     + '<div class="muted">POSの商品名と在庫商品の対応表です。</div><div class="gap">';
+  Object.entries(DB.map).forEach(([k,m])=>{
+    const target = m.item==='__skip__' ? '（使わない）' : (item(m.item)? item(m.item).name : '？');
+    h += '<div class="hist"><span class="n">'+esc(m.label||k)+'</span><span class="r">→ '+esc(target)+'</span>'
+       + '<button class="btn btn-danger btn-sm" style="padding:6px 10px;font-size:12px" onclick="delMap(\''+esc(k).replace(/'/g,"\\'")+'\')">解除</button></div>';
+  });
+  h += '</div></div>';
+
+  h += '<div class="card"><h2>取込履歴</h2>';
+  if(!DB.imports.length) h += '<div class="muted">まだありません。</div>';
+  DB.imports.slice(0,10).forEach(r=>{
+    h += '<div class="hist"><span class="t">'+fmtDT(r.at)+'</span>'
+       + '<span class="n" style="font-size:13px">'+esc(r.file)+'</span>'
+       + '<span class="r">'+r.rows+'行</span>'
+       + (r.undone? '<span class="r">取消済</span>'
+                  : '<button class="btn btn-gray btn-sm" style="padding:6px 10px;font-size:12px" onclick="undoImport('+r.id+')">取消</button>')
+       + '</div>';
+  });
+  h += '</div>';
+
+  h += '<div class="card"><h2>在庫の履歴（最新100件）</h2>';
+  if(!DB.history.length) h += '<div class="muted">まだありません。</div>';
+  DB.history.slice(0,100).forEach(x=>{
+    const d = x.after - x.before;
+    h += '<div class="hist"><span class="t">'+fmtDT(x.at)+'</span><span class="n">'+esc(x.name)+'</span>'
+       + '<span class="d" style="color:'+(d<0?'#d92d20':'#0a9d55')+'">'+x.before+'→'+x.after+'</span>'
+       + '<span class="r">'+esc(x.reason)+'</span></div>';
+  });
+  h += '</div>';
+
+  h += '<div class="card"><h2>バックアップ</h2>'
+     + '<div class="muted">機種変更や共有のときに、データを書き出し／読み込みできます。</div>'
+     + '<button class="btn btn-out gap" onclick="expData()">今のデータを書き出す</button>'
+     + '<textarea id="io" class="gap" placeholder="ここに書き出し内容が出ます／貼り付けて読み込み"></textarea>'
+     + '<button class="btn btn-gray gap" onclick="impData()">貼り付けを読み込む</button></div>';
+
+  h += '<div class="card"><h2>リセット</h2>'
+     + '<button class="btn btn-danger" onclick="resetAll()">最初の状態に戻す</button></div>';
+
+  h += '<div class="muted" style="text-align:center;padding:10px 0 4px">串焼KEMURI屋 冷凍在庫 v1</div>';
+  h += '</div>';
+  return h;
+}
+function posNamesOf(id){ return Object.entries(DB.map).filter(([k,m])=>m.item===id).map(([k,m])=>m.label||k); }
+function delMap(k){ delete DB.map[k]; save(); render(); }
+
+/* 商品の編集シート */
+let EDIT = null;
+function openItem(id){
+  const it = id ? item(id) : null;
+  EDIT = it ? { id, name:it.name, min:it.min, per:it.per, stock:it.stock }
+            : { id:0, name:'', min:3, per:1, stock:0 };
+  drawItem();
+}
+function drawItem(){
+  const pos = EDIT.id ? posNamesOf(EDIT.id) : [];
+  let h = '<h3>'+(EDIT.id? '商品の設定':'商品を追加')+'</h3><div class="sh-sub">　</div>'
+    + '<label class="lab">商品名</label><input class="txt" id="e-name" value="'+esc(EDIT.name)+'" onchange="EDIT.name=this.value">'
+    + '<label class="lab">発注ライン（この数以下で「発注」）</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.min+'" onchange="EDIT.min=Math.max(0,num(this.value))">'
+    + '<label class="lab">POS販売1あたり 減らす在庫数</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.per+'" onchange="EDIT.per=Math.max(1,num(this.value))">'
+    + '<div class="muted" style="margin-top:6px">1皿で2個使うなら 2 にします。</div>';
+  if(!EDIT.id){
+    h += '<label class="lab">いまの在庫</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.stock+'" onchange="EDIT.stock=Math.max(0,num(this.value))">';
+  }else{
+    h += '<label class="lab">POSの商品名（'+pos.length+'）</label>'
+       + (pos.length? '<div class="chips">'+pos.map(p=>'<button class="on" onclick="delMap(\''+esc(norm(p)).replace(/'/g,"\\'")+'\');openItem('+EDIT.id+')">'+esc(p)+' ✕</button>').join('')+'</div>'
+                    : '<div class="muted">まだありません。POS CSV取込のときに設定できます。</div>')
+       + '<div style="display:flex;gap:8px;margin-top:9px">'
+       +   '<input class="txt" id="e-pos" placeholder="POSの商品名を追加" style="flex:1">'
+       +   '<button class="btn btn-gray btn-sm" onclick="addPosName()">追加</button></div>';
+  }
+  h += '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
+     + '<button class="btn btn-primary" onclick="saveItem()">保存</button></div>';
+  if(EDIT.id) h += '<button class="btn btn-danger gap" onclick="delItem()">この商品を削除</button>';
+  openSheet(h);
+}
+function addPosName(){
+  const v = document.getElementById('e-pos').value.trim();
+  if(!v) return;
+  DB.map[norm(v)] = { item:EDIT.id, label:v };
+  save(); openItem(EDIT.id);
+}
+function saveItem(){
+  const nameEl = document.getElementById('e-name');
+  if(nameEl) EDIT.name = nameEl.value.trim();
+  if(!EDIT.name){ toast('商品名を入れてください'); return; }
+  if(EDIT.id){
+    const it = item(EDIT.id);
+    it.name = EDIT.name; it.min = EDIT.min; it.per = EDIT.per;
+  }else{
+    const id = DB.seq++;
+    DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per });
+    DB.map[norm(EDIT.name)] = { item:id, label:EDIT.name };
+  }
+  save(); closeSheet(); render(); toast('保存しました');
+}
+function delItem(){
+  if(!confirm('「'+item(EDIT.id).name+'」を削除しますか？')) return;
+  DB.items = DB.items.filter(i=>i.id!==EDIT.id);
+  Object.keys(DB.map).forEach(k=>{ if(DB.map[k].item===EDIT.id) delete DB.map[k]; });
+  delete DB.ordered[EDIT.id];
+  save(); closeSheet(); render(); toast('削除しました');
+}
+
+/* バックアップ */
+function expData(){ document.getElementById('io').value = JSON.stringify(DB); toast('書き出しました'); }
+function impData(){
+  try{
+    const d = JSON.parse(document.getElementById('io').value);
+    if(!d || !Array.isArray(d.items)) throw 0;
+    if(!confirm('いまのデータを、貼り付けた内容で置きかえますか？')) return;
+    DB = Object.assign(blank(), d); save(); render(); toast('読み込みました');
+  }catch(e){ toast('読み込めませんでした'); }
+}
+function resetAll(){
+  if(!confirm('在庫・履歴・対応表をすべて消して、最初の状態に戻しますか？')) return;
+  localStorage.removeItem(LS_KEY); DB = load(); save(); render(); toast('最初の状態に戻しました');
+}
+
+/* ---------- シート ---------- */
+function openSheet(html){
+  document.getElementById('sheet').innerHTML = html;
+  document.getElementById('ov').classList.add('show');
+}
+function closeSheet(){ document.getElementById('ov').classList.remove('show'); }
+
+/* ---------- iPhone向けの細かい調整 ---------- */
+function isField(el){ return el && el.matches && el.matches('input,select,textarea'); }
+document.addEventListener('focusin', e=>{
+  if(!isField(e.target)) return;
+  document.getElementById('tabbar').classList.add('hide');       // キーボードに隠されないように
+  if(e.target.inputMode==='numeric') setTimeout(()=>{ try{ e.target.select(); }catch(err){} }, 0); // 打ち替えやすく全選択
+});
+document.addEventListener('focusout', ()=>{
+  setTimeout(()=>{ if(!isField(document.activeElement)) document.getElementById('tabbar').classList.remove('hide'); }, 120);
+});
+
+/* ---------- 起動 ---------- */
+(function init(){
+  DB.items.forEach(it=>{
+    if(it.per==null) it.per = 1;
+    if(it.min==null) it.min = 0;
+    if(it.stock==null) it.stock = 0;
+  });
+  if(!DB.ordered) DB.ordered = {};
+  if(!DB.applied) DB.applied = {};
+  if(!DB.posSeeded){ applySeedPos(DB); DB.posSeeded = 1; }
+  save();
+  render();
+})();
+</script>
+</body>
+</html>
