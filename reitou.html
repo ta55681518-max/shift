@@ -354,7 +354,7 @@ function render(){
     (k==='order'&&need? '<span class="bdg">'+need+'</span>':'')+'</button>').join('');
 
   const titles = { stock:['冷凍在庫','串焼KEMURI屋'], order:['発注リスト','発注ライン以下の商品'],
-                   arrive:['入荷・棚卸',''], pos:['POS CSV取込','エクストリンクPOS'], set:['設定','商品マスタ・履歴'] };
+                   arrive:['入荷・棚卸',''], pos:['POS売上の取込','エクストリンクPOS'], set:['設定','商品マスタ・履歴'] };
   document.getElementById('h-title').textContent = titles[TAB][0];
   document.getElementById('h-sub').textContent   = titles[TAB][1];
   const act = document.getElementById('h-act'); act.style.display='none'; act.onclick=null;
@@ -611,8 +611,13 @@ const CsvPosSource = {
   fromText(text, name){
     const rows = parseCSV(text);
     if(!rows.length) throw userErr('中身が読み取れませんでした');
-    const headIdx = guessHeadRow(rows);
-    const cols = guessCols(rows[headIdx]);
+    let headIdx = guessHeadRow(rows), cols;
+    if(looksLikeHeader(rows[headIdx])){
+      cols = guessCols(rows[headIdx]);
+    }else{
+      headIdx = -1;                      // 見出し無し（取り込みボタンの「商品名⇥出数」など）
+      cols = guessColsNoHeader(rows);
+    }
     if(cols.name < 0) throw userErr('商品名の列が見つかりませんでした');
     return { file:name, rows, headIdx, cols };
   },
@@ -691,6 +696,25 @@ function guessHeadRow(rows){
   for(let i=0;i<lim;i++){ const n = rows[i].filter(c=>String(c).trim()!=='').length; if(n>bn){bn=n;best=i;} }
   return best;
 }
+function looksLikeHeader(row){
+  return /(商品|品名|メニュー|品目|数量|個数|点数|出数|日付|日時|伝票|単価|金額)/.test((row||[]).join(' '));
+}
+/* 見出しが無い貼り付け（商品名と出数だけ）から、商品名と出数の列を見つける。
+   「538円」「7.8%」「104,550円」は出数ではないので、裸の整数だけを出数とみなす。 */
+function guessColsNoHeader(rows){
+  const isInt = v=>{ const t = String(v==null?'':v).trim();
+    return !/[円%¥￥.]/.test(t) && /^\d{1,7}$/.test(t.replace(/[,\s]/g,'')); };
+  const isName = v=>{ const t = String(v==null?'':v).trim();
+    return !!t && !/^[A-EＡ-Ｅ]$/.test(t) && /[^\d,.\s円%¥￥\-]/.test(t); };
+  for(let i=0;i<Math.min(rows.length,15);i++){
+    const r = rows[i];
+    let n = -1;
+    for(let j=0;j<r.length;j++){ if(isName(r[j])){ n = j; break; } }
+    if(n < 0) continue;
+    for(let j=n+1;j<r.length;j++){ if(isInt(r[j])) return { name:n, qty:j, at:-1, ticket:-1 }; }
+  }
+  return { name:0, qty:1, at:-1, ticket:-1 };
+}
 const COL_HINT = {
   name  : ['商品名','メニュー名','品名','商品','品目','メニュー','アイテム','item','name'],
   qty   : ['出数','販売数','売上数','数量','個数','点数','数','qty','quantity'],
@@ -753,11 +777,13 @@ function viewPos(){
      + '</div>';
 
   if(POS.step===1){
-    h += '<label class="file-btn" for="csvfile">📄 POS CSVファイルを選ぶ</label>';
-    h += '<div class="card gap"><h2>📋 貼り付けて取り込む</h2>'
-       + '<div class="muted">メールやLINEで送ったCSVの中身をコピーして、そのまま貼り付けてもOKです。</div>'
-       + '<textarea id="paste" class="gap" placeholder="ここにCSVの中身を貼り付け"></textarea>'
-       + '<button class="btn btn-dark gap" onclick="pasteImport()">この内容を取り込む</button></div>';
+    h += '<div class="card"><h2>📋 出数を貼り付け</h2>'
+       + '<div class="muted">POSの「商品別商品集計」で<b>取り込みボタン</b>を押して、ここに貼り付けるだけ。'
+       + '貼った時点で読み取ります。CSVの中身をそのまま貼ってもOKです。</div>'
+       + '<textarea id="paste" class="gap" placeholder="例）&#10;ポテトフライ&#9;36&#10;茶豆&#9;22" '
+       +   'onpaste="setTimeout(pasteImport,80)"></textarea>'
+       + '<button class="btn btn-dark gap" onclick="pasteImport()">貼り付けた内容を読み取る</button></div>';
+    h += '<label class="file-btn gap" for="csvfile">📄 CSVファイルから取り込む</label>';
     h += '<div class="muted gap">エクストリンクPOSから書き出した売上CSVを選んでください。文字コード（Shift_JIS／UTF-8）は自動で判定します。'
        + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
     const last = DB.imports.filter(x=>!x.undone)[0];
@@ -765,7 +791,7 @@ function viewPos(){
     h += '</div>'; return h;
   }
 
-  const p = POS.parsed, head = p.rows[p.headIdx];
+  const p = POS.parsed, head = (p.headIdx>=0 ? p.rows[p.headIdx] : (p.rows[0]||[]).map((c,i)=>(i+1)+'列目'));
   if(POS.step===2){
     const opts = (sel)=> '<option value="-1">（使わない）</option>' + head.map((c,i)=>
       '<option value="'+i+'" '+(sel===i?'selected':'')+'>'+esc(String(c).trim()|| (i+1)+'列目')+'</option>').join('');
@@ -811,6 +837,17 @@ function viewPos(){
      + (pv.dupRows? '<br>取込済み '+pv.dupRows+' 件は引きません（二重防止）':'')
      + (pv.sumMode? '<br>集計形式のCSVとして、日付×商品ごとに<b>すでに引いたぶんを除いた差だけ</b>を反映します。':'')
      + '</div></div>';
+  if(needPeriod()){
+    if(!POS.period.auto)
+      h += '<div class="warn">この売上の<b>期間</b>を、POSで抽出した期間に合わせてください。'
+         + 'ここがズレると、二重に引いたり引き忘れたりします。</div>';
+    h += '<label class="lab" style="margin-top:0">この売上の期間'+(POS.period.auto?'（CSVから読み取り）':'')+'</label>'
+       + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">'
+       +   '<input class="txt" style="flex:1;min-width:0" type="date" value="'+esc(POS.period.from)+'" onchange="setPeriod(\'from\',this.value)">'
+       +   '<span style="color:#888">〜</span>'
+       +   '<input class="txt" style="flex:1;min-width:0" type="date" value="'+esc(POS.period.to)+'" onchange="setPeriod(\'to\',this.value)">'
+       + '</div>';
+  }
   const li = lastImport();
   if(li) h += '<div class="muted" style="margin:-4px 0 12px">前回の取込：'+esc(li.period.from)+' 〜 '+esc(li.period.to||'')+' まで反映済み</div>';
   if(li && li.period.to && POS.period && POS.period.from > nextDay(li.period.to)){
@@ -903,7 +940,7 @@ function startImport(parsed){
   POS.showAll = false;
   TAB = 'pos';
   const c = parsed.cols;
-  if(c.name>=0 && c.qty>=0 && (!needPeriod() || POS.period.auto)) posPreview();
+  if(c.name>=0 && c.qty>=0) posPreview();
   else { POS.step = 2; render(); }
 }
 function posReset(){ POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false }; render(); }
@@ -913,11 +950,18 @@ function posHead(i){
   setTimeout(render, 0);
 }
 function posCol(k,v){ POS.parsed.cols[k] = parseInt(v,10); setTimeout(render, 0); }
+/* プレビューで期間を直したら、二重取込よけのキーを作り直す */
+function setPeriod(k, v){
+  POS.period[k] = v; POS.period.auto = false;
+  POS.sales = CsvPosSource.toSales(POS.parsed, POS.period);
+  setTimeout(render, 0);
+}
 function posPreview(){
   const p = POS.parsed;
   if(p.cols.name<0){ toast('商品名の列を選んでください'); return; }
   if(needPeriod() && !POS.period.from){ toast('集計の期間（開始日）を入れてください'); return; }
-  DB.csvMap = { sig: p.rows[p.headIdx].map(c=>norm(c)).join('|'), cols: Object.assign({},p.cols) };
+  if(p.headIdx >= 0)   /* 見出しがあるCSVだけ、列の対応を次回のために覚えておく */
+    DB.csvMap = { sig: p.rows[p.headIdx].map(c=>norm(c)).join('|'), cols: Object.assign({},p.cols) };
   save();
   POS.sales = CsvPosSource.toSales(p, POS.period);
   if(!POS.sales.length){ toast('売上の行が見つかりませんでした'); return; }
