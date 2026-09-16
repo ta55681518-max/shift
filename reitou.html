@@ -605,11 +605,16 @@ const CsvPosSource = {
   async read(file){
     const text = await decodeFile(file);
     if(text.slice(0,2)==='PK') throw userErr('エクセル形式（.xlsx）は取り込めません。POSからCSVで書き出してください');
+    return this.fromText(text, file.name);
+  },
+  /* 貼り付けたテキストからでも同じように読み取る */
+  fromText(text, name){
     const rows = parseCSV(text);
     if(!rows.length) throw userErr('中身が読み取れませんでした');
     const headIdx = guessHeadRow(rows);
     const cols = guessCols(rows[headIdx]);
-    return { file:file.name, rows, headIdx, cols };
+    if(cols.name < 0) throw userErr('商品名の列が見つかりませんでした');
+    return { file:name, rows, headIdx, cols };
   },
   /* 列マッピングに従って SaleRecord[] を作る */
   toSales(parsed, period){
@@ -743,13 +748,16 @@ function needPeriod(){ const c = POS.parsed.cols; return c.at<0 && c.ticket<0; }
 function viewPos(){
   let h = '<div class="pad">';
   h += '<div class="step">'
-     +  '<div class="'+(POS.step===1?'on':'')+'">① CSVを選ぶ</div>'
-     +  '<div class="'+(POS.step===2?'on':'')+'">② 内容確認</div>'
-     +  '<div class="'+(POS.step===3?'on':'')+'">③ 在庫に反映</div>'
+     +  '<div class="'+(POS.step<3?'on':'')+'">① 売上を取り込む</div>'
+     +  '<div class="'+(POS.step===3?'on':'')+'">② 確認して在庫に反映</div>'
      + '</div>';
 
   if(POS.step===1){
-    h += '<label class="file-btn" for="csvfile">📄 POS CSVを選択</label>';
+    h += '<label class="file-btn" for="csvfile">📄 POS CSVファイルを選ぶ</label>';
+    h += '<div class="card gap"><h2>📋 貼り付けて取り込む</h2>'
+       + '<div class="muted">メールやLINEで送ったCSVの中身をコピーして、そのまま貼り付けてもOKです。</div>'
+       + '<textarea id="paste" class="gap" placeholder="ここにCSVの中身を貼り付け"></textarea>'
+       + '<button class="btn btn-dark gap" onclick="pasteImport()">この内容を取り込む</button></div>';
     h += '<div class="muted gap">エクストリンクPOSから書き出した売上CSVを選んでください。文字コード（Shift_JIS／UTF-8）は自動で判定します。'
        + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
     const last = DB.imports.filter(x=>!x.undone)[0];
@@ -870,7 +878,7 @@ function viewPos(){
        + ' 件をまとめて「使わない」にする</button>';
   }
   h += '<button class="btn btn-primary gap" '+(pv.lines.length?'':'disabled')+' onclick="posApply()">在庫に反映する</button>';
-  h += '<button class="btn btn-gray gap" onclick="POS.step=2;render()">列の設定に戻る</button>';
+  h += '<button class="btn btn-gray gap" onclick="POS.step=2;render()">列の設定を見直す</button>';
   h += '</div>';
   return h;
 }
@@ -878,16 +886,25 @@ function viewPos(){
 async function onPickFile(el){
   const f = el.files && el.files[0]; el.value = '';
   if(!f) return;
-  try{
-    POS.parsed = await CsvPosSource.read(f);
-    POS.period = periodFromRows(POS.parsed.rows, POS.parsed.headIdx) || defaultPeriod();
-    POS.showAll = false;
-    TAB = 'pos';
-    /* 商品名・販売数の列が分かり、期間も読み取れていれば、確認画面を飛ばしてプレビューへ */
-    const c = POS.parsed.cols;
-    if(c.name>=0 && c.qty>=0 && (!needPeriod() || POS.period.auto)) posPreview();
-    else { POS.step = 2; render(); }
-  }catch(e){ toast((e && e.userMsg) || 'CSVを読めませんでした'); }
+  try{ startImport(await CsvPosSource.read(f)); }
+  catch(e){ toast((e && e.userMsg) || 'CSVを読めませんでした'); }
+}
+function pasteImport(){
+  const el = document.getElementById('paste');
+  const v = el && el.value.trim();
+  if(!v){ toast('CSVの中身を貼り付けてください'); return; }
+  try{ startImport(CsvPosSource.fromText(v, '貼り付けた売上')); }
+  catch(e){ toast((e && e.userMsg) || '読み取れませんでした'); }
+}
+/* 読み取れたら、列が分かっている限り確認画面を飛ばしてプレビューまで一気に進む */
+function startImport(parsed){
+  POS.parsed = parsed;
+  POS.period = periodFromRows(parsed.rows, parsed.headIdx) || defaultPeriod();
+  POS.showAll = false;
+  TAB = 'pos';
+  const c = parsed.cols;
+  if(c.name>=0 && c.qty>=0 && (!needPeriod() || POS.period.auto)) posPreview();
+  else { POS.step = 2; render(); }
 }
 function posReset(){ POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false }; render(); }
 function posHead(i){
