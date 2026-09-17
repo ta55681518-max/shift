@@ -777,13 +777,15 @@ function viewPos(){
      + '</div>';
 
   if(POS.step===1){
-    h += '<div class="card"><h2>📋 出数を貼り付け</h2>'
-       + '<div class="muted">POSの「商品別商品集計」で<b>取り込みボタン</b>を押して、ここに貼り付けるだけ。'
-       + '貼った時点で読み取ります。CSVの中身をそのまま貼ってもOKです。</div>'
+    h += '<div class="info" style="margin-bottom:12px">POSの「商品別商品集計」で<b>取り込みボタン</b>を押すと、'
+       + 'このアプリが開いてそのまま反映できます。'
+       + '<a href="reitou-button.html" style="color:#3a4d8f;font-weight:700">入れ方 →</a></div>';
+    h += '<button class="btn btn-primary" onclick="clipImport()">📋 コピーした売上を取り込む</button>';
+    h += '<div class="card gap"><h2>うまくいかないときは貼り付け</h2>'
+       + '<div class="muted">下の枠に貼り付けても取り込めます（貼った時点で読み取ります）。</div>'
        + '<textarea id="paste" class="gap" placeholder="例）&#10;ポテトフライ&#9;36&#10;茶豆&#9;22" '
        +   'onpaste="setTimeout(pasteImport,80)"></textarea>'
-       + '<button class="btn btn-dark gap" onclick="pasteImport()">貼り付けた内容を読み取る</button>'
-       + '<a href="reitou-button.html" style="display:block;text-align:center;margin-top:10px;color:#e8531f;font-weight:700;font-size:14px">取り込みボタンの入れ方 →</a></div>';
+       + '<button class="btn btn-gray gap" onclick="pasteImport()">貼り付けた内容を読み取る</button></div>';
     h += '<label class="file-btn gap" for="csvfile">📄 CSVファイルから取り込む</label>';
     h += '<div class="muted gap">エクストリンクPOSから書き出した売上CSVを選んでください。文字コード（Shift_JIS／UTF-8）は自動で判定します。'
        + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
@@ -1228,6 +1230,32 @@ function openSheet(html){
 }
 function closeSheet(){ document.getElementById('ov').classList.remove('show'); }
 
+/* ---------- 取り込みボタンから直接受け取る ----------
+   ブックマークレットが reitou.html#pos=<売上データ> を開くので、
+   起動時にそれを読み取ってそのままプレビューまで進める。 */
+function importFromHash(){
+  const m = String(location.hash||'').match(/[#&]pos=([^&]*)/);
+  if(!m || !m[1]) return false;
+  let text = '';
+  try{ text = decodeURIComponent(m[1].replace(/\+/g,' ')); }catch(e){ return false; }
+  history.replaceState(null, '', location.pathname + location.search);   // URLを元に戻す
+  if(!text.trim()) return false;
+  try{ startImport(CsvPosSource.fromText(text, 'POSから直接')); return true; }
+  catch(e){ toast((e && e.userMsg) || '読み取れませんでした'); return false; }
+}
+window.addEventListener('hashchange', importFromHash);
+
+/* コピーした内容をそのまま取り込む（貼り付けの手間をなくす） */
+async function clipImport(){
+  try{
+    const t = await navigator.clipboard.readText();
+    if(!t || !t.trim()){ toast('コピーされた内容がありません'); return; }
+    startImport(CsvPosSource.fromText(t, 'コピーから取込'));
+  }catch(e){
+    toast((e && e.userMsg) || 'コピーを読めませんでした。下の枠に貼り付けてください');
+  }
+}
+
 /* ---------- iPhone向けの細かい調整 ---------- */
 function isField(el){ return el && el.matches && el.matches('input,select,textarea'); }
 document.addEventListener('focusin', e=>{
@@ -1274,6 +1302,7 @@ document.addEventListener('focusout', ()=>{
   }
   save();
   render();
+  importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ
 })();
 </script>
 </body>
