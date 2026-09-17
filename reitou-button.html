@@ -71,7 +71,8 @@
     <div class="step"><b class="n">3</b> 追加したブックマークを<b>編集</b>して、名前を「<b>冷凍在庫へ</b>」に、<b>URL欄を全部消して</b>さっきのコードを貼り付けて保存</div>
     <div class="step"><b class="n">4</b> POSで集計表を出したら、アドレスバーに「<b>冷凍在庫</b>」と打つ → 出てきたブックマークを選ぶと実行されます</div>
     <div class="note">
-      <b>iPhone（Safari）のコツ：</b> ブックマーク編集画面でURL欄を長押し → ペースト。<br>
+      <b>iPhone（Safari）：</b> ブックマーク編集画面でURL欄を長押し → ペースト。<br>
+      <b>iPhone・Androidの Chrome：</b> ★でブックマークしてから「編集」でURLを差し替え。使うときはアドレスバーに「冷凍在庫」と入力して、出てきたブックマークをタップ。<br>
       アプリが開かないときは、アプリのPOSタブで「📋 コピーした売上を取り込む」を押すか、枠に貼り付けてください。
     </div>
   </div>
@@ -79,12 +80,23 @@
 
 <div id="pc" class="hide">
   <div class="card">
-    <h2>パソコンでの入れ方</h2>
-    <div class="step"><b class="n">1</b> ブラウザの<b>ブックマークバー</b>を表示（<code>Ctrl+Shift+B</code>）</div>
+    <h2>パソコンのChrome：ドラッグで入れる</h2>
+    <div class="step"><b class="n">1</b> <b>ブックマークバー</b>を表示（<code>Ctrl+Shift+B</code> ／ Macは <code>⌘+Shift+B</code>）</div>
     <div class="step"><b class="n">2</b> 下のボタンをブックマークバーに<b>ドラッグ＆ドロップ</b></div>
     <a class="bm" id="bm-link" href="#">🧊 冷凍在庫へ取り込む</a>
     <div class="step"><b class="n">3</b> POSで「商品別商品集計」を抽出したら、入れた<b>ブックマークをクリック</b></div>
-    <div class="note">ドラッグできないときは「スマホ」タブの手順（コードをコピーしてブックマークのURLに貼る）でも入れられます。</div>
+  </div>
+
+  <div class="card">
+    <h2>ドラッグできないとき：ファイルから読み込む</h2>
+    <div class="sub" style="margin-bottom:12px">ブックマークのファイルを用意してあります。Chromeに読み込むだけで入ります。</div>
+    <div class="step"><b class="n">1</b> 下のボタンで<b>ファイルを保存</b></div>
+    <a class="bm" href="reitou-bookmark.html" download="reitou-bookmark.html" style="background:#222">⬇️ ブックマークファイルを保存</a>
+    <div class="step"><b class="n">2</b> Chromeの右上「︙」→ <b>ブックマークとリスト</b> → <b>ブックマークをインポート</b></div>
+    <div class="step"><b class="n">3</b> 読み込み元で「<b>HTMLファイルをブックマークに登録</b>」を選び、保存したファイルを指定</div>
+    <div class="step"><b class="n">4</b> 「串焼KEMURI屋」フォルダに<b>🧊 冷凍在庫へ取り込む</b>が入ります</div>
+    <div class="note">Edge・Firefoxでも同じファイルを読み込めます。<br>
+      インポート直後は「インポート済みブックマーク」フォルダに入ることがあります。使いやすい場所にドラッグしてください。</div>
   </div>
 </div>
 
@@ -94,6 +106,13 @@
   <div class="step"><b class="n">2</b> <b>取り込みボタン</b>を押す → 冷凍在庫アプリが開いて反映画面になります</div>
   <div class="step"><b class="n">3</b> 内容を確認して<b>「在庫に反映する」</b>を押す（POSに戻るときはブラウザの「戻る」）</div>
   <a class="back" href="reitou.html">→ 冷凍在庫アプリを開く</a>
+</div>
+
+<div class="card">
+  <h2>⚠️ ブラウザは1つに決めてください</h2>
+  在庫データは<b>ブラウザごとに別々に保存</b>されます。Safariで入れた在庫は、Chromeで開いても見えません。<br>
+  取り込みをChromeでやるなら、ふだん見るのもChromeにしてください。<br>
+  <div class="info">すでにSafariで在庫を入れている場合：アプリの<b>設定タブ →「今のデータを書き出す」</b>でコピーして、Chromeでアプリを開き<b>「貼り付けを読み込む」</b>で移せます。</div>
 </div>
 
 <div class="card">
