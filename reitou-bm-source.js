@@ -4,8 +4,9 @@
    エクストリンクPOSの「商品別商品集計」を抽出したページで実行すると、
    　・抽出期間（画面の日付欄）
    　・商品名 ＋ 出数
-   を読み取って、クリップボードにコピーする。
-   → 冷凍在庫アプリ（reitou.html）のPOSタブに貼り付けるだけで反映できる。
+   を読み取って、冷凍在庫アプリ（reitou.html）をその内容つきで開く。
+   → 開いた時点でプレビューが出るので「在庫に反映する」を押すだけ。
+   （念のためクリップボードにも同じ内容をコピーする）
 
    コピーされる中身の例：
      串焼KEMURI屋 冷凍在庫
@@ -104,23 +105,27 @@
     head.push('商品名\t出数');
     var text = head.concat(out).join('\n');
 
-    var done = function () {
-      alert(out.length + '品コピーしました！'
-        + (dates.length >= 2 ? '\n期間：' + dates[0] + ' 〜 ' + dates[1] : '\n※期間は読み取れませんでした。アプリで入れてください')
-        + '\n\n冷凍在庫アプリの「POS」タブを開いて貼り付けてください。');
+    /* 冷凍在庫アプリを、読み取った売上を持たせて開く。
+       貼り付けの操作が要らず、開いた時点でプレビューが出る。
+       （うまく開けなかったときのために、クリップボードにもコピーしておく） */
+    var APP = 'https://ta55681518-max.github.io/shift/reitou.html';
+    var openApp = function () {
+      try { location.href = APP + '#pos=' + encodeURIComponent(text); }
+      catch (e) {
+        window.prompt('下の内容をコピーして冷凍在庫アプリに貼ってください', text);
+      }
     };
-    function legacy() {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(openApp, openApp);
+    } else {
       var ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed'; ta.style.left = '-9999px';
       document.body.appendChild(ta); ta.focus(); ta.select();
-      try { document.execCommand('copy'); done(); }
-      catch (e) { window.prompt('下の内容をコピーして冷凍在庫アプリに貼ってください', text); }
+      try { document.execCommand('copy'); } catch (e) {}
       ta.remove();
+      openApp();
     }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done, legacy);
-    } else { legacy(); }
   } catch (e) {
     alert('エラーが出ました: ' + (e && e.message ? e.message : e));
   }

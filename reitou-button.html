@@ -41,18 +41,18 @@
 <div class="wrap">
 
 <h1>📋 冷凍在庫 取り込みボタン</h1>
-<div class="sub">串焼KEMURI屋 ／ POSの出数をワンタップで冷凍在庫アプリへ</div>
+<div class="sub">串焼KEMURI屋 ／ POSの集計をワンタップで冷凍在庫アプリへ</div>
 
 <div class="card">
   <h2>これは何？</h2>
   <div class="flow">
     エクストリンクPOSの<b>「商品別商品集計」</b>を抽出してこのボタンを押す<br>
     　↓<br>
-    <b>抽出期間・商品名・出数</b>を自動で読み取ってコピー<br>
+    <b>冷凍在庫アプリが開いて、もう反映画面が出ている</b><br>
     　↓<br>
-    冷凍在庫アプリの<b>POSタブに貼り付けるだけ</b>
+    <b>「在庫に反映する」を押すだけ</b>
   </div>
-  <div class="info">期間も一緒にコピーするので、アプリ側で期間を入れる必要がありません。表を選んでコピーする手間もなくなります。</div>
+  <div class="info">抽出期間・商品名・出数をまとめて持っていくので、貼り付けも期間の入力も要りません。念のため同じ内容をコピーもしておくので、うまく開かなかったときはアプリのPOSタブに貼り付けられます。</div>
 </div>
 
 <div class="tabs">
@@ -72,7 +72,7 @@
     <div class="step"><b class="n">4</b> POSで集計表を出したら、アドレスバーに「<b>冷凍在庫</b>」と打つ → 出てきたブックマークを選ぶと実行されます</div>
     <div class="note">
       <b>iPhone（Safari）のコツ：</b> ブックマーク編集画面でURL欄を長押し → ペースト。<br>
-      うまくいかないときは、集計表を長押しコピーして、アプリのPOSタブに貼り付けてもOKです。
+      アプリが開かないときは、アプリのPOSタブで「📋 コピーした売上を取り込む」を押すか、枠に貼り付けてください。
     </div>
   </div>
 </div>
@@ -91,8 +91,8 @@
 <div class="card">
   <h2>使うとき</h2>
   <div class="step"><b class="n">1</b> POSで「集計・分析」→「商品別商品集計」→ 期間を選んで<b>抽出</b></div>
-  <div class="step"><b class="n">2</b> <b>取り込みボタン</b>を押す（「◯品コピーしました！」と出たら成功）</div>
-  <div class="step"><b class="n">3</b> 冷凍在庫アプリの<b>POSタブ</b>を開いて貼り付け → 内容を確認して「在庫に反映する」</div>
+  <div class="step"><b class="n">2</b> <b>取り込みボタン</b>を押す → 冷凍在庫アプリが開いて反映画面になります</div>
+  <div class="step"><b class="n">3</b> 内容を確認して<b>「在庫に反映する」</b>を押す（POSに戻るときはブラウザの「戻る」）</div>
   <a class="back" href="reitou.html">→ 冷凍在庫アプリを開く</a>
 </div>
 
@@ -105,7 +105,7 @@
 </div>
 <script>
 /* 下の1行が取り込みボタンの中身（reitou-bm-source.js と同じもの） */
-var BM = "javascript:(function () { try { var norm = function (s) { return (s || '').replace(/\\s+/g, ' ').trim(); }; var toNum = function (s) { return (s || '').replace(/[,\\s]/g, ''); }; var isBareInt = function (s) { var t = norm(s); return !/[円%¥￥.]/.test(t) && /^\\d{1,6}$/.test(toNum(t)); }; var isName = function (s) { var t = norm(s); if (!t) return false; if (/^[A-EＡ-Ｅ]$/.test(t)) return false; if (/合計|総計|小計|商品名|メニュー|品名|出数|数量|平均|単価|金額|粗利|構成|比率|カテゴリ|部門|順位/.test(t)) return false; return /[^\\d,.\\s円%¥￥\\-]/.test(t); }; var docs = [document]; [].slice.call(document.querySelectorAll('iframe,frame')).forEach(function (f) { try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {} }); var pad = function (s) { var m = String(s).match(/(\\d{4})\\D(\\d{1,2})\\D(\\d{1,2})/); return m ? m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2) : ''; }; var dates = []; docs.forEach(function (d) { [].slice.call(d.querySelectorAll('input')).forEach(function (i) { var v = norm(i.value); if (/^\\d{4}\\D\\d{1,2}\\D\\d{1,2}$/.test(v)) { var p = pad(v); if (p) dates.push(p); } }); }); if (dates.length < 2) { var txt = ''; docs.forEach(function (d) { try { txt += ' ' + (d.body ? d.body.innerText : ''); } catch (e) {} }); var m2 = txt.match(/(\\d{4}\\D\\d{1,2}\\D\\d{1,2})\\s*[～~〜]\\s*(\\d{4}\\D\\d{1,2}\\D\\d{1,2})/); if (m2) dates = [pad(m2[1]), pad(m2[2])]; } var tables = []; docs.forEach(function (d) { tables = tables.concat([].slice.call(d.querySelectorAll('table'))); }); function cellsOf(r) { return [].slice.call(r.querySelectorAll('td,th')).map(function (c) { return norm(c.textContent); }); } var nameCols = [], qtyCols = []; tables.forEach(function (t) { var rows = [].slice.call(t.querySelectorAll('tr')), names = [], qtys = []; rows.forEach(function (r) { var c = cellsOf(r), nm = '', q = ''; for (var i = 0; i < c.length; i++) { if (isName(c[i])) { nm = c[i]; break; } } for (var j = 0; j < c.length; j++) { if (isBareInt(c[j])) { q = toNum(c[j]); break; } } names.push(nm); qtys.push(q); }); nameCols.push(names); qtyCols.push(qtys); }); function cnt(a) { var n = 0; a.forEach(function (x) { if (x) n++; }); return n; } var nameT = -1, nb = 0; nameCols.forEach(function (a, i) { var c = cnt(a); if (c > nb) { nb = c; nameT = i; } }); var qtyT = -1, qb = 0; qtyCols.forEach(function (a, i) { var c = cnt(a); if (c > qb) { qb = c; qtyT = i; } }); var out = []; if (nameT >= 0 && qtyT >= 0) { var N = nameCols[nameT], Q = qtyCols[qtyT], L = Math.max(N.length, Q.length); for (var k = 0; k < L; k++) { if (N[k] && Q[k]) out.push(N[k] + '\\t' + Q[k]); } } if (!out.length) { alert('データが読み取れませんでした。\\n「商品別商品集計」を抽出した表のページで押してください。'); return; } var head = ['串焼KEMURI屋 冷凍在庫']; if (dates.length >= 2) head.push('抽出期間\\t' + dates[0] + '～' + dates[1]); head.push('商品名\\t出数'); var text = head.concat(out).join('\\n'); var done = function () { alert(out.length + '品コピーしました！' + (dates.length >= 2 ? '\\n期間：' + dates[0] + ' 〜 ' + dates[1] : '\\n※期間は読み取れませんでした。アプリで入れてください') + '\\n\\n冷凍在庫アプリの「POS」タブを開いて貼り付けてください。'); }; function legacy() { var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px'; document.body.appendChild(ta); ta.focus(); ta.select(); try { document.execCommand('copy'); done(); } catch (e) { window.prompt('下の内容をコピーして冷凍在庫アプリに貼ってください', text); } ta.remove(); } if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, legacy); } else { legacy(); } } catch (e) { alert('エラーが出ました: ' + (e && e.message ? e.message : e)); } })();";
+var BM = "javascript:(function () { try { var norm = function (s) { return (s || '').replace(/\\s+/g, ' ').trim(); }; var toNum = function (s) { return (s || '').replace(/[,\\s]/g, ''); }; var isBareInt = function (s) { var t = norm(s); return !/[円%¥￥.]/.test(t) && /^\\d{1,6}$/.test(toNum(t)); }; var isName = function (s) { var t = norm(s); if (!t) return false; if (/^[A-EＡ-Ｅ]$/.test(t)) return false; if (/合計|総計|小計|商品名|メニュー|品名|出数|数量|平均|単価|金額|粗利|構成|比率|カテゴリ|部門|順位/.test(t)) return false; return /[^\\d,.\\s円%¥￥\\-]/.test(t); }; var docs = [document]; [].slice.call(document.querySelectorAll('iframe,frame')).forEach(function (f) { try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) {} }); var pad = function (s) { var m = String(s).match(/(\\d{4})\\D(\\d{1,2})\\D(\\d{1,2})/); return m ? m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2) : ''; }; var dates = []; docs.forEach(function (d) { [].slice.call(d.querySelectorAll('input')).forEach(function (i) { var v = norm(i.value); if (/^\\d{4}\\D\\d{1,2}\\D\\d{1,2}$/.test(v)) { var p = pad(v); if (p) dates.push(p); } }); }); if (dates.length < 2) { var txt = ''; docs.forEach(function (d) { try { txt += ' ' + (d.body ? d.body.innerText : ''); } catch (e) {} }); var m2 = txt.match(/(\\d{4}\\D\\d{1,2}\\D\\d{1,2})\\s*[～~〜]\\s*(\\d{4}\\D\\d{1,2}\\D\\d{1,2})/); if (m2) dates = [pad(m2[1]), pad(m2[2])]; } var tables = []; docs.forEach(function (d) { tables = tables.concat([].slice.call(d.querySelectorAll('table'))); }); function cellsOf(r) { return [].slice.call(r.querySelectorAll('td,th')).map(function (c) { return norm(c.textContent); }); } var nameCols = [], qtyCols = []; tables.forEach(function (t) { var rows = [].slice.call(t.querySelectorAll('tr')), names = [], qtys = []; rows.forEach(function (r) { var c = cellsOf(r), nm = '', q = ''; for (var i = 0; i < c.length; i++) { if (isName(c[i])) { nm = c[i]; break; } } for (var j = 0; j < c.length; j++) { if (isBareInt(c[j])) { q = toNum(c[j]); break; } } names.push(nm); qtys.push(q); }); nameCols.push(names); qtyCols.push(qtys); }); function cnt(a) { var n = 0; a.forEach(function (x) { if (x) n++; }); return n; } var nameT = -1, nb = 0; nameCols.forEach(function (a, i) { var c = cnt(a); if (c > nb) { nb = c; nameT = i; } }); var qtyT = -1, qb = 0; qtyCols.forEach(function (a, i) { var c = cnt(a); if (c > qb) { qb = c; qtyT = i; } }); var out = []; if (nameT >= 0 && qtyT >= 0) { var N = nameCols[nameT], Q = qtyCols[qtyT], L = Math.max(N.length, Q.length); for (var k = 0; k < L; k++) { if (N[k] && Q[k]) out.push(N[k] + '\\t' + Q[k]); } } if (!out.length) { alert('データが読み取れませんでした。\\n「商品別商品集計」を抽出した表のページで押してください。'); return; } var head = ['串焼KEMURI屋 冷凍在庫']; if (dates.length >= 2) head.push('抽出期間\\t' + dates[0] + '～' + dates[1]); head.push('商品名\\t出数'); var text = head.concat(out).join('\\n'); var APP = 'https://ta55681518-max.github.io/shift/reitou.html'; var openApp = function () { try { location.href = APP + '#pos=' + encodeURIComponent(text); } catch (e) { window.prompt('下の内容をコピーして冷凍在庫アプリに貼ってください', text); } }; if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(openApp, openApp); } else { var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px'; document.body.appendChild(ta); ta.focus(); ta.select(); try { document.execCommand('copy'); } catch (e) {} ta.remove(); openApp(); } } catch (e) { alert('エラーが出ました: ' + (e && e.message ? e.message : e)); } })();";
 document.getElementById('bm-link').setAttribute('href', BM);
 document.getElementById('code').value = BM;
 document.querySelectorAll('.tb').forEach(function (b) {
