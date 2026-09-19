@@ -1,0 +1,29 @@
+# ============================================================
+# 串焼KEMURI屋 管理アプリ — Netlify 設定
+# ・ビルドは無し。HTMLをそのまま配信する。
+# ・GitHub の main に push すると自動で反映される。
+# ============================================================
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# ブラウザからは /api/… を呼び、中身はサーバー側（Netlify Functions）で動かす。
+# OpenAI のキーは Netlify の環境変数に置き、関数の中だけで使う。
+# → キーはブラウザにもリポジトリにも一切出ない。
+# ※ 関数の中身（/api/ai）は Phase 1 で追加する。
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# アプリはこの端末のデータを見るので、古いHTMLが残らないようにしておく
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
