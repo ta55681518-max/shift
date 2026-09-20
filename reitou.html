@@ -1080,7 +1080,8 @@ function impData(){
     const d = JSON.parse(document.getElementById('io').value);
     if(!d || !Array.isArray(d.items)) throw 0;
     if(!confirm('いまのデータを、貼り付けた内容で置きかえますか？')) return;
-    DB = Object.assign(blank(), d); save(); render(); toast('読み込みました');
+    /* 古い端末から書き出したデータにも、後から足した項目を埋めてから使う */
+    DB = migrate(Object.assign(blank(), d)); save(); render(); toast('読み込みました');
   }catch(e){ toast('読み込めませんでした'); }
 }
 function resetAll(){
