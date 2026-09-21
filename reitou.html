@@ -956,6 +956,10 @@ function undoImport(id){
 function viewSet(){
   let h = '<div class="pad">';
 
+  h += '<div class="card"><h2>売上・原価をみる</h2>'
+     + '<div class="muted">取り込んだ売上から、売れ筋・原価率・在庫の残り日数を出します。</div>'
+     + '<a class="btn btn-dark gap" style="text-decoration:none;display:block" href="dashboard.html">📊 売上・原価をひらく</a></div>';
+
   h += '<div class="card"><h2>商品マスタ（'+DB.items.length+'）</h2>'
      + '<div class="muted">タップして 発注ライン・POSの商品名・1販売あたりの消費数を設定できます。</div><div class="gap">';
   DB.items.forEach(it=>{

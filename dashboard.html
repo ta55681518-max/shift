@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="KEMURI分析">
+<title>KEMURI屋 売上・原価</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    background:#f2f2f4;color:#1a1a1a;font-size:16px;
+    -webkit-user-select:none;user-select:none;overscroll-behavior:none;
+  }
+  #app{max-width:560px;margin:0 auto;background:#fff;min-height:100%;
+       padding-bottom:calc(92px + env(safe-area-inset-bottom));}
+  button{font-family:inherit;cursor:pointer;color:inherit;touch-action:manipulation;}
+  input,select,textarea{font-family:inherit;touch-action:manipulation;-webkit-user-select:text;user-select:text;}
+
+  .header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid #ececec;
+          padding:calc(12px + env(safe-area-inset-top)) 16px 10px;}
+  .header h1{font-size:19px;font-weight:700;}
+  .header .sub{font-size:12px;color:#999;font-weight:400;display:block;margin-top:2px;}
+  .pad{padding:14px 16px 20px;}
+
+  .btn{display:block;width:100%;border:none;border-radius:14px;padding:16px;font-size:17px;font-weight:700;text-align:center;}
+  .btn-primary{background:#e8531f;color:#fff;}
+  .btn-dark{background:#222;color:#fff;}
+  .btn-gray{background:#f1f1f3;color:#333;}
+  .btn-out{background:#fff;border:1.5px solid #ddd;color:#333;}
+  .btn-danger{background:#fff0ee;color:#d33;}
+  .btn:disabled{background:#ededed;color:#aaa;}
+  .btn-sm{width:auto;padding:11px 15px;font-size:15px;border-radius:12px;}
+  .card{border:1.5px solid #ededed;border-radius:16px;padding:14px;margin-bottom:12px;}
+  .card h2{font-size:15px;font-weight:700;margin-bottom:10px;}
+  .muted{font-size:13px;color:#8a8a8a;line-height:1.6;}
+  .gap{margin-top:10px;}
+  .warn{background:#fff8e6;border:1.5px solid #ffe0a3;border-radius:14px;padding:12px 14px;font-size:14px;color:#8a6100;line-height:1.6;margin-bottom:10px;}
+  .info{background:#f4f7ff;border:1.5px solid #d8e3ff;border-radius:14px;padding:12px 14px;font-size:14px;color:#3a4d8f;line-height:1.6;margin-bottom:10px;}
+  .ok-box{background:#eafaf1;border:1.5px solid #b9ebd0;border-radius:14px;padding:12px 14px;font-size:14px;color:#0a7a44;line-height:1.6;margin-bottom:10px;}
+
+  /* 数字カード */
+  .kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
+  .kpi{border:1.5px solid #ededed;border-radius:16px;padding:13px 14px;}
+  .kpi .lab{font-size:12px;color:#999;font-weight:700;}
+  .kpi .v{font-size:26px;font-weight:800;margin-top:3px;font-variant-numeric:tabular-nums;line-height:1.15;}
+  .kpi .v small{font-size:14px;font-weight:700;color:#888;}
+  .kpi .sub{font-size:11px;color:#aaa;margin-top:2px;}
+  .kpi.hi{border-color:#ffc9bf;background:#fffaf9;}
+  .kpi.hi .v{color:#d92d20;}
+
+  /* 商品の行 */
+  .prow{display:flex;align-items:center;gap:10px;padding:12px 4px;border-bottom:1px solid #f2f2f2;}
+  .prow:last-child{border-bottom:none;}
+  .prow .rk{font-size:12px;color:#bbb;font-weight:800;min-width:20px;}
+  .prow .nm{flex:1;font-size:16px;font-weight:700;line-height:1.3;word-break:break-word;}
+  .prow .nm small{display:block;font-size:11px;color:#aaa;font-weight:600;margin-top:2px;}
+  .prow .q{font-size:19px;font-weight:800;min-width:46px;text-align:right;font-variant-numeric:tabular-nums;}
+  .prow .m{font-size:12px;color:#999;min-width:66px;text-align:right;font-variant-numeric:tabular-nums;}
+  .rate{border-radius:999px;font-size:12px;font-weight:800;padding:4px 9px;min-width:52px;text-align:center;}
+  .rate.lo{background:#eafaf1;color:#0a9d55;}
+  .rate.mid{background:#fff6e0;color:#c07d00;}
+  .rate.hi{background:#ffefec;color:#d92d20;}
+  .rate.non{background:#f4f4f6;color:#bbb;}
+
+  .sec{font-size:13px;color:#999;font-weight:700;margin:16px 4px 6px;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+  .chips button{border:1.5px solid #e2e2e2;background:#fff;border-radius:999px;padding:10px 14px;font-size:14px;font-weight:700;color:#666;}
+  .chips button.on{border-color:#e8531f;background:#fff4ef;color:#e8531f;}
+
+  label.lab{display:block;font-size:13px;color:#888;font-weight:700;margin:12px 0 6px;}
+  input.txt{width:100%;padding:13px;font-size:17px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
+  select.sel{width:100%;padding:13px;font-size:16px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
+  textarea{width:100%;min-height:130px;padding:12px;font-size:14px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
+  .two{display:flex;gap:10px;margin-top:10px;}
+  .two .btn{flex:1;}
+
+  /* 原価の行 */
+  .crow{display:flex;align-items:center;gap:8px;padding:10px 2px;border-bottom:1px solid #f2f2f2;}
+  .crow .nm{flex:1;font-size:16px;font-weight:700;word-break:break-word;}
+  .crow .nm small{display:block;font-size:11px;color:#aaa;font-weight:600;}
+  .crow .p{font-size:17px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .crow .p.zero{color:#ccc;}
+  .crow input{width:88px;padding:9px;font-size:16px;border:1.5px solid #e2e2e2;border-radius:10px;text-align:right;}
+  .crow .u{width:58px;padding:9px;font-size:14px;border:1.5px solid #e2e2e2;border-radius:10px;}
+
+  /* AIの結果 */
+  .ai h3{font-size:14px;font-weight:800;color:#555;margin:14px 0 6px;}
+  .ai ul{list-style:none;}
+  .ai li{font-size:14px;line-height:1.7;padding:7px 0;border-bottom:1px solid #f4f4f6;}
+  .ai li b{color:#e8531f;}
+  .ai .lead{font-size:15px;line-height:1.8;background:#fafafb;border-radius:14px;padding:13px;}
+
+  .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(255,255,255,.97);
+          border-top:1px solid #ececec;display:flex;max-width:560px;margin:0 auto;
+          padding-bottom:env(safe-area-inset-bottom);backdrop-filter:blur(8px);}
+  .tabbar button{flex:1;border:none;background:none;padding:9px 0 8px;font-size:11px;font-weight:700;color:#aaa;}
+  .tabbar button .ic{display:block;font-size:21px;line-height:1.25;}
+  .tabbar button.on{color:#e8531f;}
+
+  .toast{position:fixed;left:50%;bottom:calc(100px + env(safe-area-inset-bottom));transform:translateX(-50%);
+         background:#222;color:#fff;padding:13px 20px;border-radius:24px;font-size:15px;font-weight:700;
+         opacity:0;transition:opacity .25s;pointer-events:none;z-index:90;max-width:90%;text-align:center;}
+  .toast.show{opacity:.96;}
+  .spin{display:inline-block;width:15px;height:15px;border:2.5px solid rgba(255,255,255,.35);
+        border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:7px;}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header">
+    <h1 id="h-title">売上・原価</h1>
+    <span class="sub" id="h-sub">串焼KEMURI屋</span>
+  </div>
+  <div id="view"></div>
+</div>
+<div class="tabbar" id="tabbar"></div>
+<div class="toast" id="toast"></div>
+
+<script src="kemuri-core.js"></script>
+<script src="kemuri-data.js"></script>
+
+<script>
+"use strict";
+/* ============================================================
+   串焼KEMURI屋 売上・原価ダッシュボード
+   ・数字は kemuri-data.js（ふつうのJS）が計算する
+   ・AIは「計算済みの数字を見て日本語で書く」だけ
+     → APIが落ちていても数字は出る
+   ・OpenAIのキーはサーバー側（/api/ai）にしか無い
+   ============================================================ */
+const PASS_KEY  = 'kemuri_ai_pass';      // 合言葉（この端末だけ）
+const CACHE_KEY = 'kemuri_ai_cache_v1';  // AIの返事の控え（同じ内容で二度呼ばない）
+
+const num = KemuriCore.num;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
+
+let TAB = 'sum';
+let RANGE = 'all';                      // all | 7 | 30 | month
+let A = null;                           // 直近の分析結果
+let AI = { loading:false, error:'', result:null, at:'' };
+let IMP = { loading:false, rows:null, error:'' };   // 単価取込の途中経過
+
+/* ---------- 小道具 ---------- */
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.remove('show'), 2600);
+}
+function todayStr(){ return KemuriCore.todayStr(); }
+function rangeDates(){
+  const t = todayStr();
+  if(RANGE === '7')     return { from: KemuriCore.addDays(t, -6), to: t };
+  if(RANGE === '30')    return { from: KemuriCore.addDays(t, -29), to: t };
+  if(RANGE === 'month') return { from: t.slice(0,7) + '-01', to: t };
+  return { from:'', to:'' };
+}
+function rangeLabel(){
+  return RANGE === '7' ? '直近7日' : RANGE === '30' ? '直近30日' : RANGE === 'month' ? '今月' : 'ぜんぶ';
+}
+function refresh(){ const r = rangeDates(); A = KemuriData.analyze(r); }
+
+/* ---------- AIの窓口 ---------- */
+function aiPass(){ try{ return localStorage.getItem(PASS_KEY) || ''; }catch(e){ return ''; } }
+function userErr(msg){ const e = new Error(msg); e.userMsg = msg; return e; }
+
+async function callAI(task, payload){
+  const pass = aiPass();
+  if(!pass) throw userErr('先に「設定」タブで合言葉を入れてください');
+  let res;
+  try{
+    res = await fetch('/api/ai', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'X-Kemuri-Pass': pass },
+      body: JSON.stringify({ task, payload }),
+    });
+  }catch(e){ throw userErr('サーバーに繋がりませんでした。通信を確認してください'); }
+
+  let j = null;
+  try{ j = await res.json(); }catch(e){}
+  if(!res.ok || !j || j.error){
+    const m = (j && j.error) || ('エラー（' + res.status + '）');
+    if(res.status === 404) throw userErr('AIの窓口が見つかりません。Netlifyにデプロイされているか確認してください');
+    throw userErr(m);
+  }
+  return j;
+}
+
+/* AIの返事の控え。同じ期間・同じ数字なら呼び直さない */
+function cacheKey(){
+  if(!A) return '';
+  return [RANGE, A.period.from, A.period.to, A.totals.qty, A.totals.amount, A.products.length].join('|');
+}
+function readCache(){
+  try{
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+    return c[cacheKey()] || null;
+  }catch(e){ return null; }
+}
+function writeCache(obj){
+  try{
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
+    c[cacheKey()] = obj;
+    const keys = Object.keys(c);
+    if(keys.length > 12) keys.slice(0, keys.length - 12).forEach(k => delete c[k]);
+    localStorage.setItem(CACHE_KEY, JSON.stringify(c));
+  }catch(e){}
+}
+
+async function runAnalyze(force){
+  if(AI.loading) return;
+  if(!A || !A.products.length){ toast('まだ売上データがありません'); return; }
+  if(!force){
+    const c = readCache();
+    if(c){ AI = { loading:false, error:'', result:c.result, at:c.at }; render(); return; }
+  }
+  AI = { loading:true, error:'', result:null, at:'' };
+  render();
+  try{
+    const r = await callAI('analyze', { data: KemuriData.forAI(A) });
+    AI = { loading:false, error:'', result:r.result, at:new Date().toISOString() };
+    writeCache({ result:r.result, at:AI.at });
+  }catch(e){
+    AI = { loading:false, error:(e && e.userMsg) || 'うまくいきませんでした', result:null, at:'' };
+  }
+  render();
+}
+
+/* ============================================================
+   ① サマリ
+   ============================================================ */
+function viewSum(){
+  const t = A.totals, p = A.period;
+  let h = '<div class="pad">';
+
+  h += '<div class="chips">'
+     + ['all','month','30','7'].map(r =>
+         '<button class="' + (RANGE===r?'on':'') + '" onclick="setRange(\'' + r + '\')">'
+         + (r==='all'?'ぜんぶ':r==='month'?'今月':'直近'+r+'日') + '</button>').join('')
+     + '</div>';
+
+  if(!A.products.length){
+    h += '<div class="info">この期間の売上データがありません。<br>'
+       + '冷凍在庫アプリでPOSの売上を取り込むと、ここに出てきます。</div>'
+       + '<a class="btn btn-out gap" style="text-decoration:none;display:block" href="reitou.html">冷凍在庫アプリをひらく →</a>'
+       + '</div>';
+    return h;
+  }
+
+  h += '<div class="kpis">'
+     + kpi('売上', yen(t.amount), p.days + '日ぶん')
+     + kpi('1日あたり', yen(t.perDay), rangeLabel())
+     + kpi('出数', num(t.qty).toLocaleString('ja-JP') + '<small> 点</small>', A.products.length + '商品')
+     + (t.costRate != null
+        ? kpi('原価率', t.costRate + '<small>%</small>', '売上の' + t.costCoverage + '%ぶんで計算', t.costRate >= 35)
+        : kpi('原価率', '<small>未算出</small>', '仕入単価が未入力'))
+     + '</div>';
+
+  A.caution.forEach(c => { h += '<div class="warn">' + esc(c) + '</div>'; });
+
+  /* 在庫が少ない */
+  if(A.lowStock.length){
+    h += '<div class="sec">⚠️ 在庫が少ない（' + A.lowStock.length + '）</div><div class="card">';
+    A.lowStock.slice(0,8).forEach(s => {
+      h += '<div class="prow"><span class="nm">' + esc(s.name)
+         + '<small>残り ' + s.stock + ' ／ 発注ライン ' + s.min + '</small></span>'
+         + '<span class="m">' + (s.perDay > 0 ? '1日 ' + s.perDay : '—') + '</span>'
+         + '<span class="rate ' + (s.daysLeft == null ? 'non' : s.daysLeft <= 1 ? 'hi' : s.daysLeft <= 3 ? 'mid' : 'lo') + '">'
+         + (s.daysLeft == null ? '—' : 'あと' + s.daysLeft + '日') + '</span></div>';
+    });
+    h += '</div>';
+  }
+
+  /* 売れ筋 */
+  h += '<div class="sec">よく出ている商品</div><div class="card">';
+  A.products.slice(0,10).forEach((p2,i) => { h += prow(p2, i+1); });
+  h += '</div>';
+
+  /* 出ていない */
+  const slow = A.products.filter(x => x.qty > 0).slice(-5).reverse();
+  if(A.products.length > 12 && slow.length){
+    h += '<div class="sec">あまり出ていない商品</div><div class="card">';
+    slow.forEach(p2 => { h += prow(p2, ''); });
+    h += '</div>';
+  }
+
+  /* AIの見立て */
+  h += '<div class="sec">AIの見立て</div>';
+  h += viewAI();
+
+  h += '</div>';
+  return h;
+}
+function kpi(lab, v, sub, hi){
+  return '<div class="kpi' + (hi?' hi':'') + '"><div class="lab">' + esc(lab) + '</div>'
+       + '<div class="v">' + v + '</div><div class="sub">' + esc(sub||'') + '</div></div>';
+}
+function prow(p, rank){
+  const r = p.costRate;
+  const cls = r == null ? 'non' : r >= 40 ? 'hi' : r >= 30 ? 'mid' : 'lo';
+  return '<div class="prow">'
+    + (rank ? '<span class="rk">' + rank + '</span>' : '')
+    + '<span class="nm">' + esc(p.name)
+    + '<small>' + yen(p.unitPrice) + ' ／ 1日 ' + p.perDay + '</small></span>'
+    + '<span class="q">' + p.qty + '</span>'
+    + '<span class="m">' + yen(p.amount) + '</span>'
+    + '<span class="rate ' + cls + '">' + (r == null ? '—' : r + '%') + '</span>'
+    + '</div>';
+}
+function viewAI(){
+  if(AI.loading) return '<button class="btn btn-dark" disabled><span class="spin"></span>AIが考えています…</button>';
+  if(AI.error) return '<div class="warn">' + esc(AI.error) + '</div>'
+      + '<button class="btn btn-out" onclick="runAnalyze(true)">もう一度ためす</button>';
+  if(!AI.result) return '<div class="muted" style="margin-bottom:10px">'
+      + '計算した数字をAIに見てもらい、気づいた点を日本語で出します。'
+      + '1回あたり1〜3円ほどです（同じ内容なら呼び直しません）。</div>'
+      + '<button class="btn btn-dark" onclick="runAnalyze()">AIに見てもらう</button>';
+
+  const r = AI.result;
+  let h = '<div class="card ai">';
+  if(r.summary) h += '<div class="lead">' + esc(r.summary) + '</div>';
+  h += list('伸びている・よく出ている', r.good);
+  h += list('落ちている・出ていない', r.bad);
+  h += list('原価で気になるところ', r.cost);
+  h += list('欠品しそう', r.risk);
+  if(Array.isArray(r.todo) && r.todo.length){
+    h += '<h3>明日やるとよいこと</h3><ul>'
+       + r.todo.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+  }
+  if(Array.isArray(r.caution) && r.caution.length){
+    h += '<h3>データ上の注意</h3><ul>'
+       + r.caution.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+  }
+  h += '</div>';
+  h += '<div class="muted" style="text-align:center;margin-bottom:8px">' + fmtAt(AI.at) + ' 時点</div>';
+  h += '<button class="btn btn-out" onclick="runAnalyze(true)">もう一度AIに聞く</button>';
+  return h;
+}
+function list(title, arr){
+  if(!Array.isArray(arr) || !arr.length) return '';
+  return '<h3>' + esc(title) + '</h3><ul>'
+    + arr.map(x => '<li><b>' + esc(x.name || '') + '</b>　' + esc(x.why || '') + '</li>').join('')
+    + '</ul>';
+}
+function fmtAt(iso){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  const z = n => ('0'+n).slice(-2);
+  return (d.getMonth()+1) + '/' + d.getDate() + ' ' + z(d.getHours()) + ':' + z(d.getMinutes());
+}
+function setRange(r){ RANGE = r; AI = { loading:false, error:'', result:null, at:'' }; refresh();
+  const c = readCache(); if(c) AI = { loading:false, error:'', result:c.result, at:c.at };
+  render(); }
+
+/* ============================================================
+   ② 原価（仕入単価）
+   ============================================================ */
+function viewCost(){
+  const rows = KemuriData.costs.all();
+  const st = KemuriData.costs.stats();
+  let h = '<div class="pad">';
+
+  h += '<div class="card"><h2>ChatGPTの単価を取り込む</h2>'
+     + '<div class="muted">ChatGPTや仕入先のメモから単価をコピーして、そのまま貼り付けてください。'
+     + '形がバラバラでもAIが「商品名・単位・単価」に整えます。</div>'
+     + '<textarea id="cost-in" class="gap" placeholder="例）&#10;鶏もも肉 1kg 980円&#10;豚バラ ￥1,250/kg&#10;冷凍ポテト 2kg入り 1袋 850"></textarea>';
+
+  if(IMP.loading){
+    h += '<button class="btn btn-dark gap" disabled><span class="spin"></span>AIが読み取っています…</button>';
+  }else{
+    h += '<button class="btn btn-dark gap" onclick="importCosts()">AIで読み取る</button>';
+  }
+  if(IMP.error) h += '<div class="warn gap">' + esc(IMP.error) + '</div>';
+  h += '</div>';
+
+  /* 読み取り結果の確認 */
+  if(IMP.rows){
+    h += '<div class="card"><h2>読み取った内容（' + IMP.rows.length + '件）</h2>'
+       + '<div class="muted">確認して、おかしいところは直してから保存してください。'
+       + '「？」が付いているものは、AIが自信を持てなかった行です。</div><div class="gap">';
+    IMP.rows.forEach((r,i) => {
+      h += '<div class="crow">'
+         + '<span class="nm">' + esc(r.name) + (r.sure === false ? ' <b style="color:#c07d00">？</b>' : '')
+         + (r.note ? '<small>' + esc(r.note) + '</small>' : '') + '</span>'
+         + '<input class="u" value="' + esc(r.unit||'') + '" onchange="impSet(' + i + ',\'unit\',this.value)" placeholder="単位">'
+         + '<input type="number" inputmode="decimal" value="' + num(r.price) + '" onchange="impSet(' + i + ',\'price\',this.value)">'
+         + '<button class="btn btn-danger btn-sm" style="padding:8px 10px" onclick="impDel(' + i + ')">除</button>'
+         + '</div>';
+    });
+    h += '</div><div class="two">'
+       + '<button class="btn btn-gray" onclick="IMP.rows=null;render()">やめる</button>'
+       + '<button class="btn btn-primary" onclick="saveCosts()">この内容で保存</button>'
+       + '</div></div>';
+  }
+
+  h += '<div class="sec">仕入単価（' + st.filled + ' / ' + st.total + ' 件に値段が入っています）</div>';
+  if(!rows.length){
+    h += '<div class="info">まだ登録がありません。上の枠に貼り付けて取り込んでください。</div>';
+  }else{
+    h += '<div class="card">';
+    rows.forEach(r => {
+      h += '<div class="crow">'
+         + '<span class="nm">' + esc(r.name) + (r.unit ? '<small>' + esc(r.unit) + 'あたり</small>' : '') + '</span>'
+         + '<input type="number" inputmode="decimal" value="' + num(r.price) + '" onchange="setCost(\'' + esc(r.name).replace(/'/g,"\\'") + '\',this.value)">'
+         + '<button class="btn btn-danger btn-sm" style="padding:8px 10px" onclick="delCost(\'' + esc(r.name).replace(/'/g,"\\'") + '\')">削</button>'
+         + '</div>';
+    });
+    h += '</div>';
+  }
+
+  h += '<div class="card gap"><h2>手で1件だけ足す</h2>'
+     + '<input class="txt" id="c-name" placeholder="商品名">'
+     + '<div class="two"><input class="txt" id="c-unit" placeholder="単位（kg・袋など）">'
+     + '<input class="txt" id="c-price" type="number" inputmode="decimal" placeholder="単価（円）"></div>'
+     + '<button class="btn btn-out gap" onclick="addCost()">追加する</button></div>';
+
+  h += '</div>';
+  return h;
+}
+function impSet(i,k,v){ IMP.rows[i][k] = k === 'price' ? num(v) : v; }
+function impDel(i){ IMP.rows.splice(i,1); render(); }
+async function importCosts(){
+  const el = document.getElementById('cost-in');
+  const text = el ? el.value.trim() : '';
+  if(!text){ toast('先に単価を貼り付けてください'); return; }
+  IMP = { loading:true, rows:null, error:'' }; render();
+  try{
+    const r = await callAI('costs', { text });
+    const rows = (r.result && r.result.rows) || [];
+    if(!rows.length){
+      IMP = { loading:false, rows:null, error:'単価を読み取れませんでした。商品名と値段が並んだ形で貼ってみてください' };
+    }else{
+      IMP = { loading:false, rows: rows, error:'' };
+    }
+  }catch(e){
+    IMP = { loading:false, rows:null, error:(e && e.userMsg) || 'うまくいきませんでした' };
+  }
+  render();
+}
+function saveCosts(){
+  if(!IMP.rows || !IMP.rows.length) return;
+  const r = KemuriData.costs.importRows(IMP.rows);
+  IMP = { loading:false, rows:null, error:'' };
+  refresh(); render();
+  toast('新規 ' + r.added + '件 ／ 更新 ' + r.updated + '件を保存しました');
+}
+function setCost(name, v){ KemuriData.costs.set(name, { price: num(v) }); refresh(); toast('保存しました'); }
+function delCost(name){
+  if(!confirm('「' + name + '」の単価を削除しますか？')) return;
+  KemuriData.costs.remove(name); refresh(); render();
+}
+function addCost(){
+  const n = (document.getElementById('c-name')||{}).value || '';
+  const u = (document.getElementById('c-unit')||{}).value || '';
+  const p = (document.getElementById('c-price')||{}).value || '';
+  if(!n.trim()){ toast('商品名を入れてください'); return; }
+  KemuriData.costs.set(n.trim(), { unit:u.trim(), price:num(p) });
+  refresh(); render(); toast('追加しました');
+}
+
+/* ============================================================
+   ③ レシピ
+   ============================================================ */
+function viewRecipe(){
+  const rows = KemuriData.recipes.all();
+  let h = '<div class="pad">';
+
+  h += '<div class="muted" style="margin-bottom:12px">'
+     + 'メニュー1つを出すのに、どの材料をいくつ使うかの表です。'
+     + 'これがあると、メニューごとの原価と原価率が出せます。</div>';
+
+  if(!rows.length){
+    h += '<div class="info">まだ登録がありません。<br>'
+       + '冷凍在庫アプリの「POS商品名の対応表」から、そのまま作れます。</div>';
+  }
+
+  h += '<button class="btn btn-out" onclick="seedRecipes()">冷凍在庫の対応表からレシピを作る</button>';
+  h += '<div class="muted gap" style="margin-bottom:14px">すでにあるレシピは上書きしません。</div>';
+
+  if(rows.length){
+    h += '<div class="card">';
+    rows.forEach(r => {
+      const c = KemuriData.recipes.costOf(r.name);
+      h += '<div class="prow"><span class="nm">' + esc(r.name)
+         + '<small>' + r.parts.map(p => esc(p.name) + '×' + p.qty).join('、') + '</small></span>'
+         + '<span class="m">' + (c.known ? yen(c.cost) : '単価未入力') + '</span>'
+         + '<button class="btn btn-out btn-sm" style="padding:8px 11px" onclick="editRecipe(\''
+         + esc(r.name).replace(/'/g,"\\'") + '\')">直す</button></div>';
+    });
+    h += '</div>';
+  }
+
+  h += '<div class="card gap"><h2>手で作る・直す</h2>'
+     + '<label class="lab">メニュー名（POSの商品名）</label>'
+     + '<input class="txt" id="r-name" value="' + esc(EDIT_R.name) + '" placeholder="例）シーザーサラダ">'
+     + '<label class="lab">材料（1行に「材料名 数量」）</label>'
+     + '<textarea id="r-parts" placeholder="例）&#10;燻製ベーコン 1&#10;レタス 0.2">' + esc(EDIT_R.parts) + '</textarea>'
+     + '<div class="two"><button class="btn btn-gray" onclick="clearRecipe()">クリア</button>'
+     + '<button class="btn btn-primary" onclick="saveRecipe()">保存</button></div></div>';
+
+  h += '</div>';
+  return h;
+}
+let EDIT_R = { name:'', parts:'' };
+function seedRecipes(){
+  const n = KemuriData.recipes.seedFromStock();
+  refresh(); render();
+  toast(n > 0 ? n + '件のレシピを作りました' : '新しく作れるものはありませんでした');
+}
+function editRecipe(name){
+  const r = KemuriData.recipes.get(name);
+  if(!r) return;
+  EDIT_R = { name: r.name, parts: r.parts.map(p => p.name + ' ' + p.qty).join('\n') };
+  render();
+  const el = document.getElementById('r-name'); if(el) el.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+function clearRecipe(){ EDIT_R = { name:'', parts:'' }; render(); }
+function saveRecipe(){
+  const name = ((document.getElementById('r-name')||{}).value || '').trim();
+  const txt  = (document.getElementById('r-parts')||{}).value || '';
+  if(!name){ toast('メニュー名を入れてください'); return; }
+  const parts = txt.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const m = l.match(/^(.*?)[\s　]+([\d.]+)$/);
+    return m ? { name:m[1].trim(), qty:num(m[2]) } : { name:l, qty:1 };
+  });
+  if(!parts.length){ toast('材料を1つ以上入れてください'); return; }
+  KemuriData.recipes.set(name, parts);
+  EDIT_R = { name:'', parts:'' };
+  refresh(); render(); toast('保存しました');
+}
+
+/* ============================================================
+   ④ 設定
+   ============================================================ */
+let PING = { loading:false, msg:'', ok:false };
+function viewSet(){
+  const st = KemuriCore.sales.stats();
+  const cs = KemuriData.costs.stats();
+  let h = '<div class="pad">';
+
+  h += '<div class="card"><h2>AIの合言葉</h2>'
+     + '<div class="muted">このサイトは誰でも開けるURLなので、AIを呼ぶには合言葉が要ります。'
+     + 'Netlifyの環境変数 <b>KEMURI_PASS</b> と同じものを、ここに1回だけ入れてください。'
+     + 'この端末に保存され、他の人には見えません。</div>'
+     + '<input class="txt gap" id="pass" type="password" value="' + esc(aiPass()) + '" placeholder="合言葉">'
+     + '<div class="two"><button class="btn btn-gray" onclick="savePass()">保存</button>'
+     + '<button class="btn btn-dark" ' + (PING.loading?'disabled':'') + ' onclick="testAI()">'
+     + (PING.loading ? '<span class="spin"></span>確認中…' : 'つながるか試す') + '</button></div>';
+  if(PING.msg) h += (PING.ok ? '<div class="ok-box gap">' : '<div class="warn gap">') + esc(PING.msg) + '</div>';
+  h += '</div>';
+
+  h += '<div class="card"><h2>たまっているデータ</h2>'
+     + row2('売上の履歴', st.days ? st.days + '日ぶん（' + st.items + '商品・' + num(st.qty).toLocaleString('ja-JP') + '点）' : 'まだありません')
+     + (st.days ? row2('期間', st.from + ' 〜 ' + st.to) : '')
+     + (st.lumpedDays ? row2('うち「まとめて入っている」日', st.lumpedDays + '日') : '')
+     + row2('日別で入っている日', st.dailyDays + '日')
+     + row2('仕入単価', cs.filled + ' / ' + cs.total + ' 件')
+     + row2('レシピ', KemuriData.recipes.all().length + ' 件')
+     + '</div>';
+
+  if(st.lumpedDays && !st.dailyDays){
+    h += '<div class="warn">いまの売上データは、期間をまとめて取り込んだものだけです。'
+       + '曜日ごとの傾向や翌日の予測を出すには、POSから<b>日別</b>で書き出して取り込む必要があります。</div>';
+  }
+
+  h += '<div class="card"><h2>ほかのアプリ</h2>'
+     + '<a class="btn btn-out" style="text-decoration:none;display:block;margin-bottom:8px" href="reitou.html">冷凍在庫</a>'
+     + '<a class="btn btn-out" style="text-decoration:none;display:block;margin-bottom:8px" href="kushiyaki.html">串焼き在庫</a>'
+     + '<a class="btn btn-out" style="text-decoration:none;display:block" href="hacchu.html">発注</a>'
+     + '</div>';
+
+  h += '<div class="muted" style="text-align:center;padding:10px 0 4px">串焼KEMURI屋 売上・原価 v1</div>';
+  h += '</div>';
+  return h;
+}
+function row2(k,v){
+  return '<div class="crow"><span class="nm">' + esc(k) + '</span>'
+       + '<span class="muted" style="font-size:14px">' + esc(v) + '</span></div>';
+}
+function savePass(){
+  const v = (document.getElementById('pass')||{}).value || '';
+  try{ localStorage.setItem(PASS_KEY, v.trim()); }catch(e){}
+  PING = { loading:false, msg:'', ok:false };
+  render(); toast('保存しました');
+}
+async function testAI(){
+  const v = (document.getElementById('pass')||{}).value || '';
+  try{ localStorage.setItem(PASS_KEY, v.trim()); }catch(e){}
+  PING = { loading:true, msg:'', ok:false }; render();
+  try{
+    const r = await callAI('ping', {});
+    PING = { loading:false, ok:true, msg:'つながりました（モデル：' + (r.model || '不明') + '）' };
+  }catch(e){
+    PING = { loading:false, ok:false, msg:(e && e.userMsg) || 'うまくいきませんでした' };
+  }
+  render();
+}
+
+/* ============================================================
+   画面の組み立て
+   ============================================================ */
+const TABS = [
+  ['sum','売上','📊'], ['cost','原価','💰'], ['recipe','レシピ','📖'], ['set','設定','⚙️'],
+];
+function go(t){ TAB = t; render(); window.scrollTo(0,0); }
+function render(){
+  const titles = { sum:['売上・原価', rangeLabel()], cost:['仕入原価','単価マスタ'],
+                   recipe:['レシピ','メニュー → 材料'], set:['設定','合言葉・データ'] };
+  const ti = titles[TAB] || ['売上・原価',''];
+  document.getElementById('h-title').textContent = ti[0];
+  document.getElementById('h-sub').textContent = ti[1];
+
+  const v = document.getElementById('view');
+  v.innerHTML = TAB === 'sum' ? viewSum()
+              : TAB === 'cost' ? viewCost()
+              : TAB === 'recipe' ? viewRecipe()
+              : viewSet();
+
+  document.getElementById('tabbar').innerHTML = TABS.map(([k,l,ic]) =>
+    '<button class="' + (TAB===k?'on':'') + '" onclick="go(\'' + k + '\')">'
+    + '<span class="ic">' + ic + '</span>' + l + '</button>').join('');
+}
+
+/* ---- 起動 ---- */
+(function(){
+  refresh();
+  const c = readCache(); if(c) AI = { loading:false, error:'', result:c.result, at:c.at };
+  render();
+})();
+</script>
+</body>
+</html>
