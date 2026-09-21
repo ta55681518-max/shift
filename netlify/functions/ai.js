@@ -124,14 +124,18 @@ exports.handler = async function (event) {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, body: '' };
   if (event.httpMethod !== 'POST') return json(405, { error: 'POSTで呼んでください' });
 
-  const key = process.env.OPENAI_API_KEY;
-  const pass = process.env.KEMURI_PASS;
+  /* 貼り付けたときに前後へ空白や改行が入ることがあるので、両側とも落としてから比べる */
+  const key = String(process.env.OPENAI_API_KEY || '').trim();
+  const pass = String(process.env.KEMURI_PASS || '').trim();
 
-  if (!pass) return json(500, { error: 'サーバーに合言葉（KEMURI_PASS）が設定されていません', setup: true });
-  if (!key)  return json(500, { error: 'サーバーにOpenAIのキー（OPENAI_API_KEY）が設定されていません', setup: true });
+  /* Netlifyの環境変数は、設定しただけでは動いている関数に届かない。
+     いちど再デプロイされて初めて反映されるので、それも書いておく。 */
+  const REDEPLOY = 'Netlifyで設定したあと、いちど再デプロイ（Deploys → 最新のデプロイ → Retry deploy）すると反映されます。';
+  if (!pass) return json(500, { error: 'サーバーに合言葉（KEMURI_PASS）が設定されていません。' + REDEPLOY, setup: true });
+  if (!key)  return json(500, { error: 'サーバーにOpenAIのキー（OPENAI_API_KEY）が設定されていません。' + REDEPLOY, setup: true });
 
   const h = event.headers || {};
-  const given = h['x-kemuri-pass'] || h['X-Kemuri-Pass'] || '';
+  const given = String(h['x-kemuri-pass'] || h['X-Kemuri-Pass'] || '').trim();
   if (given !== pass) return json(401, { error: '合言葉が違います。ダッシュボードの設定を確認してください', auth: true });
 
   if (typeof event.body === 'string' && event.body.length > MAX_BODY) {
