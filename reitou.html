@@ -174,6 +174,10 @@
 
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
 
+<!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
+<script src="kemuri-core.js"></script>
+<script src="pos-source.js"></script>
+
 <script>
 /* ============================================================
    串焼KEMURI屋 冷凍在庫アプリ
@@ -234,16 +238,26 @@ let TAB = 'stock';
 function load(){
   try{
     const r = localStorage.getItem(LS_KEY);
-    if(r) return Object.assign(blank(), JSON.parse(r));
+    if(r) return migrate(Object.assign(blank(), JSON.parse(r)));
   }catch(e){}
   const d = blank();
   SEED.forEach(([name,min])=>{
     const id = d.seq++;
-    d.items.push({ id, name, stock:min, min, per:1 });
+    d.items.push({ id, name, stock:min, min, per:1, cost:0 });
     d.map[norm(name)] = { item:id, label:name };
   });
   applySeedPos(d);
   d.posSeeded = 1;
+  return d;
+}
+/* 後から足した項目を、既存のデータに埋める（入っている値はそのまま） */
+function migrate(d){
+  let changed = false;
+  (d.items||[]).forEach(it=>{
+    /* cost … 1個あたりの仕入原価（円）。0＝未入力。原価率と発注金額の計算に使う */
+    if(it.cost == null){ it.cost = 0; changed = true; }
+  });
+  if(changed){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} }
   return d;
 }
 /* POS名の初期対応を入れる（すでに設定済みのものは触らない） */
@@ -259,10 +273,13 @@ function applySeedPos(d){
 function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ toast('保存できんかった…'); } }
 
 /* ---------- 小道具 ---------- */
-function num(v){ const n = parseFloat(String(v==null?'':v).replace(/[^\d.\-]/g,'')); return isNaN(n)?0:n; }
+/* num / norm の中身は kemuri-core.js にまとめた（他のアプリでも同じものを使うため）。
+   ※ norm は「POS商品名の対応表」のキーを作っている。中身を変えると
+      既存の対応表が引けなくなるので、core 側も触らないこと。 */
+function num(v){ return KemuriCore.num(v); }
 function escArg(s){ return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function norm(s){ return String(s==null?'':s).normalize('NFKC').replace(/[\s　]/g,'').toLowerCase(); }
+function norm(s){ return KemuriCore.norm(s); }
 function item(id){ return DB.items.find(i=>i.id===id); }
 /* POSの商品名は「揚物/ポテトフライ」「★ポテトフライ」のように書かれることがあるので、
    そのまま → 先頭の記号を外す → 「/」の後ろ、の順に対応表を照合する */
@@ -581,187 +598,29 @@ function countCommit(){
 /* ============================================================
    POS連携
    ------------------------------------------------------------
-   在庫側は「正規化された販売データ」だけを見る。
-     SaleRecord = { key, at, ticket, posName, qty }
-   ・CsvPosSource … CSVファイル → SaleRecord[]（いまはこれ）
-   ・ApiPosSource … エクストリンクPOSのAPIが使えるようになったら
-                    fetchSales(from,to) を実装して差し替えるだけ。
-   applySales() から先（対応付け・二重防止・在庫減算）は共通なので
-   取込方法を変えても在庫のしくみは触らなくてよい。
+   売上の取得は pos-source.js に切り出した（E-POSとの繋ぎ方が
+   決まっていないため、取得方法だけ差し替えられるようにしてある）。
+   このアプリは SaleRecord の形しか見ない：
+     { key, at, day, ticket, posName, qty, amount }
+   取得方法が CSV手動 → CSV自動 → API と変わっても、
+   下の対応付け・二重取込よけ・在庫減算はそのまま使える。
    ============================================================ */
-function userErr(msg){ const e = new Error(msg); e.userMsg = msg; return e; }
-/* 日時の文字列から「日」だけ取り出す（2026/09/14 18:20 → 2026-09-14） */
-function dayOf(at){
-  const t = String(at||'');
-  let m = t.match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/);
-  if(m) return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
-  m = t.match(/(\d{1,2})\D(\d{1,2})/);
-  if(m) return ('0'+m[1]).slice(-2)+'-'+('0'+m[2]).slice(-2);
-  return t.trim();
-}
-const CsvPosSource = {
-  id:'csv', label:'CSV取込',
-  /* file -> { rows, headIdx, cols } */
-  async read(file){
-    const text = await decodeFile(file);
-    if(text.slice(0,2)==='PK') throw userErr('エクセル形式（.xlsx）は取り込めません。POSからCSVで書き出してください');
-    return this.fromText(text, file.name);
-  },
-  /* 貼り付けたテキストからでも同じように読み取る */
-  fromText(text, name){
-    const rows = parseCSV(text);
-    if(!rows.length) throw userErr('中身が読み取れませんでした');
-    let headIdx = guessHeadRow(rows), cols;
-    if(looksLikeHeader(rows[headIdx])){
-      cols = guessCols(rows[headIdx]);
-    }else{
-      headIdx = -1;                      // 見出し無し（取り込みボタンの「商品名⇥出数」など）
-      cols = guessColsNoHeader(rows);
-    }
-    if(cols.name < 0) throw userErr('商品名の列が見つかりませんでした');
-    return { file:name, rows, headIdx, cols };
-  },
-  /* 列マッピングに従って SaleRecord[] を作る */
-  toSales(parsed, period){
-    const { rows, headIdx, cols } = parsed;
-    const pf = (period && period.from) || '';
-    const out = [], cnt = {};
-    for(let i=headIdx+1;i<rows.length;i++){
-      const r = rows[i];
-      const name = String(r[cols.name]==null?'':r[cols.name]).trim();
-      if(!name) continue;
-      if(/^(合計|小計|総計|計|.*合計)$/.test(name)) continue;   // 集計行は無視
-      const qty = cols.qty>=0 ? num(r[cols.qty]) : 1;
-      if(!qty) continue;
-      const at     = cols.at>=0     ? String(r[cols.at]||'').trim()     : '';
-      const ticket = cols.ticket>=0 ? String(r[cols.ticket]||'').trim() : '';
-      /* 二重取込よけのキー。伝票番号があればそれを軸に、無ければ日時を軸に。
-         同じ内容の行が複数あっても数が合うように連番を付ける。 */
-      const day = dayOf(at) || pf;   // 日付列が無い集計CSVは、指定した集計期間の開始日を日付として使う
-      const base = ticket ? ('T\u0001'+ticket+'\u0001'+norm(name)+'\u0001'+qty)
-                          : ('D\u0001'+at+'\u0001'+norm(name)+'\u0001'+qty);
-      cnt[base] = (cnt[base]||0)+1;
-      out.push({ key: base+'#'+cnt[base], at, day, ticket, posName:name, qty });
-    }
-    return out;
-  }
-};
-
-/* 将来のAPI連携用のひな形（中身は未実装）。
-   const ApiPosSource = { id:'api', label:'POS API',
-     async fetchSales(from, to){ ... 取得して SaleRecord[] を返す ... } };
-   → 取得できたら applySales(sales, 'API '+from+'〜'+to) を呼ぶだけでよい。 */
-
-/* 文字コード自動判定（UTF-8 / BOM / Shift_JIS） */
-async function decodeFile(file){
-  const buf = new Uint8Array(await file.arrayBuffer());
-  let b = buf;
-  if(b[0]===0xEF && b[1]===0xBB && b[2]===0xBF) b = b.subarray(3);
-  else if(b[0]===0xFF && b[1]===0xFE) return new TextDecoder('utf-16le').decode(b.subarray(2));
-  else if(b[0]===0xFE && b[1]===0xFF) return new TextDecoder('utf-16be').decode(b.subarray(2));
-  try{ return new TextDecoder('utf-8',{fatal:true}).decode(b); }catch(e){}
-  try{ return new TextDecoder('shift_jis').decode(b); }catch(e){}
-  return new TextDecoder().decode(b);
-}
-/* 区切り文字を推測してCSV/TSVを行列に */
-function parseCSV(text){
-  const head = text.slice(0, 3000);
-  const d = (head.split('\t').length > head.split(',').length) ? '\t' : ',';
-  const rows = []; let row = [], cur = '', q = false;
-  for(let i=0;i<text.length;i++){
-    const c = text[i];
-    if(q){
-      if(c==='"'){ if(text[i+1]==='"'){ cur+='"'; i++; } else q=false; }
-      else cur += c;
-    }else{
-      if(c==='"') q = true;
-      else if(c===d){ row.push(cur); cur=''; }
-      else if(c==='\r'){}
-      else if(c==='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; }
-      else cur += c;
-    }
-  }
-  if(cur!=='' || row.length){ row.push(cur); rows.push(row); }
-  return rows.filter(r=>r.some(c=>String(c).trim()!==''));
-}
-/* ヘッダー行らしい行を探す（タイトル行が上にあるPOS出力にも対応） */
-function guessHeadRow(rows){
-  const kw = /(商品|品名|メニュー|品目|数量|個数|点数|日付|日時|伝票|単価|金額)/;
-  const lim = Math.min(rows.length, 12);
-  for(let i=0;i<lim;i++){
-    const f = rows[i].filter(c=>String(c).trim()!=='');
-    if(f.length>=2 && f.some(c=>kw.test(String(c)))) return i;
-  }
-  let best=0, bn=0;
-  for(let i=0;i<lim;i++){ const n = rows[i].filter(c=>String(c).trim()!=='').length; if(n>bn){bn=n;best=i;} }
-  return best;
-}
-function looksLikeHeader(row){
-  return /(商品|品名|メニュー|品目|数量|個数|点数|出数|日付|日時|伝票|単価|金額)/.test((row||[]).join(' '));
-}
-/* 見出しが無い貼り付け（商品名と出数だけ）から、商品名と出数の列を見つける。
-   「538円」「7.8%」「104,550円」は出数ではないので、裸の整数だけを出数とみなす。 */
-function guessColsNoHeader(rows){
-  const isInt = v=>{ const t = String(v==null?'':v).trim();
-    return !/[円%¥￥.]/.test(t) && /^\d{1,7}$/.test(t.replace(/[,\s]/g,'')); };
-  const isName = v=>{ const t = String(v==null?'':v).trim();
-    return !!t && !/^[A-EＡ-Ｅ]$/.test(t) && /[^\d,.\s円%¥￥\-]/.test(t); };
-  for(let i=0;i<Math.min(rows.length,15);i++){
-    const r = rows[i];
-    let n = -1;
-    for(let j=0;j<r.length;j++){ if(isName(r[j])){ n = j; break; } }
-    if(n < 0) continue;
-    for(let j=n+1;j<r.length;j++){ if(isInt(r[j])) return { name:n, qty:j, at:-1, ticket:-1 }; }
-  }
-  return { name:0, qty:1, at:-1, ticket:-1 };
-}
-const COL_HINT = {
-  name  : ['商品名','メニュー名','品名','商品','品目','メニュー','アイテム','item','name'],
-  qty   : ['出数','販売数','売上数','数量','個数','点数','数','qty','quantity'],
-  at    : ['会計日時','売上日時','日時','伝票日付','売上日','営業日','日付','年月日','date'],
-  ticket: ['伝票番号','伝票no','伝票ｎｏ','レシート番号','取引番号','会計番号','注文番号','伝票','receipt']
-};
-function guessCols(head){
-  const cells = head.map(c=>norm(c));
-  const pick = key=>{
-    for(const w of COL_HINT[key]){
-      const i = cells.findIndex(c=>c && c.indexOf(norm(w))>=0);
-      if(i>=0) return i;
-    }
-    return -1;
-  };
-  const c = { name:pick('name'), qty:pick('qty'), at:pick('at'), ticket:pick('ticket') };
-  if(c.name<0) c.name = 0;
-  /* 前回と同じ列構成なら前回の設定を使う */
-  if(DB.csvMap && DB.csvMap.sig === cells.join('|')) return Object.assign({}, DB.csvMap.cols);
-  return c;
-}
+const CsvPosSource = KemuriPos.CsvManualSource;
+const userErr      = KemuriPos.userErr;
+/* 前回と同じ列構成のときに設定を引き継ぐための控えを渡す */
+CsvPosSource.getColMemo = () => DB.csvMap;
+function guessCols(head){ return CsvPosSource.guessCols(head); }
 
 /* ---------- POS画面（3ステップ） ---------- */
 let POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false };
-function todayStr(){ const d=new Date(), z=n=>('0'+n).slice(-2); return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate()); }
-/* 前回と同じ月なら同じ開始日を引き継ぐ（POSの「当月」で書き出す運用に合わせる） */
-/* CSVの「抽出期間：」2026-09-01～2026-09-15 から期間を読み取る */
-function periodFromRows(rows, headIdx){
-  const txt = rows.slice(0, Math.max(headIdx,1)).map(r=>r.join(' ')).join(' ');
-  const m = txt.match(/(\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})\D{0,4}?[～~〜](\d{4})[-\/年](\d{1,2})[-\/月](\d{1,2})/);
-  if(!m) return null;
-  const z = n=>('0'+n).slice(-2);
-  return { from:m[1]+'-'+z(m[2])+'-'+z(m[3]), to:m[4]+'-'+z(m[5])+'-'+z(m[6]), auto:true };
-}
-function nextDay(d){
-  const t = new Date(String(d)+'T00:00:00'); if(isNaN(t)) return d;
-  t.setDate(t.getDate()+1);
-  const z = n=>('0'+n).slice(-2);
-  return t.getFullYear()+'-'+z(t.getMonth()+1)+'-'+z(t.getDate());
-}
-function prevDay(d){
-  const t = new Date(String(d)+'T00:00:00'); if(isNaN(t)) return d;
-  t.setDate(t.getDate()-1);
-  const z = n=>('0'+n).slice(-2);
-  return t.getFullYear()+'-'+z(t.getMonth()+1)+'-'+z(t.getDate());
-}
+/* 日付まわりは kemuri-core.js に、CSVの期間読み取りは pos-source.js にまとめた */
+function todayStr(){ return KemuriCore.todayStr(); }
+function nextDay(d){ return KemuriCore.nextDay(d); }
+function prevDay(d){ return KemuriCore.prevDay(d); }
+/* CSVの「抽出期間：2026-09-01～2026-09-15」から期間を読み取る */
+function periodFromRows(rows, headIdx){ return CsvPosSource.periodFromRows(rows, headIdx); }
 function lastImport(){ return DB.imports.find(r=>!r.undone && r.period && r.period.to); }
+/* 前回と同じ月なら同じ開始日を引き継ぐ（POSの「当月」で書き出す運用に合わせる） */
 function defaultPeriod(){
   const t = todayStr(), m = t.slice(0,7);
   const last = DB.imports.find(r=>!r.undone && r.period && r.period.from);
@@ -1054,6 +913,11 @@ function posApply(){
     if(m && !DB.map[norm(s.posName)]) DB.map[norm(s.posName)] = { item:m.item, label:s.posName };
   });
   rec.rows = rec.keys.length + rec.applied.length;
+  /* 売上そのものを履歴にためる（翌日の予測・売れ筋・原価率の土台になる）。
+     在庫に関係ない商品（ドリンク・コースなど）も、売上分析に要るので全部ためる。
+     ためる側で二重防止をやっているので、同じCSVを入れ直しても増えない。 */
+  try{ KemuriCore.sales.record(POS.sales, rec.id, POS.period); }
+  catch(e){ /* 履歴に失敗しても在庫の反映は止めない */ }
   DB.imports.unshift(rec);
   if(DB.imports.length>30) DB.imports.length = 30;
   pruneSeen();
@@ -1083,6 +947,7 @@ function undoImport(id){
   rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
   (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
+  try{ KemuriCore.sales.undo(rec.id); }catch(e){}   // 売上履歴からも同じぶんを戻す
   rec.undone = true;
   save(); render(); toast('取込を取り消しました');
 }
@@ -1195,7 +1060,7 @@ function saveItem(){
     it.name = EDIT.name; it.min = EDIT.min; it.per = EDIT.per;
   }else{
     const id = DB.seq++;
-    DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per });
+    DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per, cost:0 });
     DB.map[norm(EDIT.name)] = { item:id, label:EDIT.name };
   }
   save(); closeSheet(); render(); toast('保存しました');
@@ -1215,7 +1080,8 @@ function impData(){
     const d = JSON.parse(document.getElementById('io').value);
     if(!d || !Array.isArray(d.items)) throw 0;
     if(!confirm('いまのデータを、貼り付けた内容で置きかえますか？')) return;
-    DB = Object.assign(blank(), d); save(); render(); toast('読み込みました');
+    /* 古い端末から書き出したデータにも、後から足した項目を埋めてから使う */
+    DB = migrate(Object.assign(blank(), d)); save(); render(); toast('読み込みました');
   }catch(e){ toast('読み込めませんでした'); }
 }
 function resetAll(){
@@ -1283,7 +1149,7 @@ document.addEventListener('focusout', ()=>{
     if(um) um.name = '馬レバ刺し';
     if(!DB.items.find(i=>i.name==='鶏はらみ')){
       const id = DB.seq++;
-      DB.items.push({ id, name:'鶏はらみ', stock:0, min:3, per:1 });   // 実在庫は棚卸で入れる
+      DB.items.push({ id, name:'鶏はらみ', stock:0, min:3, per:1, cost:0 });   // 実在庫は棚卸で入れる
       DB.map[norm('鶏はらみ')] = { item:id, label:'鶏はらみ' };
     }
     applySeedPos(DB);
@@ -1294,12 +1160,13 @@ document.addEventListener('focusout', ()=>{
     ['軟骨唐揚げ','ハツと砂肝の唐揚げ'].forEach(name=>{
       if(DB.items.find(i=>i.name===name)) return;
       const id = DB.seq++;
-      DB.items.push({ id, name, stock:0, min:3, per:1 });   // 実在庫は棚卸で入れる
+      DB.items.push({ id, name, stock:0, min:3, per:1, cost:0 });   // 実在庫は棚卸で入れる
       DB.map[norm(name)] = { item:id, label:name };
     });
     applySeedPos(DB);
     DB.mig3 = 1;
   }
+  migrate(DB);               // 上の追加ぶんにも、後から足した項目を埋める
   save();
   render();
   importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ
