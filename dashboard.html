@@ -147,6 +147,16 @@ let AI = { loading:false, error:'', result:null, at:'' };
 let IMP = { loading:false, rows:null, error:'' };   // 単価取込の途中経過
 
 /* ---------- 小道具 ---------- */
+/* エラーの箱。AIの生の返事があれば、折りたたんで添える */
+function errBox(msg, raw){
+  let h = '<div class="warn gap">' + esc(msg);
+  if(raw){
+    h += '<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700">AIが返した内容を見る</summary>'
+       + '<div style="margin-top:6px;font-size:12px;background:#fff;border-radius:8px;padding:8px;'
+       + 'white-space:pre-wrap;word-break:break-all;max-height:200px;overflow:auto">' + esc(raw) + '</div></details>';
+  }
+  return h + '</div>';
+}
 function toast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -184,9 +194,13 @@ async function callAI(task, payload){
   let j = null;
   try{ j = await res.json(); }catch(e){}
   if(!res.ok || !j || j.error){
-    const m = (j && j.error) || ('エラー（' + res.status + '）');
-    if(res.status === 404) throw userErr('AIの窓口が見つかりません。Netlifyにデプロイされているか確認してください');
-    throw userErr(m);
+    let m = (j && j.error) || ('エラー（' + res.status + '）');
+    if(res.status === 404) m = 'AIの窓口が見つかりません。Netlifyにデプロイされているか確認してください';
+    /* AIが何を返したのか分かるように、先頭だけ添える。
+       これが無いと「期待した形ではありません」だけで手がかりが無くなる */
+    const e = userErr(m);
+    if(j && j.raw) e.raw = String(j.raw);
+    throw e;
   }
   return j;
 }
@@ -226,7 +240,7 @@ async function runAnalyze(force){
     AI = { loading:false, error:'', result:r.result, at:new Date().toISOString() };
     writeCache({ result:r.result, at:AI.at });
   }catch(e){
-    AI = { loading:false, error:(e && e.userMsg) || 'うまくいきませんでした', result:null, at:'' };
+    AI = { loading:false, error:(e && e.userMsg) || 'うまくいきませんでした', result:null, at:'', raw:(e && e.raw) || '' };
   }
   render();
 }
@@ -314,7 +328,7 @@ function prow(p, rank){
 }
 function viewAI(){
   if(AI.loading) return '<button class="btn btn-dark" disabled><span class="spin"></span>AIが考えています…</button>';
-  if(AI.error) return '<div class="warn">' + esc(AI.error) + '</div>'
+  if(AI.error) return errBox(AI.error, AI.raw)
       + '<button class="btn btn-out" onclick="runAnalyze(true)">もう一度ためす</button>';
   if(!AI.result) return '<div class="muted" style="margin-bottom:10px">'
       + '計算した数字をAIに見てもらい、気づいた点を日本語で出します。'
@@ -374,7 +388,7 @@ function viewCost(){
   }else{
     h += '<button class="btn btn-dark gap" onclick="importCosts()">AIで読み取る</button>';
   }
-  if(IMP.error) h += '<div class="warn gap">' + esc(IMP.error) + '</div>';
+  if(IMP.error) h += errBox(IMP.error, IMP.raw);
   h += '</div>';
 
   /* 読み取り結果の確認 */
@@ -437,7 +451,7 @@ async function importCosts(){
       IMP = { loading:false, rows: rows, error:'' };
     }
   }catch(e){
-    IMP = { loading:false, rows:null, error:(e && e.userMsg) || 'うまくいきませんでした' };
+    IMP = { loading:false, rows:null, error:(e && e.userMsg) || 'うまくいきませんでした', raw:(e && e.raw) || '' };
   }
   render();
 }
@@ -491,7 +505,7 @@ function viewRecipe(){
   }else{
     h += '<button class="btn btn-dark gap" onclick="importRecipes()">AIで読み取る</button>';
   }
-  if(RIMP.error) h += '<div class="warn gap">' + esc(RIMP.error) + '</div>';
+  if(RIMP.error) h += errBox(RIMP.error, RIMP.raw);
   h += '</div>';
 
   /* 読み取り結果の確認 */
@@ -580,7 +594,7 @@ async function importRecipes(){
       RIMP = { loading:false, rows: rows, error:'' };
     }
   }catch(e){
-    RIMP = { loading:false, rows:null, error:(e && e.userMsg) || 'うまくいきませんでした' };
+    RIMP = { loading:false, rows:null, error:(e && e.userMsg) || 'うまくいきませんでした', raw:(e && e.raw) || '' };
   }
   render();
 }
