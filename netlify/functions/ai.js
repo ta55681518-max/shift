@@ -24,6 +24,7 @@
 const DEFAULT_MODEL = 'gpt-4o-mini';
 const MAX_BODY = 200 * 1024;      // 送れる材料の上限（約200KB）
 const MAX_OUT_TOKENS = 1500;      // 1回の返答の上限
+const MAX_OUT_EXTRACT = 4000;     // 単価・レシピの読み取りは行数ぶん長くなるので多めに
 const RATE_MAX = 20;              // 同じ実行環境で1分あたり
 const RATE_WINDOW_MS = 60 * 1000;
 
@@ -36,6 +37,19 @@ function rateLimited() {
   if (hits.length >= RATE_MAX) return true;
   hits.push(now);
   return false;
+}
+
+/* まれに ```json ... ``` で包んで返してくることがあるので、その皮を剥く */
+function stripFence(t) {
+  var s = String(t == null ? '' : t).trim();
+  var m = s.match(/^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/);
+  if (m) s = m[1].trim();
+  /* 前後に説明文が付いていても、いちばん外側の { } だけを取り出す */
+  if (s[0] !== '{') {
+    var i = s.indexOf('{'), j = s.lastIndexOf('}');
+    if (i >= 0 && j > i) s = s.slice(i, j + 1);
+  }
+  return s;
 }
 
 function json(status, obj) {
@@ -58,6 +72,7 @@ const TASKS = {
   /* ① 仕入単価の貼り付けを、表の形に整える */
   costs: {
     label: '仕入単価の読み取り',
+    maxTokens: MAX_OUT_EXTRACT,
     build(p) {
       const text = String(p && p.text || '').slice(0, 20000);
       if (!text.trim()) throw new Error('単価のテキストが空です');
@@ -82,6 +97,7 @@ const TASKS = {
   /* ② レシピの貼り付けを、メニュー→材料 の形に整える */
   recipes: {
     label: 'レシピの読み取り',
+    maxTokens: MAX_OUT_EXTRACT,
     build(p) {
       const text = String(p && p.text || '').slice(0, 20000);
       if (!text.trim()) throw new Error('レシピのテキストが空です');
@@ -220,18 +236,36 @@ exports.handler = async function (event) {
     return json(502, { error: msg, status: res.status, detail: detail.slice(0, 300), model: model });
   }
 
-  let data, content;
+  let data, choice, content, finish;
   try {
     data = JSON.parse(text);
-    content = ((data.choices || [])[0] || {}).message;
-    content = content && content.content;
+    choice = (data.choices || [])[0] || {};
+    finish = choice.finish_reason || '';
+    content = choice.message && choice.message.content;
   } catch (e) { return json(502, { error: 'OpenAIの返事を読み取れませんでした' }); }
-  if (!content) return json(502, { error: 'OpenAIから中身が返りませんでした' });
+  if (!content) {
+    /* 中身が空になるのは、安全フィルタに引っかかったときなどに起きる */
+    return json(502, { error: 'OpenAIから中身が返りませんでした（' + (finish || '理由不明') + '）', finish: finish });
+  }
 
   let result = content;
   if (wantJson) {
-    try { result = JSON.parse(content); }
-    catch (e) { return json(502, { error: 'AIの返事が期待した形ではありませんでした', raw: String(content).slice(0, 500) }); }
+    /* 途中で切れていたら、JSONとしては必ず壊れている。まずそれを見分ける。
+       貼り付けた量が多すぎるときに起きるので、そう言ってあげる。 */
+    if (finish === 'length') {
+      return json(502, {
+        error: '内容が多すぎて、AIの返事が途中で切れました。貼り付ける量を半分くらいに減らして、何回かに分けてお試しください',
+        finish: finish, raw: String(content).slice(-200),
+      });
+    }
+    try { result = JSON.parse(stripFence(content)); }
+    catch (e) {
+      return json(502, {
+        error: 'AIの返事が期待した形ではありませんでした',
+        finish: finish,
+        raw: String(content).slice(0, 400),   // 画面に出して原因が分かるように
+      });
+    }
   }
 
   const u = data.usage || {};

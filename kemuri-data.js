@@ -38,9 +38,19 @@
 
   /* ============================================================
      原価マスタ
-     items[norm(名前)] = { name, unit, price, note, updatedAt }
-       price … 1単位あたりの仕入値（円）
+     items[norm(名前)] = {
+       name, unit, price, sale, rate, tax, status, category, note, updatedAt
+     }
+       price  … 1単位あたりの原価（円）。小数はそのまま持つ
+       sale   … 売価（円）。無ければ null（原価だけ登録された材料など）
+       tax    … 税込・税抜の別。「未統一」「税抜混在」などもそのまま持つ
+       status … 計算済 / 概算 / 売価候補 / 要確認 / 要注意 など
+       category … 串焼き / 一品料理 / サワー など
+
+     ※ 画面では四捨五入して見せるが、ここには元の数値を保存する。
+        丸めた値で計算を重ねると、皿数が増えたときにズレていくため。
      ============================================================ */
+  var WARN_STATUS = ['要確認', '要注意'];
   var Costs = {
     _db: null,
     load: function () {
@@ -59,15 +69,40 @@
     /* 1単位あたりの仕入値。未入力なら 0 */
     priceOf: function (name) { var e = this.get(name); return e ? num(e.price) : 0; },
 
+    /* 売価。未設定なら null（原価だけ登録された材料） */
+    saleOf: function (name) {
+      var e = this.get(name);
+      return e && e.sale != null && num(e.sale) > 0 ? num(e.sale) : null;
+    },
+    /* 原価率（％）＝ 原価 ÷ 売価 × 100。売価が無ければ null */
+    rateOf: function (name) {
+      var e = this.get(name);
+      if (!e) return null;
+      var sale = this.saleOf(name), price = num(e.price);
+      if (!(sale > 0) || !(price > 0)) return null;
+      return price / sale * 100;
+    },
+    /* 手を入れてほしい商品か（要確認・要注意） */
+    isWarn: function (e) { return !!e && WARN_STATUS.indexOf(String(e.status || '')) >= 0; },
+
     set: function (name, o) {
       var d = this.load(), k = norm(name);
       if (!k) return false;
       var cur = d.items[k] || {};
+      var pick = function (key, fallback) {
+        return (o && o[key] != null) ? String(o[key]).trim() : (cur[key] || fallback || '');
+      };
       d.items[k] = {
         name: String(name).trim() || cur.name || '',
-        unit: o && o.unit != null ? String(o.unit).trim() : (cur.unit || ''),
+        unit: pick('unit'),
         price: o && o.price != null ? num(o.price) : num(cur.price),
-        note: o && o.note != null ? String(o.note).trim() : (cur.note || ''),
+        sale: (o && o.sale != null && String(o.sale) !== '')
+                ? num(o.sale)
+                : (cur.sale != null ? cur.sale : null),
+        tax: pick('tax'),
+        status: pick('status'),
+        category: pick('category'),
+        note: pick('note'),
         updatedAt: nowISO(),
       };
       this.save();
@@ -82,23 +117,41 @@
       (rows || []).forEach(function (r) {
         var name = String(r && r.name || '').trim();
         if (!name) return;
-        var k = norm(name);
-        if (d.items[k]) updated++; else added++;
-        d.items[k] = {
-          name: name,
-          unit: String(r.unit || '').trim(),
-          price: num(r.price),
-          note: String(r.note || '').trim(),
-          updatedAt: nowISO(),
-        };
+        if (d.items[norm(name)]) updated++; else added++;   // 同じ名前は更新
+        self.set(name, r);
       });
-      this.save();
       return { added: added, updated: updated };
     },
 
     stats: function () {
-      var a = this.all();
-      return { total: a.length, filled: a.filter(function (x) { return num(x.price) > 0; }).length };
+      var a = this.all(), self = this;
+      return {
+        total: a.length,
+        filled: a.filter(function (x) { return num(x.price) > 0; }).length,
+        withSale: a.filter(function (x) { return self.saleOf(x.name) != null; }).length,
+        warn: a.filter(function (x) { return self.isWarn(x); }).length,
+      };
+    },
+
+    /* 手を入れてほしい商品（要確認・要注意）を、理由つきで返す */
+    warnings: function () {
+      var self = this;
+      return this.all().filter(function (x) { return self.isWarn(x); })
+        .map(function (x) {
+          return { name: x.name, status: x.status, note: x.note,
+                   category: x.category, rate: self.rateOf(x.name) };
+        });
+    },
+
+    /* 税込・税抜がそろっていない商品の数（表示用） */
+    taxGroups: function () {
+      var g = {};
+      this.all().forEach(function (x) {
+        var t = String(x.tax || '').trim() || '（未記入）';
+        g[t] = (g[t] || 0) + 1;
+      });
+      return Object.keys(g).sort(function (a, b) { return g[b] - g[a]; })
+        .map(function (k) { return { tax: k, n: g[k] }; });
     },
   };
 
@@ -399,8 +452,105 @@
     };
   }
 
+  /* ============================================================
+     原価CSVの読み取り
+     ------------------------------------------------------------
+     形が整っているCSVは、AIを通さずここで読む。
+     そのほうが正確で、費用もかからず、行数がいくら多くても切れない。
+     （AIに投げると、行数ぶん返事が長くなって途中で切れる）
+
+     見出しの名前で対応づけるので、列の並び順は問わない。
+     ============================================================ */
+  var CSV_COL = {
+    name:     ['product_name', 'name', '商品名', '品名', 'メニュー'],
+    price:    ['cost_yen', 'cost', '原価'],
+    sale:     ['sale_price_yen', 'price', 'sale', '売価', '販売価格'],
+    rate:     ['cost_rate_pct', 'rate', '原価率'],
+    unit:     ['portion', 'unit', '単位', '分量'],
+    status:   ['status', '状態'],
+    tax:      ['tax_status', 'tax', '税'],
+    category: ['category', '分類', 'カテゴリ'],
+    note:     ['notes', 'note', '備考', 'メモ'],
+  };
+
+  function splitCsv(text) {
+    /* pos-source.js があればその読み取りを使う（引用符つきCSVにも耐える） */
+    if (global.KemuriPos && global.KemuriPos.parseCSV) return global.KemuriPos.parseCSV(text);
+    return String(text || '').split('\n')
+      .map(function (l) { return l.split(','); })
+      .filter(function (r) { return r.some(function (c) { return String(c).trim() !== ''; }); });
+  }
+
+  /* 戻り値 … { rows, skipped, headerFound }
+     rows[] = { name, price, sale, unit, status, tax, category, note,
+                csvRate:CSVに書かれていた原価率, calcRate:計算した原価率,
+                rateGap:その差, warn:要確認か } */
+  function costsFromCsv(text) {
+    var rows = splitCsv(text);
+    if (!rows.length) return { rows: [], skipped: [], headerFound: false };
+
+    /* 見出し行を探す（上に説明文があってもよい） */
+    var headIdx = -1, cols = null;
+    for (var i = 0; i < Math.min(rows.length, 15); i++) {
+      var cells = rows[i].map(function (c) { return norm(c); });
+      var c = {};
+      Object.keys(CSV_COL).forEach(function (key) {
+        c[key] = -1;
+        CSV_COL[key].some(function (w) {
+          var j = cells.indexOf(norm(w));
+          if (j >= 0) { c[key] = j; return true; }
+          return false;
+        });
+      });
+      if (c.name >= 0 && c.price >= 0) { headIdx = i; cols = c; break; }
+    }
+    if (headIdx < 0) return { rows: [], skipped: [], headerFound: false };
+
+    var out = [], skipped = [];
+    var cell = function (r, j) { return j >= 0 && r[j] != null ? String(r[j]).trim() : ''; };
+
+    for (var k = headIdx + 1; k < rows.length; k++) {
+      var r = rows[k];
+      var name = cell(r, cols.name);
+      if (!name) continue;
+      /* 見出しがもう一度出てきた行（貼り直しなど）は飛ばす */
+      if (norm(name) === norm('product_name') || norm(name) === norm('商品名')) continue;
+
+      var priceTxt = cell(r, cols.price);
+      if (priceTxt === '') { skipped.push(name + '（原価が空）'); continue; }
+      var price = num(priceTxt);
+
+      var saleTxt = cell(r, cols.sale);
+      var sale = saleTxt === '' ? null : num(saleTxt);   // 空欄なら原価だけ登録する
+      if (sale != null && !(sale > 0)) sale = null;
+
+      var csvRate = cols.rate >= 0 && cell(r, cols.rate) !== '' ? num(cell(r, cols.rate)) : null;
+      var calcRate = (sale > 0 && price > 0) ? (price / sale * 100) : null;
+
+      var status = cell(r, cols.status);
+      out.push({
+        name: name,
+        price: price,                     // 小数はそのまま持つ
+        sale: sale,
+        unit: cell(r, cols.unit),
+        status: status,
+        tax: cell(r, cols.tax),
+        category: cell(r, cols.category),
+        note: cell(r, cols.note),
+        csvRate: csvRate,
+        calcRate: calcRate,
+        /* CSVに書かれた原価率と、原価÷売価×100 がずれていないか */
+        rateGap: (csvRate != null && calcRate != null)
+                   ? Math.round(Math.abs(csvRate - calcRate) * 10) / 10 : null,
+        warn: WARN_STATUS.indexOf(status) >= 0,
+      });
+    }
+    return { rows: out, skipped: skipped, headerFound: true };
+  }
+
   global.KemuriData = {
     costs: Costs,
+    costsFromCsv: costsFromCsv,
     recipes: Recipes,
     stock: Stock,
     analyze: analyze,
