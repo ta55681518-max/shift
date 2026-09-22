@@ -109,6 +109,29 @@
      冷凍在庫アプリの「POS商品名の対応表」は、実質1対1のレシピ
      （どの在庫を、1販売でいくつ減らすか）なので、そこから作れる。
      ============================================================ */
+  /* ---- 単位の合わせこみ ----
+     単価は「980円/kg」、レシピは「80g」のように、単位がずれることがある。
+     そのまま掛けると 980×80 = 78,400円 になってしまうので、揃えてから掛ける。
+     g↔kg・ml↔L のような換算だけを扱い、知らない組み合わせは印を付けて
+     画面に出す（黙って間違った原価を出さないため）。 */
+  /* norm() が全角を半角に直す（ｇ→g、㎏→kg、ℓ→l）ので、半角だけ持てばよい */
+  var UNIT = {
+    'g': { base: 'g', k: 1 },   'kg': { base: 'g', k: 1000 },
+    'グラム': { base: 'g', k: 1 }, 'キロ': { base: 'g', k: 1000 }, 'キログラム': { base: 'g', k: 1000 },
+    'ml': { base: 'ml', k: 1 }, 'l': { base: 'ml', k: 1000 },
+    'cc': { base: 'ml', k: 1 }, 'ミリリットル': { base: 'ml', k: 1 }, 'リットル': { base: 'ml', k: 1000 },
+  };
+  function unitInfo(u) { return UNIT[norm(u)] || null; }
+
+  /* 戻り値 … { qty:換算後の数量, mismatch:単位が噛み合っていないか } */
+  function convertQty(qty, fromUnit, toUnit) {
+    var f = String(fromUnit || '').trim(), t = String(toUnit || '').trim();
+    if (!f || !t || norm(f) === norm(t)) return { qty: qty, mismatch: false };
+    var a = unitInfo(f), b = unitInfo(t);
+    if (a && b && a.base === b.base) return { qty: qty * a.k / b.k, mismatch: false };
+    return { qty: qty, mismatch: true };   // 「個」と「kg」など、換算できない組み合わせ
+  }
+
   var Recipes = {
     _db: null,
     load: function () {
@@ -130,13 +153,29 @@
       d.items[k] = {
         name: String(name).trim(),
         parts: (parts || []).map(function (p) {
-          return { name: String(p.name || '').trim(), qty: num(p.qty) || 1 };
+          return {
+            name: String(p.name || '').trim(),
+            qty: num(p.qty) || 1,
+            unit: String(p.unit || '').trim(),
+          };
         }).filter(function (p) { return !!p.name; }),
       };
       this.save();
       return true;
     },
     remove: function (name) { var d = this.load(); delete d.items[norm(name)]; this.save(); },
+
+    /* AIが整形したレシピをまとめて入れる。既にあるメニューは上書き */
+    importRows: function (rows) {
+      var added = 0, updated = 0, self = this;
+      (rows || []).forEach(function (r) {
+        var name = String(r && r.name || '').trim();
+        if (!name || !Array.isArray(r.parts) || !r.parts.length) return;
+        if (self.get(name)) updated++; else added++;
+        self.set(name, r.parts);
+      });
+      return { added: added, updated: updated };
+    },
 
     /* 冷凍在庫の対応表から、1対1のレシピを作る（既にあるものは触らない）。
        戻り値 … 追加した件数 */
@@ -162,21 +201,30 @@
     },
 
     /* そのメニュー1つぶんの原価。レシピが無ければ、同じ名前の単価を直接見る。
-       戻り値 … { cost, known:全部の材料に単価が入っているか, parts:[{name,qty,price}] } */
+       戻り値 … { cost, known:全部の材料に単価が入っているか,
+                  mismatch:単位が噛み合わない材料があるか, parts:[...] } */
     costOf: function (menuName) {
       var r = this.get(menuName);
       if (!r || !r.parts.length) {
         var p = Costs.priceOf(menuName);
-        return { cost: p, known: p > 0, parts: [] };
+        return { cost: p, known: p > 0, mismatch: false, parts: [] };
       }
-      var total = 0, known = true, parts = [];
+      var total = 0, known = true, mismatch = false, parts = [];
       r.parts.forEach(function (x) {
-        var price = Costs.priceOf(x.name);
+        var entry = Costs.get(x.name);
+        var price = entry ? num(entry.price) : 0;
         if (!(price > 0)) known = false;
-        total += price * (num(x.qty) || 1);
-        parts.push({ name: x.name, qty: num(x.qty) || 1, price: price });
+        var qty = num(x.qty) || 1;
+        var c = convertQty(qty, x.unit, entry && entry.unit);
+        if (c.mismatch && price > 0) mismatch = true;
+        total += price * c.qty;
+        parts.push({
+          name: x.name, qty: qty, unit: x.unit || '',
+          price: price, costUnit: (entry && entry.unit) || '',
+          used: c.qty, mismatch: c.mismatch && price > 0,
+        });
       });
-      return { cost: total, known: known, parts: parts };
+      return { cost: total, known: known, mismatch: mismatch, parts: parts };
     },
   };
 
@@ -235,6 +283,7 @@
     var rows = C.sales.range(from, to);
 
     var totalQty = 0, totalAmount = 0, totalCost = 0, costKnownAmount = 0;
+    var mismatchNames = [];   // 単位が噛み合っていないメニュー
 
     /* 1つの在庫商品に、POSの商品名が複数ぶら下がることがある
        （例：「鶏みそ串カツ」と「串カツおろしポン酢」→ どちらも在庫は「串カツ」）。
@@ -258,6 +307,7 @@
       var unitPrice = qty > 0 ? amount / qty : 0;
       var c = Recipes.costOf(r.name);
       var cost = c.cost;
+      if (c.mismatch) mismatchNames.push(r.name);
       var costRate = (c.known && unitPrice > 0) ? (cost / unitPrice) : null;
       var perDay = qty / cov.days;
 
@@ -275,6 +325,7 @@
         unitPrice: Math.round(unitPrice),
         cost: c.known ? Math.round(cost) : null,
         costRate: costRate != null ? Math.round(costRate * 1000) / 10 : null,  // %
+        costMismatch: !!c.mismatch,
         perDay: Math.round(perDay * 10) / 10,
         stock: it ? num(it.stock) : null,
         stockName: it ? it.name : null,
@@ -306,6 +357,11 @@
         + '曜日ごとの傾向は出せません（POSから日別で書き出すと出せるようになります）。');
     }
     if (cov.days < 7) caution.push('データの期間が ' + cov.days + ' 日ぶんしかありません。傾向を見るには短すぎます。');
+    if (mismatchNames.length) {
+      caution.push('単位が噛み合っていないレシピが ' + mismatchNames.length + ' 件あります（'
+        + mismatchNames.slice(0, 3).join('、') + (mismatchNames.length > 3 ? ' ほか' : '')
+        + '）。材料の単位と、仕入単価の単位をそろえてください。原価がおかしな金額になります。');
+    }
     var cs = Costs.stats();
     if (cs.filled === 0) caution.push('仕入単価がまだ1件も入っていないので、原価率は出せません。');
     else if (cs.filled < cs.total) caution.push('仕入単価が入っていない商品が ' + (cs.total - cs.filled) + ' 件あります。');
