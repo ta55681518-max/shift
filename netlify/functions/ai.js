@@ -79,7 +79,35 @@ const TASKS = {
     },
   },
 
-  /* ② 売上・原価の分析コメント */
+  /* ② レシピの貼り付けを、メニュー→材料 の形に整える */
+  recipes: {
+    label: 'レシピの読み取り',
+    build(p) {
+      const text = String(p && p.text || '').slice(0, 20000);
+      if (!text.trim()) throw new Error('レシピのテキストが空です');
+      const known = (p && Array.isArray(p.materials) ? p.materials : []).slice(0, 300);
+      return [
+        { role: 'system', content: COMMON + '\n' + [
+          'メニューのレシピ（作り方・材料表）を読み取って、材料と分量の表に直す作業をします。',
+          '出力は必ず次のJSONだけ：',
+          '{"recipes":[{"name":"メニュー名","parts":[{"name":"材料名","qty":数値,"unit":"単位"}],"sure":true/false}],"skipped":["読めなかった行"]}',
+          '・qty … メニュー1つ（1皿・1人前）あたりの分量。数値のみ',
+          '・unit … g / kg / ml / 個 / 本 / 枚 など。書かれていなければ ""',
+          '  「大さじ1」「少々」のような分量は、おおよそのグラム数に直し、sure を false にする',
+          '・調味料や水など、原価にほぼ影響しないものは入れなくてよい',
+          '・1つのメニューに複数の材料があれば parts に並べる',
+          '・sure … 分量まではっきり書かれていれば true、推測が入れば false',
+          '・作り方の手順文は無視して、材料と分量だけを拾う',
+          known.length
+            ? ('・材料名は、できるだけ次の在庫の名前に合わせること：' + known.join('、'))
+            : '',
+        ].filter(Boolean).join('\n') },
+        { role: 'user', content: '次の内容からレシピを読み取ってください。\n\n' + text },
+      ];
+    },
+  },
+
+  /* ③ 売上・原価の分析コメント */
   analyze: {
     label: '売上と原価の分析',
     build(p) {

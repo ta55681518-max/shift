@@ -481,15 +481,64 @@ function viewRecipe(){
   h += '<button class="btn btn-out" onclick="seedRecipes()">冷凍在庫の対応表からレシピを作る</button>';
   h += '<div class="muted gap" style="margin-bottom:14px">すでにあるレシピは上書きしません。</div>';
 
+  /* ChatGPTのレシピを貼り付けて取り込む */
+  h += '<div class="card"><h2>ChatGPTのレシピを取り込む</h2>'
+     + '<div class="muted">ChatGPTに書いてもらったレシピや、手書きの材料メモを貼り付けてください。'
+     + '「1皿あたり何をいくつ使うか」をAIが取り出します。作り方の手順文が混ざっていても大丈夫です。</div>'
+     + '<textarea id="rec-in" class="gap" placeholder="例）&#10;シーザーサラダ&#10;・レタス 80g&#10;・燻製ベーコン 1枚&#10;・粉チーズ 5g&#10;&#10;鶏皮ギョウザ（5個）&#10;・鶏皮餃子 5個"></textarea>';
+  if(RIMP.loading){
+    h += '<button class="btn btn-dark gap" disabled><span class="spin"></span>AIが読み取っています…</button>';
+  }else{
+    h += '<button class="btn btn-dark gap" onclick="importRecipes()">AIで読み取る</button>';
+  }
+  if(RIMP.error) h += '<div class="warn gap">' + esc(RIMP.error) + '</div>';
+  h += '</div>';
+
+  /* 読み取り結果の確認 */
+  if(RIMP.rows){
+    h += '<div class="card"><h2>読み取った内容（' + RIMP.rows.length + '件）</h2>'
+       + '<div class="muted">材料名が在庫や単価の名前と合っているか確認してください。'
+       + '名前がずれていると原価が出ません。「？」はAIが自信を持てなかったものです。</div><div class="gap">';
+    RIMP.rows.forEach((r,i) => {
+      h += '<div class="card" style="margin-bottom:10px;border-color:#ffe0a3;background:#fffdf6">'
+         + '<div class="crow" style="border:none;padding-bottom:4px">'
+         + '<span class="nm">' + esc(r.name) + (r.sure === false ? ' <b style="color:#c07d00">？</b>' : '') + '</span>'
+         + '<button class="btn btn-danger btn-sm" style="padding:8px 10px" onclick="rimpDel(' + i + ')">除</button></div>';
+      (r.parts||[]).forEach((p,j) => {
+        const price = KemuriData.costs.priceOf(p.name);
+        h += '<div class="crow">'
+           + '<input class="txt" style="flex:1;padding:9px;font-size:15px" value="' + esc(p.name) + '" onchange="rimpSet(' + i + ',' + j + ',\'name\',this.value)">'
+           + '<input type="number" inputmode="decimal" style="width:70px" value="' + num(p.qty) + '" onchange="rimpSet(' + i + ',' + j + ',\'qty\',this.value)">'
+           + '<input class="u" value="' + esc(p.unit||'') + '" onchange="rimpSet(' + i + ',' + j + ',\'unit\',this.value)" placeholder="単位">'
+           + '</div>'
+           + '<div class="muted" style="margin:-4px 0 6px 2px">'
+           + (price > 0 ? '単価あり（' + yen(price) + (KemuriData.costs.get(p.name).unit ? ' / ' + esc(KemuriData.costs.get(p.name).unit) : '') + '）'
+                        : '⚠️ この名前の単価がまだありません')
+           + '</div>';
+      });
+      h += '</div>';
+    });
+    h += '</div><div class="two">'
+       + '<button class="btn btn-gray" onclick="RIMP.rows=null;render()">やめる</button>'
+       + '<button class="btn btn-primary" onclick="saveRecipes()">この内容で保存</button>'
+       + '</div></div>';
+  }
+
   if(rows.length){
     h += '<div class="card">';
     rows.forEach(r => {
       const c = KemuriData.recipes.costOf(r.name);
       h += '<div class="prow"><span class="nm">' + esc(r.name)
-         + '<small>' + r.parts.map(p => esc(p.name) + '×' + p.qty).join('、') + '</small></span>'
-         + '<span class="m">' + (c.known ? yen(c.cost) : '単価未入力') + '</span>'
+         + '<small>' + r.parts.map(p => esc(p.name) + ' ' + p.qty + esc(p.unit||'')).join('、') + '</small></span>'
+         + '<span class="m">' + (c.mismatch ? '⚠️ 単位ずれ' : c.known ? yen(c.cost) : '単価未入力') + '</span>'
          + '<button class="btn btn-out btn-sm" style="padding:8px 11px" onclick="editRecipe(\''
          + esc(r.name).replace(/'/g,"\\'") + '\')">直す</button></div>';
+      if(c.mismatch){
+        const bad = c.parts.filter(p => p.mismatch)
+          .map(p => esc(p.name) + '（レシピ ' + p.unit + ' ／ 単価 ' + p.costUnit + '）').join('、');
+        h += '<div class="warn" style="margin:-2px 0 10px">単位が噛み合っていません：' + bad
+           + '<br>どちらかの単位をそろえてください。このままだと原価がおかしな金額になります。</div>';
+      }
     });
     h += '</div>';
   }
@@ -497,8 +546,8 @@ function viewRecipe(){
   h += '<div class="card gap"><h2>手で作る・直す</h2>'
      + '<label class="lab">メニュー名（POSの商品名）</label>'
      + '<input class="txt" id="r-name" value="' + esc(EDIT_R.name) + '" placeholder="例）シーザーサラダ">'
-     + '<label class="lab">材料（1行に「材料名 数量」）</label>'
-     + '<textarea id="r-parts" placeholder="例）&#10;燻製ベーコン 1&#10;レタス 0.2">' + esc(EDIT_R.parts) + '</textarea>'
+     + '<label class="lab">材料（1行に「材料名 数量 単位」。単位は省略可）</label>'
+     + '<textarea id="r-parts" placeholder="例）&#10;燻製ベーコン 1 枚&#10;レタス 80 g">' + esc(EDIT_R.parts) + '</textarea>'
      + '<div class="two"><button class="btn btn-gray" onclick="clearRecipe()">クリア</button>'
      + '<button class="btn btn-primary" onclick="saveRecipe()">保存</button></div></div>';
 
@@ -506,6 +555,43 @@ function viewRecipe(){
   return h;
 }
 let EDIT_R = { name:'', parts:'' };
+let RIMP = { loading:false, rows:null, error:'' };
+
+function rimpSet(i,j,k,v){ RIMP.rows[i].parts[j][k] = k === 'qty' ? num(v) : v;
+  if(k !== 'qty') setTimeout(render, 0); }
+function rimpDel(i){ RIMP.rows.splice(i,1); if(!RIMP.rows.length) RIMP.rows = null; render(); }
+
+async function importRecipes(){
+  const el = document.getElementById('rec-in');
+  const text = el ? el.value.trim() : '';
+  if(!text){ toast('先にレシピを貼り付けてください'); return; }
+  RIMP = { loading:true, rows:null, error:'' }; render();
+  try{
+    /* 在庫と単価にある名前を渡して、材料名をできるだけ合わせてもらう */
+    const materials = [
+      ...KemuriData.stock.items().map(i => i.name),
+      ...KemuriData.costs.all().map(c => c.name),
+    ].filter((v,i,a) => v && a.indexOf(v) === i);
+    const r = await callAI('recipes', { text, materials });
+    const rows = (r.result && r.result.recipes) || [];
+    if(!rows.length){
+      RIMP = { loading:false, rows:null, error:'レシピを読み取れませんでした。メニュー名と材料・分量が並んだ形で貼ってみてください' };
+    }else{
+      RIMP = { loading:false, rows: rows, error:'' };
+    }
+  }catch(e){
+    RIMP = { loading:false, rows:null, error:(e && e.userMsg) || 'うまくいきませんでした' };
+  }
+  render();
+}
+function saveRecipes(){
+  if(!RIMP.rows || !RIMP.rows.length) return;
+  const r = KemuriData.recipes.importRows(RIMP.rows);
+  RIMP = { loading:false, rows:null, error:'' };
+  refresh(); render();
+  toast('新規 ' + r.added + '件 ／ 更新 ' + r.updated + '件を保存しました');
+}
+
 function seedRecipes(){
   const n = KemuriData.recipes.seedFromStock();
   refresh(); render();
@@ -514,7 +600,7 @@ function seedRecipes(){
 function editRecipe(name){
   const r = KemuriData.recipes.get(name);
   if(!r) return;
-  EDIT_R = { name: r.name, parts: r.parts.map(p => p.name + ' ' + p.qty).join('\n') };
+  EDIT_R = { name: r.name, parts: r.parts.map(p => p.name + ' ' + p.qty + (p.unit ? ' ' + p.unit : '')).join('\n') };
   render();
   const el = document.getElementById('r-name'); if(el) el.scrollIntoView({ behavior:'smooth', block:'center' });
 }
@@ -523,9 +609,10 @@ function saveRecipe(){
   const name = ((document.getElementById('r-name')||{}).value || '').trim();
   const txt  = (document.getElementById('r-parts')||{}).value || '';
   if(!name){ toast('メニュー名を入れてください'); return; }
+  /* 「材料名 数量 単位」または「材料名 数量」。単位が数量にくっついていてもよい（80g） */
   const parts = txt.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
-    const m = l.match(/^(.*?)[\s　]+([\d.]+)$/);
-    return m ? { name:m[1].trim(), qty:num(m[2]) } : { name:l, qty:1 };
+    const m = l.match(/^(.*?)[\s　]+([\d.]+)[\s　]*([^\s　\d.]*)$/);
+    return m ? { name:m[1].trim(), qty:num(m[2]), unit:(m[3]||'').trim() } : { name:l, qty:1, unit:'' };
   });
   if(!parts.length){ toast('材料を1つ以上入れてください'); return; }
   KemuriData.recipes.set(name, parts);
