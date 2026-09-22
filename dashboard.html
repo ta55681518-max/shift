@@ -122,6 +122,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="kemuri-core.js"></script>
+<script src="pos-source.js"></script>
 <script src="kemuri-data.js"></script>
 
 <script>
@@ -374,15 +375,67 @@ function setRange(r){ RANGE = r; AI = { loading:false, error:'', result:null, at
    ② 原価（仕入単価）
    ============================================================ */
 function viewCost(){
-  const rows = KemuriData.costs.all();
   const st = KemuriData.costs.stats();
   let h = '<div class="pad">';
 
-  h += '<div class="card"><h2>ChatGPTの単価を取り込む</h2>'
-     + '<div class="muted">ChatGPTや仕入先のメモから単価をコピーして、そのまま貼り付けてください。'
-     + '形がバラバラでもAIが「商品名・単位・単価」に整えます。</div>'
-     + '<textarea id="cost-in" class="gap" placeholder="例）&#10;鶏もも肉 1kg 980円&#10;豚バラ ￥1,250/kg&#10;冷凍ポテト 2kg入り 1袋 850"></textarea>';
+  /* ① CSVをそのまま取り込む（AIを通さない） */
+  h += '<div class="card"><h2>原価CSVを取り込む</h2>'
+     + '<div class="muted">見出し付きのCSVをそのまま貼り付けてください。'
+     + '<b>AIは使いません</b>（この形なら正確に読めますし、行数がいくら多くても切れません）。<br>'
+     + '使う列：product_name／cost_yen／sale_price_yen／portion／status／tax_status／category／notes'
+     + '（並び順は問いません）</div>'
+     + '<textarea id="csv-in" class="gap" placeholder="category,product_name,cost_yen,sale_price_yen,...&#10;串焼き,もも,84.38,220,38.4,1本,計算済,未統一,1kg1350円・16本取り"></textarea>'
+     + '<button class="btn btn-primary gap" onclick="readCostCsv()">CSVを読み取る</button>';
+  if(CIMP.error) h += errBox(CIMP.error);
+  h += '</div>';
 
+  /* CSVの確認画面 */
+  if(CIMP.rows){
+    const rows = CIMP.rows;
+    const warns = rows.filter(r => r.warn);
+    const gaps  = rows.filter(r => r.rateGap != null && r.rateGap > 1);
+    const noSale = rows.filter(r => r.sale == null);
+    const cats = {};
+    rows.forEach(r => { const c = r.category || 'その他'; cats[c] = (cats[c]||0)+1; });
+
+    h += '<div class="card"><h2>読み取った内容</h2>'
+       + '<div class="kpis" style="margin-bottom:8px">'
+       + kpi('商品', rows.length + '<small> 件</small>', Object.keys(cats).length + 'カテゴリ')
+       + kpi('要確認', warns.length + '<small> 件</small>', warns.length ? '下に一覧' : 'なし', warns.length > 0)
+       + '</div>'
+       + '<div class="muted">' + Object.keys(cats).map(c => esc(c) + ' ' + cats[c]).join('　/　') + '</div>';
+
+    if(warns.length){
+      h += '<div class="warn gap"><b>⚠️ 要確認・要注意（' + warns.length + '件）</b><br>'
+         + warns.map(r => '・<b>' + esc(r.name) + '</b>（' + esc(r.status) + '）'
+             + (r.note ? ' … ' + esc(r.note) : '')).join('<br>')
+         + '<br><br>そのまま登録できます。登録後も原価タブの一覧に印が残るので、あとで直せます。</div>';
+    }
+    if(gaps.length){
+      h += '<div class="warn"><b>CSVの原価率と計算が合わない行（' + gaps.length + '件）</b><br>'
+         + gaps.map(r => '・' + esc(r.name) + '：CSV ' + r.csvRate + '% ／ 原価÷売価 '
+             + (Math.round(r.calcRate*10)/10) + '%').join('<br>')
+         + '<br><br>登録されるのは<b>原価と売価</b>で、原価率はそこから計算し直します。</div>';
+    }
+    if(noSale.length){
+      h += '<div class="info">売価が空の ' + noSale.length + '件（'
+         + noSale.map(r => esc(r.name)).join('、') + '）は、<b>原価だけ</b>登録します。</div>';
+    }
+    if(CIMP.skipped && CIMP.skipped.length){
+      h += '<div class="warn">読み取れなかった行：' + CIMP.skipped.map(esc).join('、') + '</div>';
+    }
+
+    h += '<div class="two">'
+       + '<button class="btn btn-gray" onclick="CIMP.rows=null;render()">やめる</button>'
+       + '<button class="btn btn-primary" onclick="saveCostCsv()">' + rows.length + '件を登録する</button>'
+       + '</div></div>';
+  }
+
+  /* ② 文章から読み取る（形が整っていないとき用） */
+  h += '<div class="card"><h2>メモや見積もりから読み取る（AI）</h2>'
+     + '<div class="muted">CSVになっていない、バラバラな書き方の単価メモはこちら。'
+     + '一度に貼るのは<b>30行くらいまで</b>にしてください。</div>'
+     + '<textarea id="cost-in" class="gap" placeholder="例）&#10;鶏もも肉 1kg 980円&#10;豚バラ ￥1,250/kg&#10;冷凍ポテト 2kg入り 1袋 850"></textarea>';
   if(IMP.loading){
     h += '<button class="btn btn-dark gap" disabled><span class="spin"></span>AIが読み取っています…</button>';
   }else{
@@ -391,7 +444,6 @@ function viewCost(){
   if(IMP.error) h += errBox(IMP.error, IMP.raw);
   h += '</div>';
 
-  /* 読み取り結果の確認 */
   if(IMP.rows){
     h += '<div class="card"><h2>読み取った内容（' + IMP.rows.length + '件）</h2>'
        + '<div class="muted">確認して、おかしいところは直してから保存してください。'
@@ -411,30 +463,110 @@ function viewCost(){
        + '</div></div>';
   }
 
-  h += '<div class="sec">仕入単価（' + st.filled + ' / ' + st.total + ' 件に値段が入っています）</div>';
-  if(!rows.length){
-    h += '<div class="info">まだ登録がありません。上の枠に貼り付けて取り込んでください。</div>';
+  /* ③ 登録済みの一覧 */
+  const all = KemuriData.costs.all();
+  h += '<div class="sec">登録済み（' + st.total + '件）</div>';
+  if(!all.length){
+    h += '<div class="info">まだ登録がありません。上の枠にCSVを貼り付けてください。</div>';
   }else{
-    h += '<div class="card">';
-    rows.forEach(r => {
-      h += '<div class="crow">'
-         + '<span class="nm">' + esc(r.name) + (r.unit ? '<small>' + esc(r.unit) + 'あたり</small>' : '') + '</span>'
-         + '<input type="number" inputmode="decimal" value="' + num(r.price) + '" onchange="setCost(\'' + esc(r.name).replace(/'/g,"\\'") + '\',this.value)">'
-         + '<button class="btn btn-danger btn-sm" style="padding:8px 10px" onclick="delCost(\'' + esc(r.name).replace(/'/g,"\\'") + '\')">削</button>'
-         + '</div>';
+    h += '<div class="kpis">'
+       + kpi('売価あり', st.withSale + '<small> / ' + st.total + '</small>', '原価率が出せる')
+       + kpi('要確認', st.warn + '<small> 件</small>', st.warn ? '下に印' : 'なし', st.warn > 0)
+       + '</div>';
+
+    const tg = KemuriData.costs.taxGroups();
+    if(tg.length > 1){
+      h += '<div class="warn">税込・税抜が<b>' + tg.length + '種類</b>混ざっています（'
+         + tg.map(x => esc(x.tax) + ' ' + x.n).join('、') + '）。<br>'
+         + 'このままでも原価率は出ますが、税の扱いがそろっていない商品どうしを比べると'
+         + '数%ずれます。落ち着いたら統一するのがおすすめです。</div>';
+    }
+
+    /* カテゴリごとにまとめる */
+    const byCat = {};
+    all.forEach(r => { const c = r.category || 'その他'; (byCat[c] = byCat[c] || []).push(r); });
+    Object.keys(byCat).forEach(cat => {
+      h += '<div class="sec">' + esc(cat) + '（' + byCat[cat].length + '）</div><div class="card">';
+      byCat[cat].sort((a,b) => {
+        const ra = KemuriData.costs.rateOf(a.name), rb = KemuriData.costs.rateOf(b.name);
+        return (rb == null ? -1 : rb) - (ra == null ? -1 : ra);   // 原価率の高い順
+      }).forEach(r => {
+        const rate = KemuriData.costs.rateOf(r.name);
+        const sale = KemuriData.costs.saleOf(r.name);
+        const warn = KemuriData.costs.isWarn(r);
+        const cls = rate == null ? 'non' : rate >= 40 ? 'hi' : rate >= 30 ? 'mid' : 'lo';
+        h += '<div class="prow">'
+           + '<span class="nm">' + esc(r.name) + (warn ? ' <b style="color:#d92d20">⚠️</b>' : '')
+           + '<small>原価 ' + yen(r.price) + (r.unit ? ' / ' + esc(r.unit) : '')
+           + (sale ? '　売価 ' + yen(sale) : '　売価なし')
+           + (r.status ? '　' + esc(r.status) : '') + (r.tax ? '　' + esc(r.tax) : '') + '</small></span>'
+           + '<span class="rate ' + cls + '">' + (rate == null ? '—' : (Math.round(rate*10)/10) + '%') + '</span>'
+           + '<button class="btn btn-out btn-sm" style="padding:8px 11px" onclick="editCost(\''
+           + esc(r.name).replace(/'/g,"\\'") + '\')">直す</button></div>';
+      });
+      h += '</div>';
     });
-    h += '</div>';
   }
 
-  h += '<div class="card gap"><h2>手で1件だけ足す</h2>'
-     + '<input class="txt" id="c-name" placeholder="商品名">'
-     + '<div class="two"><input class="txt" id="c-unit" placeholder="単位（kg・袋など）">'
-     + '<input class="txt" id="c-price" type="number" inputmode="decimal" placeholder="単価（円）"></div>'
-     + '<button class="btn btn-out gap" onclick="addCost()">追加する</button></div>';
+  /* ④ 1件だけ直す */
+  if(EDIT_C.name){
+    const e = KemuriData.costs.get(EDIT_C.name) || {};
+    h += '<div class="card" style="border-color:#ffd0bd;background:#fffaf8"><h2>' + esc(EDIT_C.name) + ' を直す</h2>'
+       + '<label class="lab">原価（円）</label>'
+       + '<input class="txt" id="e-price" type="number" inputmode="decimal" value="' + num(e.price) + '">'
+       + '<label class="lab">売価（円・空でも可）</label>'
+       + '<input class="txt" id="e-sale" type="number" inputmode="decimal" value="' + (e.sale != null ? num(e.sale) : '') + '">'
+       + '<label class="lab">単位</label><input class="txt" id="e-unit" value="' + esc(e.unit||'') + '">'
+       + '<label class="lab">状態</label><input class="txt" id="e-status" value="' + esc(e.status||'') + '">'
+       + '<div class="two"><button class="btn btn-gray" onclick="EDIT_C={name:\'\'};render()">閉じる</button>'
+       + '<button class="btn btn-primary" onclick="saveEditCost()">保存</button></div>'
+       + '<button class="btn btn-danger gap" onclick="delCost(\'' + esc(EDIT_C.name).replace(/'/g,"\\'") + '\')">この商品を削除</button>'
+       + '</div>';
+  }
 
   h += '</div>';
   return h;
 }
+
+/* ---- CSVの取り込み（AIを使わない） ---- */
+let CIMP = { rows:null, skipped:null, error:'' };
+let EDIT_C = { name:'' };
+
+function readCostCsv(){
+  const el = document.getElementById('csv-in');
+  const text = el ? el.value.trim() : '';
+  if(!text){ toast('先にCSVを貼り付けてください'); return; }
+  const r = KemuriData.costsFromCsv(text);
+  if(!r.headerFound){
+    CIMP = { rows:null, skipped:null,
+      error:'見出し行が見つかりませんでした。1行目に product_name と cost_yen（または「商品名」「原価」）を含む行が必要です' };
+  }else if(!r.rows.length){
+    CIMP = { rows:null, skipped:r.skipped, error:'読み取れる行がありませんでした' };
+  }else{
+    CIMP = { rows:r.rows, skipped:r.skipped, error:'' };
+  }
+  render();
+}
+function saveCostCsv(){
+  if(!CIMP.rows || !CIMP.rows.length) return;
+  const r = KemuriData.costs.importRows(CIMP.rows);
+  CIMP = { rows:null, skipped:null, error:'' };
+  refresh(); render();
+  toast('新規 ' + r.added + '件 ／ 更新 ' + r.updated + '件を登録しました');
+}
+function editCost(name){ EDIT_C = { name }; render();
+  setTimeout(() => { const el = document.getElementById('e-price'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); }, 30); }
+function saveEditCost(){
+  const g = id => (document.getElementById(id)||{}).value;
+  KemuriData.costs.set(EDIT_C.name, {
+    price: num(g('e-price')),
+    sale: g('e-sale') === '' ? null : num(g('e-sale')),
+    unit: g('e-unit'), status: g('e-status'),
+  });
+  EDIT_C = { name:'' };
+  refresh(); render(); toast('保存しました');
+}
+
 function impSet(i,k,v){ IMP.rows[i][k] = k === 'price' ? num(v) : v; }
 function impDel(i){ IMP.rows.splice(i,1); render(); }
 async function importCosts(){
@@ -462,18 +594,11 @@ function saveCosts(){
   refresh(); render();
   toast('新規 ' + r.added + '件 ／ 更新 ' + r.updated + '件を保存しました');
 }
-function setCost(name, v){ KemuriData.costs.set(name, { price: num(v) }); refresh(); toast('保存しました'); }
 function delCost(name){
-  if(!confirm('「' + name + '」の単価を削除しますか？')) return;
-  KemuriData.costs.remove(name); refresh(); render();
-}
-function addCost(){
-  const n = (document.getElementById('c-name')||{}).value || '';
-  const u = (document.getElementById('c-unit')||{}).value || '';
-  const p = (document.getElementById('c-price')||{}).value || '';
-  if(!n.trim()){ toast('商品名を入れてください'); return; }
-  KemuriData.costs.set(n.trim(), { unit:u.trim(), price:num(p) });
-  refresh(); render(); toast('追加しました');
+  if(!confirm('「' + name + '」を原価マスタから削除しますか？')) return;
+  KemuriData.costs.remove(name);
+  EDIT_C = { name:'' };
+  refresh(); render(); toast('削除しました');
 }
 
 /* ============================================================
