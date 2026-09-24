@@ -67,6 +67,8 @@
   .card{border:1.5px solid #ededed;border-radius:16px;padding:14px;margin-bottom:12px;}
   .card h2{font-size:15px;font-weight:700;margin-bottom:10px;}
   .muted{font-size:13px;color:#8a8a8a;line-height:1.6;}
+  .opt{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:700;cursor:pointer;}
+  .opt input{width:22px;height:22px;flex:none;accent-color:#e8531f;}
   .gap{margin-top:10px;}
   .warn{background:#fff8e6;border:1.5px solid #ffe0a3;border-radius:14px;padding:12px 14px;font-size:14px;color:#8a6100;line-height:1.6;}
   .info{background:#f4f7ff;border:1.5px solid #d8e3ff;border-radius:14px;padding:12px 14px;font-size:14px;color:#3a4d8f;line-height:1.6;}
@@ -612,7 +614,7 @@ CsvPosSource.getColMemo = () => DB.csvMap;
 function guessCols(head){ return CsvPosSource.guessCols(head); }
 
 /* ---------- POS画面（3ステップ） ---------- */
-let POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false };
+let POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false, noStock:false };
 /* 日付まわりは kemuri-core.js に、CSVの期間読み取りは pos-source.js にまとめた */
 function todayStr(){ return KemuriCore.todayStr(); }
 function nextDay(d){ return KemuriCore.nextDay(d); }
@@ -729,7 +731,21 @@ function viewPos(){
        + '「列の設定に戻る」で<b>日時の列</b>を選んでください。</div>';
   }
 
-  if(pv.lines.length){
+  /* 過去ぶんをまとめて取り込むときは、在庫を動かさずに売上だけ残したい。
+     （例：9か月ぶんの商品別集計を「売れ筋を見る」ために入れる）
+     動かしてしまうと、今ある在庫から9か月ぶんが引かれて実態と合わなくなる。 */
+  h += '<div class="card gap"><h2>在庫の扱い</h2>'
+     + '<label class="opt"><input type="checkbox" ' + (POS.noStock?'checked':'')
+     +   ' onchange="POS.noStock=this.checked;render()"> 在庫を動かさない（過去ぶんの分析用）</label>'
+     + '<div class="muted gap">'
+     + (POS.noStock
+        ? '売上の記録だけ残します。<b>在庫は1つも動きません。</b>過去の売れ筋を見るために、まとめて取り込むときはこちら。'
+        : 'いつもどおり、売れたぶんを在庫から引きます。毎日の締めはこちらのままで大丈夫です。')
+     + '</div></div>';
+
+  if(POS.noStock){
+    h += '<div class="info">在庫は動かしません。売上だけ ' + POS.sales.length + ' 行を記録します。</div>';
+  }else if(pv.lines.length){
     h += '<div class="card"><h2>在庫の動き</h2>';
     pv.lines.forEach(l=>{
       h += '<div class="prev"><span class="nm">'+esc(l.name)+'</span>'
@@ -741,7 +757,7 @@ function viewPos(){
     h += '<div class="info">今回、在庫から引くものはありません。</div>';
   }
 
-  if(pv.unknown.length){
+  if(pv.unknown.length && !POS.noStock){
     const un = pv.unknown.slice().sort((a,b)=>b.qty-a.qty);
     const sug = un.filter(u=>u.suggest), rest = un.filter(u=>!u.suggest);
     const opts = u => '<select class="sel" onchange="setMap(this.value,\''+escArg(u.name)+'\')">'
@@ -776,7 +792,9 @@ function viewPos(){
     h += '<button class="btn btn-gray gap" onclick="skipAllUnknown()">未対応の '+(POS.showAll||!rest.length? un.length : rest.length)
        + ' 件をまとめて「使わない」にする</button>';
   }
-  h += '<button class="btn btn-primary gap" '+(pv.lines.length?'':'disabled')+' onclick="posApply()">在庫に反映する</button>';
+  const canGo = POS.noStock ? POS.sales.length : pv.lines.length;
+  h += '<button class="btn btn-primary gap" '+(canGo?'':'disabled')+' onclick="posApply()">'
+     + (POS.noStock ? '売上だけ取り込む（在庫は動かさない）' : '在庫に反映する') + '</button>';
   h += '<button class="btn btn-gray gap" onclick="POS.step=2;render()">列の設定を見直す</button>';
   h += '</div>';
   return h;
@@ -805,7 +823,7 @@ function startImport(parsed){
   if(c.name>=0 && c.qty>=0) posPreview();
   else { POS.step = 2; render(); }
 }
-function posReset(){ POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false }; render(); }
+function posReset(){ POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false, noStock:false }; render(); }
 function posHead(i){
   POS.parsed.headIdx = parseInt(i,10);
   POS.parsed.cols = guessCols(POS.parsed.rows[POS.parsed.headIdx]);
@@ -896,11 +914,18 @@ function posApply(){
   const rec = { id:DB.seq++, at:nowISO(), file:POS.parsed.file, period:{ from:pr.from, to:pr.to },
                 rows:0, lines:[], keys:[], applied:[], undone:false };
   const markSum = a=>{ rec.applied.push({ key:a.key, prev:DB.applied[a.key]||0, total:a.total }); DB.applied[a.key] = a.total; };
+  const noStock = !!POS.noStock;
+  rec.noStock = noStock;
   pv.lines.forEach(l=>{
     const it = item(l.id); if(!it) return;
     const amount = l.qty * (l.per||1);
-    move(it, it.stock - amount, 'POS売上（'+l.qty+'個）');
-    rec.lines.push({ itemId:it.id, qty:amount });
+    /* 在庫を動かさないモードでは move しない。rec.lines にも入れない
+       （取消したときに、引いていないぶんを戻してしまわないように）。
+       取込済みの印は付ける＝同じCSVを入れ直しても二重にならない。 */
+    if(!noStock){
+      move(it, it.stock - amount, 'POS売上（'+l.qty+'個）');
+      rec.lines.push({ itemId:it.id, qty:amount });
+    }
     l.keys.forEach(k=>{ DB.seen[k] = 1; rec.keys.push(k); });
     l.sums.forEach(markSum);
   });
@@ -929,11 +954,12 @@ function posApply(){
   if(DB.imports.length>30) DB.imports.length = 30;
   pruneSeen();
   save();
-  const n = rec.lines.length;
-  POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false };
-  render(); toast(salesWarn || (n+'商品の在庫に反映しました'));
+  const n = noStock ? POS.sales.length : rec.lines.length;
+  POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false, noStock:false };
+  render(); toast(salesWarn || (noStock ? ('売上 '+n+'行を記録しました（在庫は動かしていません）')
+                                           : (n+'商品の在庫に反映しました')));
   if(salesWarn) alert(salesWarn);
-  go('stock');
+  go(noStock ? 'pos' : 'stock');
 }
 /* seenが増えすぎないように、古い取込のキーから捨てる */
 function pruneSeen(){
@@ -994,7 +1020,7 @@ function viewSet(){
   DB.imports.slice(0,10).forEach(r=>{
     h += '<div class="hist"><span class="t">'+fmtDT(r.at)+'</span>'
        + '<span class="n" style="font-size:13px">'+esc(r.file)+'</span>'
-       + '<span class="r">'+r.rows+'行</span>'
+       + '<span class="r">'+r.rows+'行'+(r.noStock?'・在庫そのまま':'')+'</span>'
        + (r.undone? '<span class="r">取消済</span>'
                   : '<button class="btn btn-gray btn-sm" style="padding:6px 10px;font-size:12px" onclick="undoImport('+r.id+')">取消</button>')
        + '</div>';

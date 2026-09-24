@@ -251,19 +251,35 @@
   }
 
   /* ヘッダー行らしい行を探す（タイトル行が上にあるPOS出力にも対応） */
+  /* 見出し行を当てる。
+     エクストリンクPOSの書き出しは、本当の見出しの上に
+       ソート:,金額順.
+       時間:,～.
+     のような行が入る。「金額順.」にも「金額」が入っているので、
+     «最初に見つかった行» を見出しにすると、ここを掴んでしまって
+     商品名も出数も読めなくなる。
+     そこで «見出しらしい語がいくつ当たったか» で点数を付けて選ぶ。 */
   function guessHeadRow(rows) {
-    var kw = /(商品|品名|メニュー|品目|数量|個数|点数|日付|日時|伝票|単価|金額)/;
+    var kw = /(商品|品名|メニュー|品目|数量|個数|点数|出数|販売数|日付|日時|伝票|単価|金額|売上)/;
     var lim = Math.min(rows.length, 12);
+    var best = 0, bestHit = -1, bestN = 0;
     for (var i = 0; i < lim; i++) {
       var f = rows[i].filter(function (c) { return String(c).trim() !== ''; });
-      if (f.length >= 2 && f.some(function (c) { return kw.test(String(c)); })) return i;
+      if (f.length < 2) continue;
+      var hit = f.filter(function (c) { return kw.test(String(c)); }).length;
+      /* 当たった数が多いほう。同じなら列が多いほう。それも同じなら上の行 */
+      if (hit > bestHit || (hit === bestHit && f.length > bestN)) {
+        best = i; bestHit = hit; bestN = f.length;
+      }
     }
-    var best = 0, bn = 0;
+    if (bestHit > 0) return best;
+    /* 見出しらしい語が1つも無い＝いちばん列の多い行 */
+    var b2 = 0, bn = 0;
     for (var j = 0; j < lim; j++) {
       var n = rows[j].filter(function (c) { return String(c).trim() !== ''; }).length;
-      if (n > bn) { bn = n; best = j; }
+      if (n > bn) { bn = n; b2 = j; }
     }
-    return best;
+    return b2;
   }
 
   function looksLikeHeader(row) {

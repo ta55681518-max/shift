@@ -548,8 +548,222 @@
     return { rows: out, skipped: skipped, headerFound: true };
   }
 
+  /* ============================================================
+     日別売上（POSの「日別」集計CSV）
+     ------------------------------------------------------------
+     日付・天気・総売上・客数が1ファイルに日ごとで入っている。
+     商品名は入っていないので在庫は動かせないが、
+     «どの曜日がどれだけ忙しいか» はこれだけで出せる。
+     商品別の集計（期間まとめ）と掛け合わせて、
+     「金曜のもも串はだいたい何本」を見積もるのに使う。
+     ============================================================ */
+  var DAILY_KEY = 'kemuri_daily_v1';
+  var DOW_NAME = ['日', '月', '火', '水', '木', '金', '土'];
+
+  var DAILY_COL = {
+    day:    ['日付', '営業日', '年月日', '日'],
+    weather:['天気', '天候'],
+    gross:  ['総売上(税込)', '総売上（税込）', '売上(税込)', '税込売上', '総売上'],
+    net:    ['総売上(税抜)', '総売上（税抜）', '売上(税抜)', '税抜売上'],
+    guests: ['客計', '客数', '来客数', '人数'],
+    groups: ['組計', '組数', '組'],
+  };
+
+  function blankDaily() { return { v: 1, days: {}, updatedAt: '' }; }
+
+  var Daily = {
+    _db: null,
+    load: function () {
+      if (this._db) return this._db;
+      try {
+        var raw = global.localStorage.getItem(DAILY_KEY);
+        if (raw) {
+          var p = JSON.parse(raw);
+          this._db = Object.assign(blankDaily(), p && typeof p === 'object' ? p : {});
+          return this._db;
+        }
+      } catch (e) { /* 壊れていたら作り直す */ }
+      this._db = blankDaily();
+      return this._db;
+    },
+    save: function () {
+      var db = this.load();
+      db.updatedAt = new Date().toISOString();
+      try { global.localStorage.setItem(DAILY_KEY, JSON.stringify(db)); return true; }
+      catch (e) { return false; }
+    },
+
+    /* rows[] = { day, weather, gross, net, guests, groups } を入れる。
+       同じ日は上書き（入れ直しても増えない）。 */
+    importRows: function (rows) {
+      var db = this.load(), n = 0, upd = 0;
+      (rows || []).forEach(function (r) {
+        if (!r || !r.day) return;
+        if (db.days[r.day]) upd++; else n++;
+        db.days[r.day] = {
+          weather: r.weather || '',
+          gross: num(r.gross), net: num(r.net),
+          guests: num(r.guests), groups: num(r.groups),
+        };
+      });
+      this.save();
+      return { added: n, updated: upd, total: Object.keys(db.days).length };
+    },
+
+    all: function () { return this.load().days; },
+    dayList: function () { return Object.keys(this.load().days).sort(); },
+    get: function (day) { return this.load().days[day] || null; },
+
+    stats: function () {
+      var ds = this.dayList(), db = this.load();
+      var g = 0, gu = 0;
+      ds.forEach(function (d) { g += num(db.days[d].gross); gu += num(db.days[d].guests); });
+      return {
+        days: ds.length, from: ds[0] || '', to: ds[ds.length - 1] || '',
+        gross: g, guests: gu,
+        avgGross: ds.length ? Math.round(g / ds.length) : 0,
+        avgGuests: ds.length ? Math.round(gu / ds.length * 10) / 10 : 0,
+      };
+    },
+
+    /* 曜日ごとの平均。売上0の日は «休んだ日» とみなして平均から外す
+       （休みを混ぜると平均が下がって、仕込みが足りなくなる）。 */
+    dow: function () {
+      var db = this.load(), acc = [];
+      for (var i = 0; i < 7; i++) acc.push({ dow: i, name: DOW_NAME[i], days: 0, gross: 0, guests: 0, groups: 0, closed: 0 });
+      Object.keys(db.days).forEach(function (d) {
+        var r = db.days[d], i = C.dowOf(d);
+        if (i == null || i < 0 || i > 6) return;
+        if (!(num(r.gross) > 0)) { acc[i].closed++; return; }
+        acc[i].days++; acc[i].gross += num(r.gross);
+        acc[i].guests += num(r.guests); acc[i].groups += num(r.groups);
+      });
+      var tot = 0, cnt = 0;
+      acc.forEach(function (a) { tot += a.gross; cnt += a.days; });
+      var avgAll = cnt ? tot / cnt : 0;
+      acc.forEach(function (a) {
+        a.avgGross  = a.days ? Math.round(a.gross / a.days) : 0;
+        a.avgGuests = a.days ? Math.round(a.guests / a.days * 10) / 10 : 0;
+        a.avgGroups = a.days ? Math.round(a.groups / a.days * 10) / 10 : 0;
+        /* 指数 … 全体の平均を1.00としたときの、その曜日の忙しさ */
+        a.index = avgAll ? Math.round(a.avgGross / avgAll * 100) / 100 : 0;
+      });
+      return { rows: acc, avgGross: Math.round(avgAll), days: cnt };
+    },
+
+    /* その曜日の «忙しさ指数»（全体平均＝1.00）。データが無ければ null */
+    indexOfDow: function (dow) {
+      var r = this.dow().rows[dow];
+      return r && r.days ? r.index : null;
+    },
+
+    clear: function () {
+      this._db = blankDaily();
+      try { global.localStorage.removeItem(DAILY_KEY); } catch (e) {}
+    },
+  };
+
+  /* 「01月05日(月)」のように年が入っていない日付がある。
+     かっこの曜日と実際の曜日が合う年を選ぶ＝年を当てにいく。 */
+  function guessYear(parts, years) {
+    var best = null;
+    years.forEach(function (y) {
+      var hit = 0, seen = 0;
+      parts.forEach(function (p) {
+        if (p.dow == null) return;
+        seen++;
+        var d = y + '-' + p.mm + '-' + p.dd;
+        if (C.dowOf(d) === p.dow) hit++;
+      });
+      if (!seen) return;
+      if (!best || hit > best.hit) best = { year: y, hit: hit, seen: seen };
+    });
+    return best;
+  }
+
+  /* 戻り値 … { rows, headerFound, year, yearGuessed, matched, total, warn } */
+  function dailyFromCsv(text, forceYear) {
+    var rows = splitCsv(text);
+    if (!rows.length) return { rows: [], headerFound: false };
+
+    var headIdx = -1, cols = null;
+    for (var i = 0; i < Math.min(rows.length, 15); i++) {
+      var cells = rows[i].map(function (c) { return norm(c); });
+      var c = {};
+      Object.keys(DAILY_COL).forEach(function (key) {
+        c[key] = -1;
+        DAILY_COL[key].some(function (w) {
+          var j = cells.indexOf(norm(w));
+          if (j >= 0) { c[key] = j; return true; }
+          return false;
+        });
+      });
+      /* 日付と、売上か客数のどちらかがあれば日別表とみなす */
+      if (c.day >= 0 && (c.gross >= 0 || c.net >= 0 || c.guests >= 0)) { headIdx = i; cols = c; break; }
+    }
+    if (headIdx < 0) return { rows: [], headerFound: false };
+
+    var cell = function (r, j) { return j >= 0 && r[j] != null ? String(r[j]).trim() : ''; };
+    var parts = [], raw = [];
+
+    for (var k = headIdx + 1; k < rows.length; k++) {
+      var r = rows[k];
+      var t = cell(r, cols.day);
+      if (!t) continue;
+      if (/合計|総計|平均/.test(t)) continue;          // 集計行は日ではない
+      var full = t.match(/(\d{4})\D{1,2}(\d{1,2})\D{1,2}(\d{1,2})/);   // 年つき
+      var md   = t.match(/(\d{1,2})\D{1,2}(\d{1,2})/);                  // 月日だけ
+      var dowM = t.match(/[(（]\s*([日月火水木金土])\s*[)）]/);
+      var dow  = dowM ? DOW_NAME.indexOf(dowM[1]) : null;
+      var z2 = function (n) { return ('0' + n).slice(-2); };
+      if (full) {
+        parts.push({ year: full[1], mm: z2(full[2]), dd: z2(full[3]), dow: dow });
+      } else if (md) {
+        parts.push({ year: null, mm: z2(md[1]), dd: z2(md[2]), dow: dow });
+      } else continue;
+      raw.push(r);
+    }
+    if (!parts.length) return { rows: [], headerFound: true, year: null };
+
+    /* 年を決める */
+    var need = parts.some(function (p) { return !p.year; });
+    var year = forceYear ? String(forceYear) : null, guessed = false, match = null;
+    if (need && !year) {
+      var now = new Date().getFullYear(), cand = [];
+      for (var y = now + 1; y >= now - 4; y--) cand.push(String(y));
+      match = guessYear(parts, cand);
+      if (match) { year = match.year; guessed = true; }
+      else year = String(now);
+    }
+
+    var out = [];
+    parts.forEach(function (p, i) {
+      var day = (p.year || year) + '-' + p.mm + '-' + p.dd;
+      var r = raw[i];
+      out.push({
+        day: day,
+        weather: cell(r, cols.weather),
+        gross: num(cell(r, cols.gross)) || num(cell(r, cols.net)),
+        net: num(cell(r, cols.net)),
+        guests: num(cell(r, cols.guests)),
+        groups: num(cell(r, cols.groups)),
+      });
+    });
+    out.sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : 0; });
+
+    return {
+      rows: out, headerFound: true,
+      year: year, yearGuessed: guessed,
+      matched: match ? match.hit : null, checked: match ? match.seen : null,
+      from: out[0] ? out[0].day : '', to: out[out.length - 1] ? out[out.length - 1].day : '',
+    };
+  }
+
   global.KemuriData = {
     costs: Costs,
+    daily: Daily,
+    dailyFromCsv: dailyFromCsv,
+    DAILY_KEY: DAILY_KEY,
     costsFromCsv: costsFromCsv,
     recipes: Recipes,
     stock: Stock,
