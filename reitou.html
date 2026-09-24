@@ -630,6 +630,39 @@ function defaultPeriod(){
   return { from:m+'-01', to:t };
 }
 function needPeriod(){ const c = POS.parsed.cols; return c.at<0 && c.ticket<0; }
+
+/* 日別売上のCSV（日付・天気・総売上・客計…）を、ここで取り込もうとしていないか。
+   このCSVには商品名の列が無いので、日付が商品名として登録されてしまう。
+   （実際に「09月23日(水) 出数1」が商品として並んだことがある）
+   見出しに客計/組計/総売上があるか、商品名の列が日付ばかりかで見分ける。 */
+function looksDaily(){
+  const p = POS.parsed;
+  if(!p) return null;
+  const head = (p.headIdx>=0 ? p.rows[p.headIdx] : []).map(c=>norm(c)).join('|');
+  const byHead = /客計|組計|客単価|組単価|総売上/.test(head);
+
+  let byName = false;
+  const rows = p.rows.slice(Math.max(p.headIdx,0)+1, Math.max(p.headIdx,0)+21);
+  if(p.cols.name>=0 && rows.length){
+    /* 「09月23日(水)」「2026/09/23」のような書き方 */
+    const isDate = v => /^\s*\d{1,4}\s*[年月\/\-\.]\s*\d{1,2}\s*[月日\/\-\.]?/.test(String(v==null?'':v));
+    const vals = rows.map(r=>r[p.cols.name]).filter(v=>String(v==null?'':v).trim()!=='');
+    if(vals.length >= 3) byName = vals.filter(isDate).length / vals.length >= 0.6;
+  }
+  if(!byHead && !byName) return null;
+  return { byHead, byName };
+}
+function dailyWarnBox(){
+  const d = looksDaily();
+  if(!d) return '';
+  return '<div class="warn gap">⚠️ <b>これは「日別の売上」のCSVではありませんか？</b><br>'
+       + (d.byHead ? '見出しに「客計」「組計」「総売上」があります。' : '')
+       + (d.byName ? '商品名の列に日付が並んでいます。' : '')
+       + '<br>このCSVには<b>商品名が入っていない</b>ので、このまま進めると'
+       + '<b>日付が商品として登録されます</b>（例：「09月23日(水)」出数1）。'
+       + '<br><br>日別の売上は、<b>ダッシュボードの📊売上タブ</b>で取り込んでください。'
+       + '<br><a href="dashboard.html" style="color:#8a6100;font-weight:700">ダッシュボードをひらく →</a></div>';
+}
 function viewPos(){
   let h = '<div class="pad">';
   h += '<div class="step">'
@@ -689,6 +722,7 @@ function viewPos(){
        + p.rows.slice(p.headIdx, p.headIdx+5).map((r,i)=>'<tr class="'+(i===0?'head':'')+'">'
          + r.slice(0,8).map(c=>'<td>'+esc(String(c).slice(0,18))+'</td>').join('') + '</tr>').join('')
        + '</table></div></div>';
+    h += dailyWarnBox();
     h += '<button class="btn btn-primary gap" onclick="posPreview()">内容確認へ</button>';
     h += '<button class="btn btn-gray gap" onclick="posReset()">やめる</button>';
     h += '</div>'; return h;
@@ -792,7 +826,8 @@ function viewPos(){
     h += '<button class="btn btn-gray gap" onclick="skipAllUnknown()">未対応の '+(POS.showAll||!rest.length? un.length : rest.length)
        + ' 件をまとめて「使わない」にする</button>';
   }
-  const canGo = POS.noStock ? POS.sales.length : pv.lines.length;
+  h += dailyWarnBox();
+  const canGo = (POS.noStock ? POS.sales.length : pv.lines.length) && !looksDaily();
   h += '<button class="btn btn-primary gap" '+(canGo?'':'disabled')+' onclick="posApply()">'
      + (POS.noStock ? '売上だけ取り込む（在庫は動かさない）' : '在庫に反映する') + '</button>';
   h += '<button class="btn btn-gray gap" onclick="POS.step=2;render()">列の設定を見直す</button>';
@@ -981,9 +1016,24 @@ function undoImport(id){
   rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
   (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
-  try{ KemuriCore.sales.undo(rec.id); }catch(e){}   // 売上履歴からも同じぶんを戻す
+  /* 売上履歴からも同じぶんを戻す。ここが失敗すると在庫だけ戻って
+     ダッシュボードには売上が残る＝「取り消したのに消えない」になるので、
+     黙って飲み込まずに知らせる。 */
+  let salesLeft = false;
+  try{ if(KemuriCore.sales.undo(rec.id) !== true) salesLeft = true; }
+  catch(e){ salesLeft = true; }
   rec.undone = true;
-  save(); render(); toast('取込を取り消しました');
+  save(); render();
+  if(salesLeft){
+    toast('在庫は戻しましたが、売上の記録は残っています');
+    alert('在庫は戻しました。\n\nただし、この取込ぶんの売上の記録は戻せませんでした'
+        + '（取消の控えが古くなって残っていないときに起きます）。\n\n'
+        + 'ダッシュボードの⚙️設定タブ →「入れ直したいとき」から'
+        + '「商品ごとの売上を消す」を押して、CSVを入れ直してください。\n'
+        + '在庫の数は変わりません。');
+  }else{
+    toast('取込を取り消しました');
+  }
 }
 
 /* ---------- ⑤ 設定 ---------- */
