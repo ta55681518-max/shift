@@ -60,6 +60,9 @@
   .prow .nm small{display:block;font-size:11px;color:#aaa;font-weight:600;margin-top:2px;}
   .prow .q{font-size:19px;font-weight:800;min-width:46px;text-align:right;font-variant-numeric:tabular-nums;}
   .prow .m{font-size:12px;color:#999;min-width:66px;text-align:right;font-variant-numeric:tabular-nums;}
+  .bar{display:block;height:6px;border-radius:999px;background:#f0f0f2;margin-top:6px;overflow:hidden;}
+  .bar i{display:block;height:100%;background:#e8531f;border-radius:999px;}
+  .chips button[disabled]{opacity:.35;}
   .rate{border-radius:999px;font-size:12px;font-weight:800;padding:4px 9px;min-width:52px;text-align:center;}
   .rate.lo{background:#eafaf1;color:#0a9d55;}
   .rate.mid{background:#fff6e0;color:#c07d00;}
@@ -249,9 +252,140 @@ async function runAnalyze(force){
 /* ============================================================
    ① サマリ
    ============================================================ */
+/* 日別売上CSV（日付・天気・総売上・客数）の取り込み状態 */
+let DIMP = { open:false, text:'', res:null, err:'' };
+let DOW_PICK = null;            // 曜日別の目安で見ている曜日（null=明日）
+const DOW_NAME = ['日','月','火','水','木','金','土'];
+
+/* ---- 日別売上CSVの取り込み ---- */
+function dailyCard(dst){
+  let h = '<div class="card"><h2>日別の売上（POSの日別集計）</h2>';
+  if(dst.days){
+    h += '<div class="muted">' + dst.days + '日ぶん（' + esc(dst.from) + ' 〜 ' + esc(dst.to) + '）'
+       + '／1日あたり ' + yen(dst.avgGross) + '・' + dst.avgGuests + '人</div>';
+  }else{
+    h += '<div class="muted">POSの「日別」集計CSVを入れると、<b>曜日ごとの忙しさ</b>が出せます。'
+       + '商品名は入っていなくて大丈夫です。在庫は動きません。</div>';
+  }
+  h += '<button class="btn btn-out gap" onclick="DIMP.open=!DIMP.open;render()">'
+     + (DIMP.open ? '閉じる' : (dst.days ? '追加で取り込む' : '日別売上CSVを取り込む')) + '</button>';
+
+  if(DIMP.open){
+    h += '<textarea class="gap" id="dcsv" placeholder="日付,天気,総売上(税抜),総売上(税込),客計,客単価,組計,組単価&#10;01月05日(月),,93897,103220,13,7940,12,8602">'
+       + esc(DIMP.text) + '</textarea>'
+       + '<button class="btn btn-dark gap" onclick="readDailyCsv()">CSVを読み取る</button>';
+    if(DIMP.err) h += '<div class="warn gap">' + esc(DIMP.err) + '</div>';
+    const r = DIMP.res;
+    if(r && r.rows && r.rows.length){
+      h += '<div class="ok-box gap">' + r.rows.length + '日ぶん読み取りました（' + esc(r.from) + ' 〜 ' + esc(r.to) + '）。</div>';
+      if(r.yearGuessed){
+        const allOk = r.matched === r.checked;
+        h += '<div class="' + (allOk ? 'info' : 'warn') + ' gap">CSVに年が書かれていないので、'
+           + 'かっこの曜日から <b>' + esc(r.year) + '年</b> と判断しました'
+           + '（' + r.matched + '/' + r.checked + '日ぶんの曜日が一致）。'
+           + (allOk ? '' : '<br>一致しない日があります。年が違うかもしれないので、取り込む前に確かめてください。')
+           + '</div>';
+      }
+      h += '<button class="btn btn-primary gap" onclick="saveDailyCsv()">' + r.rows.length + '日ぶんを登録する</button>';
+    }
+  }
+  return h + '</div>';
+}
+function readDailyCsv(){
+  const el = document.getElementById('dcsv');
+  DIMP.text = el ? el.value : '';
+  DIMP.err = ''; DIMP.res = null;
+  if(!DIMP.text.trim()){ DIMP.err = 'CSVを貼り付けてください。'; render(); return; }
+  let r;
+  try{ r = KemuriData.dailyFromCsv(DIMP.text); }
+  catch(e){ DIMP.err = '読み取れませんでした。'; render(); return; }
+  if(!r.headerFound){
+    DIMP.err = '日別の売上表として読めませんでした。「日付」と「総売上」または「客計」の列があるCSVを入れてください。'
+             + '（商品名と出数が並んでいるCSVは、こちらではなく冷凍在庫アプリのPOSタブで取り込みます）';
+  }else if(!r.rows.length){
+    DIMP.err = '日付の行が見つかりませんでした。';
+  }else{
+    DIMP.res = r;
+  }
+  render();
+}
+function saveDailyCsv(){
+  const r = DIMP.res;
+  if(!r || !r.rows || !r.rows.length) return;
+  const res = KemuriData.daily.importRows(r.rows);
+  DIMP = { open:false, text:'', res:null, err:'' };
+  refresh(); render();
+  toast(res.added + '日ぶんを登録しました' + (res.updated ? '（' + res.updated + '日ぶんは上書き）' : ''));
+}
+
+/* ---- 曜日ごとの忙しさ ---- */
+function dowCard(dst){
+  if(!dst.days) return '';
+  const d = KemuriData.daily.dow();
+  const rows = d.rows.filter(r => r.days);
+  if(!rows.length) return '';
+  const max = Math.max.apply(null, rows.map(r => r.avgGross));
+  let h = '<div class="sec">曜日ごとの忙しさ</div><div class="card">'
+        + '<div class="muted" style="margin-bottom:10px">' + d.days + '日ぶんの平均。'
+        + '売上0の日は休みとみなして外しています。</div>';
+  d.rows.forEach(r => {
+    if(!r.days){
+      h += '<div class="prow"><span class="nm">' + r.name + '<small>データなし'
+         + (r.closed ? '（休み ' + r.closed + '日）' : '') + '</small></span>'
+         + '<span class="rate non">—</span></div>';
+      return;
+    }
+    const w = max ? Math.round(r.avgGross / max * 100) : 0;
+    h += '<div class="prow"><span class="nm">' + r.name
+       + '<small>' + r.days + '日ぶん・' + r.avgGuests + '人'
+       + (r.closed ? '・休み' + r.closed + '日' : '') + '</small>'
+       + '<span class="bar"><i style="width:' + w + '%"></i></span></span>'
+       + '<span class="m">' + yen(r.avgGross) + '</span>'
+       + '<span class="rate ' + (r.index >= 1.2 ? 'hi' : r.index >= 0.9 ? 'mid' : 'lo') + '">'
+       + r.index.toFixed(2) + '</span></div>';
+  });
+  h += '<div class="muted gap">右の数字は「ふだんの日を1.00」としたときの忙しさです。</div></div>';
+  return h;
+}
+
+/* ---- 翌日の目安（曜日の指数 × 1日あたりの出数） ---- */
+function tomorrowCard(dst){
+  if(!dst.days) return '';
+  const d = KemuriData.daily.dow();
+  const tmr = KemuriCore.nextDay(KemuriCore.todayStr());
+  const pick = (DOW_PICK == null) ? KemuriCore.dowOf(tmr) : DOW_PICK;
+  const row = d.rows[pick];
+  let h = '<div class="sec">曜日別の目安</div><div class="card">'
+        + '<div class="chips" style="margin-bottom:12px">'
+        + d.rows.map(r => '<button class="' + (r.dow===pick?'on':'') + '"'
+            + (r.days ? '' : ' disabled') + ' onclick="DOW_PICK=' + r.dow + ';render()">'
+            + r.name + '</button>').join('')
+        + '</div>';
+  if(!row || !row.days){
+    h += '<div class="muted">この曜日のデータがまだありません。</div></div>';
+    return h;
+  }
+  h += '<div class="muted" style="margin-bottom:10px">'
+     + (DOW_PICK == null ? '明日は<b>' + row.name + '曜</b>。' : '<b>' + row.name + '曜</b>の目安。')
+     + 'ふだんの ' + row.index.toFixed(2) + ' 倍・' + row.avgGuests + '人・' + yen(row.avgGross) + 'の日です。</div>';
+  A.products.slice(0,10).forEach(p2 => {
+    const est = p2.perDay * row.index;
+    h += '<div class="prow"><span class="nm">' + esc(p2.name)
+       + '<small>ふだん1日 ' + (Math.round(p2.perDay*10)/10) + '</small></span>'
+       + '<span class="m">約 ' + Math.max(1, Math.round(est)) + '</span></div>';
+  });
+  h += '<div class="warn gap">これは<b>期間の平均から割り出した目安</b>です。'
+     + '日別の売上データが貯まるほど正確になります。'
+     + '仕込みの最終判断は、いつもどおりご自身でお願いします。</div></div>';
+  return h;
+}
+
 function viewSum(){
   const t = A.totals, p = A.period;
+  const dst = KemuriData.daily.stats();
   let h = '<div class="pad">';
+
+  h += dailyCard(dst);
 
   h += '<div class="chips">'
      + ['all','month','30','7'].map(r =>
@@ -260,7 +394,8 @@ function viewSum(){
      + '</div>';
 
   if(!A.products.length){
-    h += '<div class="info">この期間の売上データがありません。<br>'
+    h += dowCard(dst);
+    h += '<div class="info">商品ごとの売上データがまだありません。<br>'
        + '冷凍在庫アプリでPOSの売上を取り込むと、ここに出てきます。</div>'
        + '<a class="btn btn-out gap" style="text-decoration:none;display:block" href="reitou.html">冷凍在庫アプリをひらく →</a>'
        + '</div>';
@@ -295,6 +430,9 @@ function viewSum(){
   h += '<div class="sec">よく出ている商品</div><div class="card">';
   A.products.slice(0,10).forEach((p2,i) => { h += prow(p2, i+1); });
   h += '</div>';
+
+  h += dowCard(dst);
+  h += tomorrowCard(dst);
 
   /* 出ていない */
   const slow = A.products.filter(x => x.qty > 0).slice(-5).reverse();
