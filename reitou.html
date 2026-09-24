@@ -1016,9 +1016,24 @@ function undoImport(id){
   rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
   (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
-  try{ KemuriCore.sales.undo(rec.id); }catch(e){}   // 売上履歴からも同じぶんを戻す
+  /* 売上履歴からも同じぶんを戻す。ここが失敗すると在庫だけ戻って
+     ダッシュボードには売上が残る＝「取り消したのに消えない」になるので、
+     黙って飲み込まずに知らせる。 */
+  let salesLeft = false;
+  try{ if(KemuriCore.sales.undo(rec.id) !== true) salesLeft = true; }
+  catch(e){ salesLeft = true; }
   rec.undone = true;
-  save(); render(); toast('取込を取り消しました');
+  save(); render();
+  if(salesLeft){
+    toast('在庫は戻しましたが、売上の記録は残っています');
+    alert('在庫は戻しました。\n\nただし、この取込ぶんの売上の記録は戻せませんでした'
+        + '（取消の控えが古くなって残っていないときに起きます）。\n\n'
+        + 'ダッシュボードの⚙️設定タブ →「入れ直したいとき」から'
+        + '「商品ごとの売上を消す」を押して、CSVを入れ直してください。\n'
+        + '在庫の数は変わりません。');
+  }else{
+    toast('取込を取り消しました');
+  }
 }
 
 /* ---------- ⑤ 設定 ---------- */

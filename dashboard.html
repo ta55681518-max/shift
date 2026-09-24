@@ -904,6 +904,7 @@ let PING = { loading:false, msg:'', ok:false };
 function viewSet(){
   const st = KemuriCore.sales.stats();
   const ug = KemuriCore.sales.usage();
+  const ug2 = KemuriData.daily.stats();
   const cs = KemuriData.costs.stats();
   let h = '<div class="pad">';
 
@@ -950,6 +951,23 @@ function viewSet(){
        + '曜日ごとの傾向や翌日の予測を出すには、POSから<b>日別</b>で書き出して取り込む必要があります。</div>';
   }
 
+  /* 取り違えて取り込んだときに、確実に元に戻せる手段。
+     取込履歴からの取消が効かない場合の逃げ道でもある。
+     消したあとはCSVを入れ直せばいいだけなので、消せないより消せるほうがよい。 */
+  h += '<div class="card"><h2>入れ直したいとき</h2>'
+     + '<div class="muted">取り違えて取り込んでしまったときは、ここで消してからCSVを入れ直してください。'
+     + '<b>在庫の数は変わりません。</b>仕入単価とレシピも消えません。</div>';
+  if(st.days){
+    h += '<button class="btn btn-out gap" onclick="wipeSales()">商品ごとの売上を消す（'
+       + st.days + '日ぶん）</button>';
+  }
+  if(ug2.days){
+    h += '<button class="btn btn-out gap" onclick="wipeDaily()">日別の売上を消す（'
+       + ug2.days + '日ぶん）</button>';
+  }
+  if(!st.days && !ug2.days) h += '<div class="muted gap">いま消せる売上はありません。</div>';
+  h += '</div>';
+
   h += '<div class="card"><h2>ほかのアプリ</h2>'
      + '<a class="btn btn-out" style="text-decoration:none;display:block;margin-bottom:8px" href="reitou.html">冷凍在庫</a>'
      + '<a class="btn btn-out" style="text-decoration:none;display:block;margin-bottom:8px" href="kushiyaki.html">串焼き在庫</a>'
@@ -964,6 +982,23 @@ function row2(k,v){
   return '<div class="crow"><span class="nm">' + esc(k) + '</span>'
        + '<span class="muted" style="font-size:14px">' + esc(v) + '</span></div>';
 }
+/* 消すのは取り返しがつかないので、何が消えて何が残るかを書いて2回たしかめる */
+function wipeSales(){
+  const st = KemuriCore.sales.stats();
+  if(!confirm('商品ごとの売上 ' + st.days + '日ぶん（' + st.from + '〜' + st.to + '）を消します。\n\n'
+            + '・在庫の数は変わりません\n・仕入単価とレシピも残ります\n・CSVを入れ直せば戻せます\n\n消しますか？')) return;
+  if(!confirm('本当に消しますか？\nこの操作は元に戻せません。')) return;
+  try{ KemuriCore.sales.clear(); }catch(e){}
+  refresh(); render(); toast('商品ごとの売上を消しました');
+}
+function wipeDaily(){
+  const d = KemuriData.daily.stats();
+  if(!confirm('日別の売上 ' + d.days + '日ぶん（' + d.from + '〜' + d.to + '）を消します。\n\n'
+            + '・在庫の数は変わりません\n・CSVを入れ直せば戻せます\n\n消しますか？')) return;
+  try{ KemuriData.daily.clear(); }catch(e){}
+  refresh(); render(); toast('日別の売上を消しました');
+}
+
 function savePass(){
   const v = (document.getElementById('pass')||{}).value || '';
   try{ localStorage.setItem(PASS_KEY, v.trim()); }catch(e){}
