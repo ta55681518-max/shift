@@ -765,6 +765,7 @@ function saveRecipe(){
 let PING = { loading:false, msg:'', ok:false };
 function viewSet(){
   const st = KemuriCore.sales.stats();
+  const ug = KemuriCore.sales.usage();
   const cs = KemuriData.costs.stats();
   let h = '<div class="pad">';
 
@@ -786,7 +787,25 @@ function viewSet(){
      + row2('日別で入っている日', st.dailyDays + '日')
      + row2('仕入単価', cs.filled + ' / ' + cs.total + ' 件')
      + row2('レシピ', KemuriData.recipes.all().length + ' 件')
+     + row2('この端末の使用量', Math.round(ug.bytes/1024).toLocaleString('ja-JP') + ' KB')
      + '</div>';
+
+  /* 自動整理のしくみ。黙って古い日が消えると「入れたのに無い」になるので説明する */
+  h += '<div class="card"><h2>売上履歴の自動整理</h2>'
+     + '<div class="muted">スマホに保存できる量には限りがあるので、古いものから自動で整理しています。'
+     + '取り込む操作はいつもどおりで大丈夫です。</div>'
+     + row2('残す期間', '最新から ' + ug.keepDays + '日ぶん')
+     + row2('明細をそのまま持つ期間', '最新から ' + ug.ticketDays + '日ぶん')
+     + (ug.closed ? row2('印をまとめ済み', ug.closed + '日ぶん') : '')
+     + '<div class="muted gap">' + ug.ticketDays + '日より古い日は、伝票1行ずつの控えを'
+     + '「この日は取込済み」の印1つにまとめます。<b>売れた数はそのまま残る</b>ので、'
+     + '予測や売れ筋には影響しません。同じCSVを入れ直しても二重に足されません。</div>'
+     + '</div>';
+
+  if(ug.full){
+    h += '<div class="warn">この端末の空きが少なくなっています（' + Math.round(ug.bytes/1024).toLocaleString('ja-JP') + 'KB）。'
+       + 'これ以上増えると、古い日から自動で捨てられます。</div>';
+  }
 
   if(st.lumpedDays && !st.dailyDays){
     h += '<div class="warn">いまの売上データは、期間をまとめて取り込んだものだけです。'

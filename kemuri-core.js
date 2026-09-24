@@ -20,6 +20,13 @@
   var SALES_KEY = 'kemuri_sales_v1';
   var KEEP_DAYS = 500;   // 履歴を残す日数（これより古い日は捨てる）
   var KEEP_LOGS = 30;    // 取消できる取込の件数
+  var MAX_SEEN  = 40000; // 「取込済みの印」の上限（超えたら古い日ごと捨てる）
+  var TICKET_DAYS = 120; // 伝票1行ずつの印を持っておく日数。これより古い日は
+                         // 「この日はもう取り込んだ」という印1つにまとめる。
+                         // 明細CSVは1晩で数百行あり、1年ぶん持つと端末に入らない。
+  /* 印は必ず「その日」を控える。日ごと捨てれば印も一緒に消えるので、
+     “日は残っているのに印だけ消えた”状態が起きない＝同じCSVを
+     入れ直しても二重に足されない。ここが崩れると売上が水増しされる。 */
 
   /* ---------- 小道具 ----------
      ※ num / norm は冷凍在庫アプリと同じ実装。
@@ -81,7 +88,7 @@
      「9/1に300個売れた」と読み違えるので、必ず残す。
      日ごとの予測をちゃんと出したいなら、POSから日別で書き出すのが一番よい。 */
   function blankSales() {
-    return { v: 1, days: {}, spans: {}, seen: {}, totals: {}, logs: {}, order: [], updatedAt: '' };
+    return { v: 1, days: {}, spans: {}, seen: {}, closed: {}, totals: {}, logs: {}, order: [], updatedAt: '' };
   }
 
   var Sales = {
@@ -108,10 +115,20 @@
         global.localStorage.setItem(SALES_KEY, JSON.stringify(db));
         return true;
       } catch (e) {
-        /* 容量オーバーなら古い日を削ってもう一度だけ試す */
-        this.prune(Math.floor(KEEP_DAYS / 2));
-        try { global.localStorage.setItem(SALES_KEY, JSON.stringify(db)); return true; }
-        catch (e2) { return false; }
+        /* 容量オーバー。古い日を段階的に削って粘る。ここで諦めると
+           取り込んだぶんが丸ごと消えるので、«古い日を失う» より
+           «今日のぶんが残る» を優先する。
+           [残す日数, 残す取込（取消用）の件数]。取消の控えは1件あたりが
+           重いので、日数と一緒に減らす。 */
+        var steps = [[Math.floor(KEEP_DAYS / 2), KEEP_LOGS], [180, 20], [90, 10],
+                     [45, 5], [21, 2], [7, 1], [7, 0]];
+        for (var i = 0; i < steps.length; i++) {
+          this.prune(steps[i][0]);
+          this._trimLogs(db, steps[i][1]);
+          try { global.localStorage.setItem(SALES_KEY, JSON.stringify(db)); return true; }
+          catch (e2) { /* まだ入らない。もう一段削る */ }
+        }
+        return false;
       }
     },
 
@@ -138,8 +155,9 @@
         }
 
         if (s.ticket) {                          /* 明細形式：1行ずつ */
+          if (db.closed[day]) return;            // 古い日：もう取り込んである
           if (db.seen[s.key]) return;
-          db.seen[s.key] = 1;
+          db.seen[s.key] = day;         // 1 ではなく日。古いぶんだけ捨てられるように
           log.seenKeys.push(s.key);
           self._add(db, log, added, day, k, s.posName, num(s.qty), num(s.amount));
         } else {                                 /* 集計形式：日×商品でまとめる */
@@ -167,11 +185,12 @@
         this._trimLogs(db);
       }
       this.prune(KEEP_DAYS);
-      this.save();
+      var saved = this.save();
       return {
         days: Object.keys(added.days).length,
         items: Object.keys(added.items).length,
-        qty: added.qty
+        qty: added.qty,
+        saved: saved            // false … 端末の保存容量がいっぱいで残せなかった
       };
     },
 
@@ -253,28 +272,79 @@
     /* その日のぶんが「まとめて入っている」なら期間を返す。日別なら null */
     spanOf: function (day) { return this.load().spans[day] || null; },
 
-    /* 古い日と、使わなくなった台帳を捨てる */
+    /* 古い日を捨てる。捨てるときは「その日のぶん」を丸ごと（売上・期間の印・
+       台帳・取込済みの印）まとめて捨てる。ばらばらに捨てると、日が残って
+       いるのに印だけ無い状態になり、同じCSVを入れ直したときに二重に足される。 */
     prune: function (keepDays) {
       var db = this.load();
+      this._closeOld(db);
+      this._dropOldest(db, Object.keys(db.days).length - keepDays);
+
+      /* 印が多すぎるときは、収まるまで古い日から丸ごと捨てる。
+         印だけを間引くやり方はしない（上に書いた理由のため）。 */
+      var guard = 0;
+      while (Object.keys(db.seen).length > MAX_SEEN && guard++ < 200) {
+        var left = Object.keys(db.days).length;
+        if (left <= 1) { break; }
+        if (!this._dropOldest(db, Math.max(1, Math.ceil(left / 10)))) break;
+      }
+      /* 日が分からない古い印（この仕組みを入れる前のもの）は最後に落とす */
+      if (Object.keys(db.seen).length > MAX_SEEN) {
+        Object.keys(db.seen).forEach(function (k) {
+          if (typeof db.seen[k] !== 'string') delete db.seen[k];
+        });
+      }
+    },
+
+    /* 古い日の「伝票1行ずつの印」を「この日は取り込んだ」の1つにまとめる。
+       売れ数そのものは残るので、予測には影響しない。まとめたあとで同じ日を
+       入れ直すと、その日ごと飛ばす＝二重に足されない。 */
+    _closeOld: function (db) {
       var ds = Object.keys(db.days).sort();
-      if (ds.length > keepDays) {
-        ds.slice(0, ds.length - keepDays).forEach(function (d) { delete db.days[d]; delete db.spans[d]; });
-      }
-      var oldest = Object.keys(db.days).sort()[0] || '';
-      if (oldest) {
-        Object.keys(db.totals).forEach(function (gk) {
-          var day = gk.split('\u0001')[1];
-          if (day && day < oldest) delete db.totals[gk];
-        });
-      }
-      if (Object.keys(db.seen).length > 30000) {
-        var keep = {};
-        db.order.slice(0, 10).forEach(function (id) {
-          var lg = db.logs[id];
-          if (lg) lg.seenKeys.forEach(function (k) { keep[k] = 1; });
-        });
-        db.seen = keep;
-      }
+      if (!ds.length) return;
+      var cut = addDays(ds[ds.length - 1], -TICKET_DAYS);   // 一番新しい日から数える
+      var shut = {};
+      ds.forEach(function (d) { if (d < cut && !db.closed[d]) { db.closed[d] = 1; shut[d] = 1; } });
+      if (!Object.keys(shut).length) return;
+      Object.keys(db.seen).forEach(function (k) {
+        if (shut[db.seen[k]]) delete db.seen[k];
+      });
+    },
+
+    /* 何日ぶん捨てたかを返す */
+    _dropOldest: function (db, n) {
+      if (!(n > 0)) return 0;
+      var ds = Object.keys(db.days).sort();
+      var gone = {}, cnt = 0;
+      ds.slice(0, n).forEach(function (d) {
+        gone[d] = 1; cnt++;
+        delete db.days[d]; delete db.spans[d]; delete db.closed[d];
+      });
+      if (!cnt) return 0;
+      Object.keys(db.totals).forEach(function (gk) {
+        if (gone[gk.split('\u0001')[1]]) delete db.totals[gk];
+      });
+      Object.keys(db.seen).forEach(function (k) {
+        if (gone[db.seen[k]]) delete db.seen[k];
+      });
+      return cnt;
+    },
+
+    /* いまどれくらい入っているか（設定画面で見せる） */
+    usage: function () {
+      var db = this.load();
+      var ds = Object.keys(db.days).sort();
+      var bytes = 0;
+      try { bytes = (global.localStorage.getItem(SALES_KEY) || '').length; } catch (e) {}
+      return {
+        days: ds.length, from: ds[0] || '', to: ds[ds.length - 1] || '',
+        seen: Object.keys(db.seen).length,
+        closed: Object.keys(db.closed).length,   // 印をまとめ済みの日数
+        ticketDays: TICKET_DAYS,
+        bytes: bytes,
+        keepDays: KEEP_DAYS, maxSeen: MAX_SEEN,
+        full: bytes > 3.5 * 1024 * 1024        // 上限が近い
+      };
     },
 
     /* 全部消す（設定画面から使う。取り返しがつかないので呼ぶ側で必ず確認する） */
@@ -296,10 +366,11 @@
       added.items[k] = 1;
       added.qty += qty;
     },
-    _trimLogs: function (db) {
-      if (db.order.length <= KEEP_LOGS) return;
-      db.order.slice(KEEP_LOGS).forEach(function (id) { delete db.logs[id]; });
-      db.order = db.order.slice(0, KEEP_LOGS);
+    _trimLogs: function (db, keep) {
+      var n = (keep == null) ? KEEP_LOGS : keep;
+      if (db.order.length <= n) return;
+      db.order.slice(n).forEach(function (id) { delete db.logs[id]; });
+      db.order = db.order.slice(0, n);
     }
   };
 

@@ -916,7 +916,14 @@ function posApply(){
   /* 売上そのものを履歴にためる（翌日の予測・売れ筋・原価率の土台になる）。
      在庫に関係ない商品（ドリンク・コースなど）も、売上分析に要るので全部ためる。
      ためる側で二重防止をやっているので、同じCSVを入れ直しても増えない。 */
-  try{ KemuriCore.sales.record(POS.sales, rec.id, POS.period); }
+  let salesWarn = '';
+  try{
+    const sres = KemuriCore.sales.record(POS.sales, rec.id, POS.period);
+    /* 端末の保存容量がいっぱいだと、売上履歴だけ残せないことがある。
+       在庫は反映できているので止めはしないが、黙って消えると
+       「取り込んだのに売上に出ない」になるので必ず知らせる。 */
+    if(sres && sres.saved === false) salesWarn = '在庫は反映しましたが、端末の空きが足りず売上履歴を残せませんでした。設定から古い売上を減らしてください。';
+  }
   catch(e){ /* 履歴に失敗しても在庫の反映は止めない */ }
   DB.imports.unshift(rec);
   if(DB.imports.length>30) DB.imports.length = 30;
@@ -924,7 +931,8 @@ function posApply(){
   save();
   const n = rec.lines.length;
   POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false };
-  render(); toast(n+'商品の在庫に反映しました');
+  render(); toast(salesWarn || (n+'商品の在庫に反映しました'));
+  if(salesWarn) alert(salesWarn);
   go('stock');
 }
 /* seenが増えすぎないように、古い取込のキーから捨てる */
