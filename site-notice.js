@@ -1,0 +1,50 @@
+/* ============================================================
+   串焼KEMURI屋  古いURL用のお知らせ  site-notice.js
+   ------------------------------------------------------------
+   アプリは GitHub Pages（ta55681518-max.github.io）から
+   Netlify（comfy-khapse-8a3cae.netlify.app）へ引っ越した。
+   ファイルは同じものが両方から配られるので、見た目では
+   どちらを開いているか分からない。実際、古いほうを開いて
+   「取り込んだはずのデータが無い」「取消が効かない」が起きた。
+
+   データは «ブラウザ × URL» ごとに別なので、URLが違えば中身も別。
+   そこで、古いURLで開いたときだけ上に帯を出して知らせる。
+   自動では飛ばさない。引っ越しのバックアップ書き出しに
+   古いほうを開く必要があるため。
+   ============================================================ */
+(function () {
+  'use strict';
+  var NEW_HOST = 'comfy-khapse-8a3cae.netlify.app';
+  var host = (location.hostname || '').toLowerCase();
+  if (host.indexOf('github.io') < 0) return;      // 新しいURL・手元の確認用では出さない
+
+  function show() {
+    if (document.getElementById('kemuri-old-site')) return;
+    var page = (location.pathname.split('/').pop() || 'index.html');
+    var to = 'https://' + NEW_HOST + '/' + page + location.search + location.hash;
+
+    var bar = document.createElement('div');
+    bar.id = 'kemuri-old-site';
+    bar.setAttribute('style', [
+      'position:sticky', 'top:0', 'z-index:99999',
+      'background:#b3261e', 'color:#fff',
+      'padding:calc(12px + env(safe-area-inset-top)) 14px 12px',
+      'font-size:15px', 'line-height:1.6', 'font-weight:700',
+      'font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif',
+      'box-shadow:0 2px 8px rgba(0,0,0,.2)'
+    ].join(';'));
+    bar.innerHTML =
+      '⚠️ これは<u>古いほう</u>のアプリです<br>'
+      + '<span style="font-weight:400;font-size:13px">'
+      + 'ここで取り込んでも、新しいほうには入りません。</span>'
+      + '<a href="' + to + '" style="display:block;margin-top:10px;background:#fff;color:#b3261e;'
+      + 'text-align:center;text-decoration:none;border-radius:12px;padding:13px;font-size:16px;'
+      + 'font-weight:700">新しいほうを開く →</a>';
+
+    var b = document.body;
+    if (b) b.insertBefore(bar, b.firstChild);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show);
+  else show();
+})();
