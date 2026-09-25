@@ -423,9 +423,12 @@ function viewStock(){
   });
   h += '</div>';
   const lastCount = DB.history.find(x=>x.reason===REASONS[0]);
-  h += '<div class="pad" style="padding-top:0"><div class="muted">'
+  h += '<div class="pad" style="padding-top:0">'
+     + '<button class="btn btn-out" onclick="openItem(0)">＋ 商品を追加</button>'
+     + '<div class="muted gap">'
      + (lastCount ? '最後の棚卸：'+fmtDay(lastCount.at)+'（'+agoText(lastCount.at)+'）' : 'まだ棚卸をしていません')
-     + '<br>商品をタップすると ＋ － ／ 実在庫の入力ができます。</div></div>';
+     + '<br>商品をタップすると ＋ － ／ 実在庫の入力ができます。'
+     + '<br>名前や発注ラインを変えるときも、商品をタップしてください。</div></div>';
   return h;
 }
 
@@ -454,7 +457,10 @@ function drawAdjust(){
     + '<div class="two">'
     +   '<button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
     +   '<button class="btn btn-primary" onclick="adjSave()">保存する</button>'
-    + '</div>';
+    + '</div>'
+    /* 名前を直したい・発注ラインを変えたいときの入口。設定タブの奥にしかなく、
+       在庫を見ている最中に気づけなかったので、ここからも行けるようにする。 */
+    + '<button class="btn btn-out gap" onclick="openItem('+ADJ.id+')">⚙️ 名前・発注ラインを変える</button>';
   openSheet(h);
 }
 /* 入力・±のたびに表示だけ書き換える（シート全体を作り直すと入力が飛ぶため） */
@@ -1174,6 +1180,10 @@ function saveItem(){
   if(EDIT.id){
     const it = item(EDIT.id);
     it.name = EDIT.name; it.min = EDIT.min; it.per = EDIT.per;
+    /* 新しい名前でもPOSから引けるようにしておく。前の名前の対応はそのまま残す
+       （過去のCSVを入れ直したときに引けなくなるため）。 */
+    const k = norm(EDIT.name);
+    if(k && !DB.map[k]) DB.map[k] = { item:EDIT.id, label:EDIT.name };
   }else{
     const id = DB.seq++;
     DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per, cost:0 });
