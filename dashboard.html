@@ -31,6 +31,10 @@
   .btn-dark{background:#222;color:#fff;}
   .btn-gray{background:#f1f1f3;color:#333;}
   .btn-out{background:#fff;border:1.5px solid #ddd;color:#333;}
+  input[type=file]{display:none;}
+  .file-btn{display:block;text-align:center;background:#e8531f;color:#fff;border-radius:14px;
+            padding:16px;font-size:17px;font-weight:700;font-family:inherit;cursor:pointer;
+            touch-action:manipulation;margin-bottom:10px;}
   .btn-danger{background:#fff0ee;color:#d33;}
   .btn:disabled{background:#ededed;color:#aaa;}
   .btn-sm{width:auto;padding:11px 15px;font-size:15px;border-radius:12px;}
@@ -123,6 +127,8 @@
 </div>
 <div class="tabbar" id="tabbar"></div>
 <div class="toast" id="toast"></div>
+
+<input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <script src="kemuri-core.js"></script>
 <script src="pos-source.js"></script>
@@ -271,9 +277,14 @@ function dailyCard(dst){
      + (DIMP.open ? '閉じる' : (dst.days ? '追加で取り込む' : '日別売上CSVを取り込む')) + '</button>';
 
   if(DIMP.open){
-    h += '<textarea class="gap" id="dcsv" placeholder="日付,天気,総売上(税抜),総売上(税込),客計,客単価,組計,組単価&#10;01月05日(月),,93897,103220,13,7940,12,8602">'
+    h += '<label class="file-btn gap" for="dailyfile">📄 CSVファイルから取り込む</label>'
+       + '<div class="muted" style="margin-bottom:12px">POSから書き出した日別売上のCSVを選んでください。'
+       + '文字コード（Shift_JIS／UTF-8）は自動で判定します。'
+       + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>'
+       + '<div class="muted" style="font-weight:700;margin-bottom:6px">うまくいかないときは貼り付け</div>'
+       + '<textarea class="gap" id="dcsv" placeholder="日付,天気,総売上(税抜),総売上(税込),客計,客単価,組計,組単価&#10;01月05日(月),,93897,103220,13,7940,12,8602">'
        + esc(DIMP.text) + '</textarea>'
-       + '<button class="btn btn-dark gap" onclick="readDailyCsv()">CSVを読み取る</button>';
+       + '<button class="btn btn-dark gap" onclick="readDailyCsv()">貼り付けた内容を読み取る</button>';
     if(DIMP.err) h += '<div class="warn gap">' + esc(DIMP.err) + '</div>';
     const r = DIMP.res;
     if(r && r.rows && r.rows.length){
@@ -291,9 +302,29 @@ function dailyCard(dst){
   }
   return h + '</div>';
 }
-function readDailyCsv(){
-  const el = document.getElementById('dcsv');
-  DIMP.text = el ? el.value : '';
+/* ファイルから読む。文字コードの判定は取込層（pos-source.js）に任せる */
+async function onPickDaily(el){
+  const f = el.files && el.files[0]; el.value = '';
+  if(!f) return;
+  DIMP.open = true; DIMP.err = ''; DIMP.res = null;
+  let text = '';
+  try{ text = await KemuriPos.decodeFile(f); }
+  catch(e){ DIMP.err = 'ファイルを読めませんでした。'; render(); return; }
+  if(text.slice(0,2) === 'PK'){
+    DIMP.err = 'エクセル形式（.xlsx）は取り込めません。POSからCSVで書き出してください。';
+    render(); return;
+  }
+  DIMP.text = text;
+  render();                      // 先に枠へ入れて、何を読んだか見えるようにする
+  readDailyCsv(text);
+}
+function readDailyCsv(fromFile){
+  if(typeof fromFile === 'string'){
+    DIMP.text = fromFile;
+  }else{
+    const el = document.getElementById('dcsv');
+    DIMP.text = el ? el.value : '';
+  }
   DIMP.err = ''; DIMP.res = null;
   if(!DIMP.text.trim()){ DIMP.err = 'CSVを貼り付けてください。'; render(); return; }
   let r;
