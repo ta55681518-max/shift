@@ -981,8 +981,13 @@ function posApply(){
        （取消したときに、引いていないぶんを戻してしまわないように）。
        取込済みの印は付ける＝同じCSVを入れ直しても二重にならない。 */
     if(!noStock){
+      /* 在庫は0で止まる（マイナスにしない）ので、«引こうとした量» と
+         «実際に引けた量» がずれることがある。取消で戻すのは実際に引けたぶん。
+         引こうとした量を戻すと、在庫が元より増えてしまう。 */
+      const had = it.stock;
       move(it, it.stock - amount, 'POS売上（'+l.qty+'個）');
-      rec.lines.push({ itemId:it.id, qty:amount });
+      const took = Math.round((had - it.stock) * 10) / 10;
+      if(took > 0) rec.lines.push({ itemId:it.id, qty:took });
     }
     l.keys.forEach(k=>{ DB.seen[k] = 1; rec.keys.push(k); });
     l.sums.forEach(markSum);
