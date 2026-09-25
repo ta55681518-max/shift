@@ -630,6 +630,19 @@ function defaultPeriod(){
   return { from:m+'-01', to:t };
 }
 function needPeriod(){ const c = POS.parsed.cols; return c.at<0 && c.ticket<0; }
+const LONG_SPAN = 31;         // これより長い期間は「過去ぶんの取込」とみなす
+/* 取り込もうとしている期間の長さ（日）。分からなければ0 */
+function spanDays(){
+  const days = {};
+  (POS.sales||[]).forEach(s=>{ const d = s.day || dayOf(s.at); if(d) days[d]=1; });
+  const ds = Object.keys(days).sort();
+  const from = (POS.period && POS.period.from) || ds[0] || '';
+  const to   = (POS.period && POS.period.to)   || ds[ds.length-1] || '';
+  if(!from || !to) return 0;
+  const a = new Date(from+'T00:00:00'), b = new Date(to+'T00:00:00');
+  if(isNaN(a) || isNaN(b)) return 0;
+  return Math.round((b - a) / 86400000) + 1;
+}
 
 /* 日別売上のCSV（日付・天気・総売上・客計…）を、ここで取り込もうとしていないか。
    このCSVには商品名の列が無いので、日付が商品名として登録されてしまう。
@@ -775,7 +788,13 @@ function viewPos(){
      + (POS.noStock
         ? '売上の記録だけ残します。<b>在庫は1つも動きません。</b>過去の売れ筋を見るために、まとめて取り込むときはこちら。'
         : 'いつもどおり、売れたぶんを在庫から引きます。毎日の締めはこちらのままで大丈夫です。')
-     + '</div></div>';
+     + '</div>'
+     + (POS.noStock && spanDays() > LONG_SPAN
+        ? '<div class="info gap">' + spanDays() + '日ぶんと長いので、<b>こちらを初めから選んでおきました</b>。'
+          + 'いまの在庫から' + spanDays() + '日ぶんが引かれると、実際と合わなくなるためです。'
+          + '<br>今日ぶんを在庫に反映したいときは、チェックを外してください。</div>'
+        : '')
+     + '</div>';
 
   if(POS.noStock){
     h += '<div class="info">在庫は動かしません。売上だけ ' + POS.sales.length + ' 行を記録します。</div>';
@@ -880,6 +899,10 @@ function posPreview(){
   save();
   POS.sales = CsvPosSource.toSales(p, POS.period);
   if(!POS.sales.length){ toast('売上の行が見つかりませんでした'); return; }
+  /* 長い期間をまとめて取り込むのは、たいてい «過去ぶんを分析用に入れる» ので、
+     はじめから在庫を動かさない側にしておく。毎日の締めは1〜数日なので影響しない。
+     チェックは自分で外せる（外せば今までどおり引く）。 */
+  if(spanDays() > LONG_SPAN) POS.noStock = true;
   POS.step = 3; render();
 }
 
