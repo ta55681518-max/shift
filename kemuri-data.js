@@ -559,6 +559,7 @@
      ============================================================ */
   var DAILY_KEY = 'kemuri_daily_v1';
   var DOW_NAME = ['日', '月', '火', '水', '木', '金', '土'];
+  var MIN_DAYS = 4;   // この日数に満たない曜日は «あてにならない» 扱いにする
 
   var DAILY_COL = {
     day:    ['日付', '営業日', '年月日', '日'],
@@ -627,7 +628,12 @@
     },
 
     /* 曜日ごとの平均。売上0の日は «休んだ日» とみなして平均から外す
-       （休みを混ぜると平均が下がって、仕込みが足りなくなる）。 */
+       （休みを混ぜると平均が下がって、仕込みが足りなくなる）。
+
+       営業日が MIN_DAYS 未満の曜日は «あてにならない» 印を付け、
+       全体の平均（指数のものさし）からも外す。定休日にたまたま開けた
+       1日のような、ならしていない数字を «その曜日の傾向» として
+       見せてしまうと、仕込みを外す。 */
     dow: function () {
       var db = this.load(), acc = [];
       for (var i = 0; i < 7; i++) acc.push({ dow: i, name: DOW_NAME[i], days: 0, gross: 0, guests: 0, groups: 0, closed: 0 });
@@ -638,23 +644,33 @@
         acc[i].days++; acc[i].gross += num(r.gross);
         acc[i].guests += num(r.guests); acc[i].groups += num(r.groups);
       });
+      acc.forEach(function (a) { a.thin = a.days > 0 && a.days < MIN_DAYS; });
+
+      /* ものさしは «日数がそろっている曜日» だけで作る */
       var tot = 0, cnt = 0;
-      acc.forEach(function (a) { tot += a.gross; cnt += a.days; });
+      acc.forEach(function (a) { if (!a.thin) { tot += a.gross; cnt += a.days; } });
       var avgAll = cnt ? tot / cnt : 0;
+
       acc.forEach(function (a) {
         a.avgGross  = a.days ? Math.round(a.gross / a.days) : 0;
         a.avgGuests = a.days ? Math.round(a.guests / a.days * 10) / 10 : 0;
         a.avgGroups = a.days ? Math.round(a.groups / a.days * 10) / 10 : 0;
-        /* 指数 … 全体の平均を1.00としたときの、その曜日の忙しさ */
-        a.index = avgAll ? Math.round(a.avgGross / avgAll * 100) / 100 : 0;
+        /* 指数 … 全体の平均を1.00としたときの、その曜日の忙しさ。
+           日数が足りない曜日は出さない（当てにならないので） */
+        a.index = (avgAll && a.days && !a.thin) ? Math.round(a.avgGross / avgAll * 100) / 100 : null;
       });
-      return { rows: acc, avgGross: Math.round(avgAll), days: cnt };
+      return {
+        rows: acc, avgGross: Math.round(avgAll), days: cnt,
+        minDays: MIN_DAYS,
+        thin: acc.filter(function (a) { return a.thin; }).length,
+        closed: acc.filter(function (a) { return !a.days; }).length,
+      };
     },
 
-    /* その曜日の «忙しさ指数»（全体平均＝1.00）。データが無ければ null */
+    /* その曜日の «忙しさ指数»（全体平均＝1.00）。当てにならなければ null */
     indexOfDow: function (dow) {
       var r = this.dow().rows[dow];
-      return r && r.days ? r.index : null;
+      return r && r.index != null ? r.index : null;
     },
 
     clear: function () {

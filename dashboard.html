@@ -355,27 +355,37 @@ function dowCard(dst){
   const d = KemuriData.daily.dow();
   const rows = d.rows.filter(r => r.days);
   if(!rows.length) return '';
-  const max = Math.max.apply(null, rows.map(r => r.avgGross));
+  /* ものさしは «日数がそろっている曜日» だけで作るので、棒もそこに合わせる */
+  const solid = rows.filter(r => !r.thin);
+  const max = Math.max.apply(null, (solid.length ? solid : rows).map(r => r.avgGross));
   let h = '<div class="sec">曜日ごとの忙しさ</div><div class="card">'
         + '<div class="muted" style="margin-bottom:10px">' + d.days + '日ぶんの平均。'
         + '売上0の日は休みとみなして外しています。</div>';
   d.rows.forEach(r => {
     if(!r.days){
-      h += '<div class="prow"><span class="nm">' + r.name + '<small>データなし'
-         + (r.closed ? '（休み ' + r.closed + '日）' : '') + '</small></span>'
+      h += '<div class="prow"><span class="nm">' + r.name + '<small>定休日（データなし'
+         + (r.closed ? '・休み ' + r.closed + '日' : '') + '）</small></span>'
          + '<span class="rate non">—</span></div>';
       return;
     }
-    const w = max ? Math.round(r.avgGross / max * 100) : 0;
+    const w = max ? Math.min(100, Math.round(r.avgGross / max * 100)) : 0;
     h += '<div class="prow"><span class="nm">' + r.name
        + '<small>' + r.days + '日ぶん・' + r.avgGuests + '人'
-       + (r.closed ? '・休み' + r.closed + '日' : '') + '</small>'
-       + '<span class="bar"><i style="width:' + w + '%"></i></span></span>'
+       + (r.closed ? '・休み' + r.closed + '日' : '')
+       + (r.thin ? '　⚠️ 日数が少なく、あてになりません' : '') + '</small>'
+       + '<span class="bar"><i style="width:' + w + '%;'
+       + (r.thin ? 'background:#c9c9cf' : '') + '"></i></span></span>'
        + '<span class="m">' + yen(r.avgGross) + '</span>'
-       + '<span class="rate ' + (r.index >= 1.2 ? 'hi' : r.index >= 0.9 ? 'mid' : 'lo') + '">'
-       + r.index.toFixed(2) + '</span></div>';
+       + (r.index == null
+          ? '<span class="rate non">—</span>'
+          : '<span class="rate ' + (r.index >= 1.2 ? 'hi' : r.index >= 0.9 ? 'mid' : 'lo') + '">'
+            + r.index.toFixed(2) + '</span>')
+       + '</div>';
   });
-  h += '<div class="muted gap">右の数字は「ふだんの日を1.00」としたときの忙しさです。</div></div>';
+  h += '<div class="muted gap">右の数字は「ふだんの日を1.00」としたときの忙しさです。'
+     + '<b>売上でくらべています</b>（客数は入力もれが出やすいため）。'
+     + (d.thin ? '<br>営業が' + d.minDays + '日に満たない曜日は、ならしていない数字になるので指数を出していません。' : '')
+     + '</div></div>';
   return h;
 }
 
@@ -393,12 +403,20 @@ function tomorrowCard(dst){
             + r.name + '</button>').join('')
         + '</div>';
   if(!row || !row.days){
-    h += '<div class="muted">この曜日のデータがまだありません。</div></div>';
+    h += '<div class="muted">この曜日は定休日か、データがまだありません。</div></div>';
+    return h;
+  }
+  if(row.index == null){
+    h += '<div class="warn">' + row.name + '曜の営業は ' + row.days + '日ぶんしかないので、'
+       + '目安を出していません。<br>ふだん閉めている曜日にたまたま開けた日の数字を'
+       + '「その曜日の傾向」にしてしまうと、仕込みを外します。'
+       + '<br><br>この日ぶんの売上は <b>' + yen(row.avgGross) + '</b> でした。</div></div>';
     return h;
   }
   h += '<div class="muted" style="margin-bottom:10px">'
      + (DOW_PICK == null ? '明日は<b>' + row.name + '曜</b>。' : '<b>' + row.name + '曜</b>の目安。')
-     + 'ふだんの ' + row.index.toFixed(2) + ' 倍・' + row.avgGuests + '人・' + yen(row.avgGross) + 'の日です。</div>';
+     + 'ふだんの ' + row.index.toFixed(2) + ' 倍・' + yen(row.avgGross) + 'の日です'
+     + '（参考：客数 ' + row.avgGuests + '人）。</div>';
   A.products.slice(0,10).forEach(p2 => {
     const est = p2.perDay * row.index;
     h += '<div class="prow"><span class="nm">' + esc(p2.name)
@@ -406,6 +424,7 @@ function tomorrowCard(dst){
        + '<span class="m">約 ' + Math.max(1, Math.round(est)) + '</span></div>';
   });
   h += '<div class="warn gap">これは<b>期間の平均から割り出した目安</b>です。'
+     + '曜日ごとの<b>売上</b>の差から出しています（客数は使っていません）。'
      + '日別の売上データが貯まるほど正確になります。'
      + '仕込みの最終判断は、いつもどおりご自身でお願いします。</div></div>';
   return h;
@@ -1081,5 +1100,6 @@ function render(){
   render();
 })();
 </script>
+<script src="site-notice.js"></script>
 </body>
 </html>
