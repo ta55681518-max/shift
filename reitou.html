@@ -154,6 +154,8 @@
          opacity:0;transition:opacity .25s;pointer-events:none;z-index:90;max-width:90%;text-align:center;}
   .toast.show{opacity:.96;}
 </style>
+<!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
+<script src="site-notice.js"></script>
 </head>
 <body>
 <div id="app">
@@ -1226,6 +1228,7 @@ function closeSheet(){ document.getElementById('ov').classList.remove('show'); }
    ブックマークレットが reitou.html#pos=<売上データ> を開くので、
    起動時にそれを読み取ってそのままプレビューまで進める。 */
 function importFromHash(){
+  if(window.__kemuriMoving) return false;   // 古いURLから新しいURLへ移る途中。ここでは読まない
   const m = String(location.hash||'').match(/[#&]pos=([^&]*)/);
   if(!m || !m[1]) return false;
   let text = '';
@@ -1298,6 +1301,5 @@ document.addEventListener('focusout', ()=>{
   importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ
 })();
 </script>
-<script src="site-notice.js"></script>
 </body>
 </html>
