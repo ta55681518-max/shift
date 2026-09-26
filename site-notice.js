@@ -9,8 +9,17 @@
 
    データは «ブラウザ × URL» ごとに別なので、URLが違えば中身も別。
    そこで、古いURLで開いたときだけ上に帯を出して知らせる。
-   自動では飛ばさない。引っ越しのバックアップ書き出しに
+   ふだんは自動では飛ばさない。引っ越しのバックアップ書き出しに
    古いほうを開く必要があるため。
+
+   ただし «#pos=…» つきで開かれたときだけは例外で、その場のまま
+   新しいURLへ送る。これはPOSの取り込みボタンから来たときの形で、
+   　・中身は売上データだけ。バックアップ書き出しとは関係がない
+   　・古いほうで取り込んでしまうと、古いほうの在庫が動く
+   　・reitou.html は起動時に読み取ったあとURLからこれを消すので、
+   　　帯を出してから押してもらう形では中身が引き継げない
+   という理由から、読み取られる前に送ってしまうのが唯一の手になる。
+   → そのため、このファイルはアプリ本体より先に読み込む（<head>）。
    ============================================================ */
 (function () {
   'use strict';
@@ -18,10 +27,23 @@
   var host = (location.hostname || '').toLowerCase();
   if (host.indexOf('github.io') < 0) return;      // 新しいURL・手元の確認用では出さない
 
+  var page = (location.pathname.split('/').pop() || 'index.html');
+  function newUrl(hash) {
+    return 'https://' + NEW_HOST + '/' + page + location.search + (hash || '');
+  }
+
+  /* POSの取り込みボタンから来た（#pos=…）ときは、読み取られる前に送る */
+  var hash = location.hash || '';
+  if (/[#&]pos=/.test(hash)) {
+    /* 飛ぶ前に本体が読み取ってしまわないよう印をつける。
+       location.replace のあとも、実際に移るまでページの読み込みは続くため。 */
+    window.__kemuriMoving = 1;
+    location.replace(newUrl(hash));
+    return;
+  }
+
   function show() {
     if (document.getElementById('kemuri-old-site')) return;
-    var page = (location.pathname.split('/').pop() || 'index.html');
-    var to = 'https://' + NEW_HOST + '/' + page + location.search + location.hash;
 
     var bar = document.createElement('div');
     bar.id = 'kemuri-old-site';
@@ -37,7 +59,7 @@
       '⚠️ これは<u>古いほう</u>のアプリです<br>'
       + '<span style="font-weight:400;font-size:13px">'
       + 'ここで取り込んでも、新しいほうには入りません。</span>'
-      + '<a href="' + to + '" style="display:block;margin-top:10px;background:#fff;color:#b3261e;'
+      + '<a href="' + newUrl(location.hash) + '" style="display:block;margin-top:10px;background:#fff;color:#b3261e;'
       + 'text-align:center;text-decoration:none;border-radius:12px;padding:13px;font-size:16px;'
       + 'font-weight:700">新しいほうを開く →</a>';
 

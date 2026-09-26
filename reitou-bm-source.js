@@ -108,7 +108,7 @@
     /* 冷凍在庫アプリを、読み取った売上を持たせて開く。
        貼り付けの操作が要らず、開いた時点でプレビューが出る。
        （うまく開けなかったときのために、クリップボードにもコピーしておく） */
-    var APP = 'https://ta55681518-max.github.io/shift/reitou.html';
+    var APP = 'https://comfy-khapse-8a3cae.netlify.app/reitou.html';
     var openApp = function () {
       try { location.href = APP + '#pos=' + encodeURIComponent(text); }
       catch (e) {

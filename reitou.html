@@ -154,6 +154,8 @@
          opacity:0;transition:opacity .25s;pointer-events:none;z-index:90;max-width:90%;text-align:center;}
   .toast.show{opacity:.96;}
 </style>
+<!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
+<script src="site-notice.js"></script>
 </head>
 <body>
 <div id="app">
@@ -423,9 +425,12 @@ function viewStock(){
   });
   h += '</div>';
   const lastCount = DB.history.find(x=>x.reason===REASONS[0]);
-  h += '<div class="pad" style="padding-top:0"><div class="muted">'
+  h += '<div class="pad" style="padding-top:0">'
+     + '<button class="btn btn-out" onclick="openItem(0)">＋ 商品を追加</button>'
+     + '<div class="muted gap">'
      + (lastCount ? '最後の棚卸：'+fmtDay(lastCount.at)+'（'+agoText(lastCount.at)+'）' : 'まだ棚卸をしていません')
-     + '<br>商品をタップすると ＋ － ／ 実在庫の入力ができます。</div></div>';
+     + '<br>商品をタップすると ＋ － ／ 実在庫の入力ができます。'
+     + '<br>名前や発注ラインを変えるときも、商品をタップしてください。</div></div>';
   return h;
 }
 
@@ -454,7 +459,10 @@ function drawAdjust(){
     + '<div class="two">'
     +   '<button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
     +   '<button class="btn btn-primary" onclick="adjSave()">保存する</button>'
-    + '</div>';
+    + '</div>'
+    /* 名前を直したい・発注ラインを変えたいときの入口。設定タブの奥にしかなく、
+       在庫を見ている最中に気づけなかったので、ここからも行けるようにする。 */
+    + '<button class="btn btn-out gap" onclick="openItem('+ADJ.id+')">⚙️ 名前・発注ラインを変える</button>';
   openSheet(h);
 }
 /* 入力・±のたびに表示だけ書き換える（シート全体を作り直すと入力が飛ぶため） */
@@ -981,8 +989,13 @@ function posApply(){
        （取消したときに、引いていないぶんを戻してしまわないように）。
        取込済みの印は付ける＝同じCSVを入れ直しても二重にならない。 */
     if(!noStock){
+      /* 在庫は0で止まる（マイナスにしない）ので、«引こうとした量» と
+         «実際に引けた量» がずれることがある。取消で戻すのは実際に引けたぶん。
+         引こうとした量を戻すと、在庫が元より増えてしまう。 */
+      const had = it.stock;
       move(it, it.stock - amount, 'POS売上（'+l.qty+'個）');
-      rec.lines.push({ itemId:it.id, qty:amount });
+      const took = Math.round((had - it.stock) * 10) / 10;
+      if(took > 0) rec.lines.push({ itemId:it.id, qty:took });
     }
     l.keys.forEach(k=>{ DB.seen[k] = 1; rec.keys.push(k); });
     l.sums.forEach(markSum);
@@ -1169,6 +1182,10 @@ function saveItem(){
   if(EDIT.id){
     const it = item(EDIT.id);
     it.name = EDIT.name; it.min = EDIT.min; it.per = EDIT.per;
+    /* 新しい名前でもPOSから引けるようにしておく。前の名前の対応はそのまま残す
+       （過去のCSVを入れ直したときに引けなくなるため）。 */
+    const k = norm(EDIT.name);
+    if(k && !DB.map[k]) DB.map[k] = { item:EDIT.id, label:EDIT.name };
   }else{
     const id = DB.seq++;
     DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per, cost:0 });
@@ -1211,6 +1228,7 @@ function closeSheet(){ document.getElementById('ov').classList.remove('show'); }
    ブックマークレットが reitou.html#pos=<売上データ> を開くので、
    起動時にそれを読み取ってそのままプレビューまで進める。 */
 function importFromHash(){
+  if(window.__kemuriMoving) return false;   // 古いURLから新しいURLへ移る途中。ここでは読まない
   const m = String(location.hash||'').match(/[#&]pos=([^&]*)/);
   if(!m || !m[1]) return false;
   let text = '';
@@ -1283,6 +1301,5 @@ document.addEventListener('focusout', ()=>{
   importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ
 })();
 </script>
-<script src="site-notice.js"></script>
 </body>
 </html>
