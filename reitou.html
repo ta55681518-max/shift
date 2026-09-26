@@ -53,6 +53,12 @@
   .st.few{background:#fff6e0;color:#c07d00;font-size:19px;}
   .st.ng{background:#d92d20;color:#fff;}
   .sec{font-size:13px;color:#999;font-weight:700;margin:14px 4px 8px;}
+  /* 分類・仕入先の見出し。品目が増えて一覧が長くなったときの区切り */
+  .cath{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+        margin:16px 12px 2px;font-size:15px;font-weight:800;color:#333;}
+  .cath span{font-size:12px;font-weight:600;color:#aaa;}
+  .cath b{color:#d92d20;}
+  .row .qty .un{font-size:12px;font-weight:600;color:#aaa;margin-left:2px;}
   .legend{display:flex;gap:14px;justify-content:center;font-size:12px;color:#888;padding:2px 0 10px;flex-wrap:wrap;}
 
   /* 汎用ボタン・カード */
@@ -224,17 +230,41 @@ const SEED_POS = [
 ];
 const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼした','数え間違い','その他'];
 
+/* 分類。冷凍以外を増やしていくための入れ物。
+   pos … POSの売上から自動で在庫を引くかどうか。
+         調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
+   ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
+const CATS = [
+  { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
+  { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
+  { k:'drink',  name:'ドリンク',     ic:'🍺', pos:true  },
+  { k:'dry',    name:'乾物・調味料', ic:'🧂', pos:false },
+  { k:'misc',   name:'備品',         ic:'🧻', pos:false }
+];
+const CAT0 = 'frozen';                       /* 分類が入っていない品目はこれ扱い */
+const UNITS = ['個','本','枚','袋','パック','kg','g','ケース','箱','L','ml'];
+function cat(k){ return CATS.find(c=>c.k===k) || CATS[0]; }
+function catOf(it){ return cat(it && it.cat); }
+function autoPos(it){ return catOf(it).pos; }
+/* いま使われている分類だけを、CATS の並び順で返す */
+function usedCats(){ return CATS.filter(c=>DB.items.some(i=>(i.cat||CAT0)===c.k)); }
+
 /* ---------- データ ----------
-   items[] = { id, name, stock, min, per }
+   items[] = { id, name, stock, min, per, cost, cat, sup, unit }
        min … 発注ライン（この数以下で「発注」）
        per … POS販売1に対して減らす在庫数（1皿で2個使うなら2）
+       cat … 分類（CATS のキー）。発注リストと在庫一覧の並べ分けに使う
+       sup … 仕入先。発注リストをここでまとめる（空なら「仕入先なし」）
+       unit… 単位（個・本・kg…）。数字のうしろに出すだけで、計算には使わない
+   sups[] … これまでに使った仕入先。入力の候補に出すためだけのもの
    map   … POS商品名(正規化) -> { item:itemId | '__skip__', label:表示名 }
    seen  … 取込済み売上行のキー（同じ売上を二重で引かないため）
    history[] … { at, name, before, after, reason }
    imports[] … { id, at, file, rows, lines:[{itemId,qty}], keys:[], undone }
 */
 function blank(){
-  return { v:1, seq:1, items:[], map:{}, seen:{}, applied:{}, history:[], imports:[], csvMap:null, ordered:{} };
+  return { v:1, seq:1, items:[], map:{}, seen:{}, applied:{}, history:[], imports:[],
+           csvMap:null, ordered:{}, sups:[] };
 }
 let DB = load();
 let TAB = 'stock';
@@ -260,7 +290,13 @@ function migrate(d){
   (d.items||[]).forEach(it=>{
     /* cost … 1個あたりの仕入原価（円）。0＝未入力。原価率と発注金額の計算に使う */
     if(it.cost == null){ it.cost = 0; changed = true; }
+    /* 分類・仕入先・単位。冷凍以外を増やせるように後から足した。
+       それまでに入っていたのは全部冷凍なので、既定は冷凍・単位「個」でよい。 */
+    if(!it.cat){ it.cat = CAT0; changed = true; }
+    if(it.sup == null){ it.sup = ''; changed = true; }
+    if(!it.unit){ it.unit = '個'; changed = true; }
   });
+  if(!Array.isArray(d.sups)){ d.sups = []; changed = true; }
   if(changed){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} }
   return d;
 }
@@ -285,6 +321,11 @@ function escArg(s){ return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function norm(s){ return KemuriCore.norm(s); }
 function item(id){ return DB.items.find(i=>i.id===id); }
+/* 数字のうしろに出す単位。「個」は今までどおり付けない（見た目を変えないため） */
+function unitTag(it){
+  const u = it && it.unit;
+  return (!u || u === '個') ? '' : '<span class="un">'+esc(u)+'</span>';
+}
 /* POSの商品名は「揚物/ポテトフライ」「★ポテトフライ」のように書かれることがあるので、
    そのまま → 先頭の記号を外す → 「/」の後ろ、の順に対応表を照合する */
 function posVariants(name){
@@ -374,7 +415,7 @@ function render(){
     '<button class="'+(TAB===k?'on':'')+'" onclick="go(\''+k+'\')"><span class="ic">'+ic+'</span>'+l+
     (k==='order'&&need? '<span class="bdg">'+need+'</span>':'')+'</button>').join('');
 
-  const titles = { stock:['冷凍在庫','串焼KEMURI屋'], order:['発注リスト','発注ライン以下の商品'],
+  const titles = { stock:[(usedCats().length>1?'在庫':'冷凍在庫'),'串焼KEMURI屋'], order:['発注リスト','発注ライン以下の商品'],
                    arrive:['入荷・棚卸',''], pos:['POS売上の取込','エクストリンクPOS'], set:['設定','商品マスタ・履歴'] };
   document.getElementById('h-title').textContent = titles[TAB][0];
   document.getElementById('h-sub').textContent   = titles[TAB][1];
@@ -389,20 +430,21 @@ function render(){
 }
 
 /* ---------- ① 在庫一覧（トップ） ---------- */
-function viewStock(){
+/* 発注が先、そのなかで «発注ラインからの余り» が少ない順 */
+function byUrgency(a,b){
   const rank = { ng:0, few:1, ok:2 };
-  const list = DB.items.slice().sort((a,b)=>{
-    const d = rank[state(a)] - rank[state(b)];
-    if(d) return d;
-    return (a.stock - a.min) - (b.stock - b.min);
-  });
+  const d = rank[state(a)] - rank[state(b)];
+  return d ? d : (a.stock - a.min) - (b.stock - b.min);
+}
+function viewStock(){
+  const cats = usedCats();
   const need = needList().length;
   const first = !DB.history.length;
   let h = '';
   if(first){
     h += '<div class="summary" style="background:#f4f7ff;border:2px solid #d8e3ff">'
        +   '<div class="big" style="color:#3a4d8f;font-size:24px">まず棚卸から</div>'
-       +   '<div class="lab">冷凍庫を確認して、いまの数を入れてください<br>（最初は発注ラインの数を仮に入れてあります）</div>'
+       +   '<div class="lab">'+(usedCats().length>1?'在庫':'冷凍庫')+'を確認して、いまの数を入れてください<br>（最初は発注ラインの数を仮に入れてあります）</div>'
        +   '<button class="go" style="background:#3a4d8f" onclick="goCount()">実在庫を入力する</button>'
        + '</div>';
   }else{
@@ -414,16 +456,26 @@ function viewStock(){
   }
   h += '<div class="legend"><span>○ 在庫OK</span><span>△ 残り少ない</span><span>発注 ＝ 発注ライン以下</span></div>';
 
-  h += '<div class="list">';
-  list.forEach(it=>{
-    const s = state(it);
-    h += '<button class="row '+(s==='ng'?'ng':'')+'" onclick="openAdjust('+it.id+')">'
-       +   '<span class="nm">'+esc(it.name)+'</span>'
-       +   '<span class="qty">'+it.stock+'</span>'
-       +   '<span class="st '+s+'">'+stateLabel(s)+'</span>'
-       + '</button>';
+  /* 分類が1つしかないうちは見出しを出さない（冷凍だけのときに邪魔なので） */
+  const oneCat = cats.length <= 1;
+  cats.forEach(c=>{
+    const list = DB.items.filter(i=>(i.cat||CAT0)===c.k).sort(byUrgency);
+    const ng = list.filter(i=>state(i)==='ng').length;
+    if(!oneCat){
+      h += '<div class="cath">'+c.ic+' '+c.name+'<span>'+list.length+'品'
+         + (ng? '　<b>発注 '+ng+'</b>':'')+'</span></div>';
+    }
+    h += '<div class="list">';
+    list.forEach(it=>{
+      const s = state(it);
+      h += '<button class="row '+(s==='ng'?'ng':'')+'" onclick="openAdjust('+it.id+')">'
+         +   '<span class="nm">'+esc(it.name)+'</span>'
+         +   '<span class="qty">'+it.stock+unitTag(it)+'</span>'
+         +   '<span class="st '+s+'">'+stateLabel(s)+'</span>'
+         + '</button>';
+    });
+    h += '</div>';
   });
-  h += '</div>';
   const lastCount = DB.history.find(x=>x.reason===REASONS[0]);
   h += '<div class="pad" style="padding-top:0">'
      + '<button class="btn btn-out" onclick="openItem(0)">＋ 商品を追加</button>'
@@ -485,34 +537,55 @@ function adjSave(){
 }
 
 /* ---------- ② 発注リスト ---------- */
+/* 仕入先ごとにまとめる。仕入先が1つも入っていないうちは分類でまとめ、
+   それも1つだけなら «まとめない»（冷凍しか無いいまの状態の見た目を変えないため）。 */
+function orderGroups(list){
+  if(list.some(i=>i.sup)){
+    const by = {};
+    list.forEach(i=>{ const k = i.sup || ''; (by[k] = by[k] || []).push(i); });
+    return Object.keys(by).sort((a,b)=>(a?0:1)-(b?0:1) || a.localeCompare(b,'ja'))
+             .map(k=>({ key:'sup:'+k, label:k || '仕入先なし', items:by[k] }));
+  }
+  const cats = CATS.filter(c=>list.some(i=>(i.cat||CAT0)===c.k));
+  if(cats.length <= 1) return [{ key:'all', label:'', items:list }];
+  return cats.map(c=>({ key:'cat:'+c.k, label:c.ic+' '+c.name,
+                        items:list.filter(i=>(i.cat||CAT0)===c.k) }));
+}
 function viewOrder(){
   const list = needList().sort((a,b)=>(a.stock-a.min)-(b.stock-b.min));
   if(!list.length){
     return '<div class="pad"><div class="summary ok"><div class="big">OK</div>'
       + '<div class="lab">発注が必要な商品はありません</div></div></div>';
   }
-  const yet  = list.filter(i=>!DB.ordered[i.id]);
-  const done = list.filter(i=>DB.ordered[i.id]);
   let h = '<div class="pad">';
   h += '<div class="muted" style="margin-bottom:12px">発注ライン以下の '+list.length+' 商品です。発注したらタップしてチェック。</div>';
-  if(yet.length){
-    h += '<div class="sec">これから発注（'+yet.length+'）</div>';
-    yet.forEach(it=>{
-      h += '<button class="chk" onclick="toggleOrder('+it.id+')">'
-         +  '<span class="box"></span><span class="nm">'+esc(it.name)+'</span>'
-         +  '<span class="now">残 '+it.stock+' / ライン '+it.min+'</span></button>';
-    });
-  }
-  if(done.length){
-    h += '<div class="sec">発注済み（'+done.length+'）　届いたら「入荷」</div>';
-    done.forEach(it=>{
-      h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:9px">'
-         +  '<button class="chk on" style="margin:0;flex:1" onclick="toggleOrder('+it.id+')">'
-         +    '<span class="box">✓</span><span class="nm">'+esc(it.name)+'</span></button>'
-         +  '<button class="btn btn-primary btn-sm" onclick="openArriveOne('+it.id+')">入荷</button>'
-         + '</div>';
-    });
-  }
+
+  orderGroups(list).forEach(g=>{
+    const yet  = g.items.filter(i=>!DB.ordered[i.id]);
+    const done = g.items.filter(i=>DB.ordered[i.id]);
+    if(g.label){
+      h += '<div class="cath">'+esc(g.label)+'<span>'+g.items.length+'品'
+         + (done.length? '　済 '+done.length : '')+'</span></div>';
+    }
+    if(yet.length){
+      if(!g.label || done.length) h += '<div class="sec">これから発注（'+yet.length+'）</div>';
+      yet.forEach(it=>{
+        h += '<button class="chk" onclick="toggleOrder('+it.id+')">'
+           +  '<span class="box"></span><span class="nm">'+esc(it.name)+'</span>'
+           +  '<span class="now">残 '+it.stock+(it.unit&&it.unit!=='個'?it.unit:'')+' / ライン '+it.min+'</span></button>';
+      });
+    }
+    if(done.length){
+      h += '<div class="sec">発注済み（'+done.length+'）　届いたら「入荷」</div>';
+      done.forEach(it=>{
+        h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:9px">'
+           +  '<button class="chk on" style="margin:0;flex:1" onclick="toggleOrder('+it.id+')">'
+           +    '<span class="box">✓</span><span class="nm">'+esc(it.name)+'</span></button>'
+           +  '<button class="btn btn-primary btn-sm" onclick="openArriveOne('+it.id+')">入荷</button>'
+           + '</div>';
+      });
+    }
+  });
   h += '<button class="btn btn-out gap" onclick="copyOrder()">発注リストをコピー（LINE用）</button>';
   h += '</div>';
   return h;
@@ -522,7 +595,12 @@ function toggleOrder(id){
   save(); render();
 }
 function copyOrder(){
-  const txt = '【冷凍 発注】\n' + needList().map(i=>'・'+i.name+'（残'+i.stock+'）').join('\n');
+  /* 仕入先ごとに分けて書き出す。LINEで業者別にそのまま送れるように。 */
+  const gs = orderGroups(needList().sort((a,b)=>(a.stock-a.min)-(b.stock-b.min)));
+  const body = i=>'・'+i.name+'（残'+i.stock+(i.unit&&i.unit!=='個'?i.unit:'')+'）';
+  const txt = gs.length===1 && !gs[0].label
+    ? '【冷凍 発注】\n' + gs[0].items.map(body).join('\n')
+    : gs.map(g=>'【'+g.label+' 発注】\n' + g.items.map(body).join('\n')).join('\n\n');
   navigator.clipboard ? navigator.clipboard.writeText(txt).then(()=>toast('コピーしました'), ()=>toast('コピーできんかった'))
                       : toast('コピーできんかった');
 }
@@ -552,16 +630,22 @@ function viewArrive(){
      + '</div>';
   h += '<div class="muted" style="margin-bottom:12px">'
      + (ARR.mode==='in' ? '届いた数を入れて、最後に「まとめて入荷」。複数商品を一度に登録できます。'
-                        : '冷凍庫を数えた実際の数を入れて「まとめて反映」。差は履歴に残ります。')
+                        : (usedCats().length>1?'数えた':'冷凍庫を数えた')+'実際の数を入れて「まとめて反映」。差は履歴に残ります。')
      + '</div>';
-  DB.items.forEach(it=>{
-    const q = arrVal(it.id);
-    h += '<div class="stp '+(arrOn(it.id)?'on':'')+'" id="stp-'+it.id+'">'
-       +  '<span class="nm">'+esc(it.name)+'<span class="now">'+(ARR.mode==='in'?'在庫 ':'いま ')+it.stock+'</span></span>'
-       +  '<button onclick="arrQ('+it.id+',-1)">－</button>'
-       +  '<input id="q-'+it.id+'" type="text" inputmode="numeric" pattern="[0-9]*" value="'+q+'" onchange="arrQset('+it.id+',this.value)">'
-       +  '<button onclick="arrQ('+it.id+',1)">＋</button>'
-       + '</div>';
+  const cats = usedCats(), oneCat = cats.length <= 1;
+  cats.forEach(c=>{
+    const list = DB.items.filter(i=>(i.cat||CAT0)===c.k);
+    if(!oneCat) h += '<div class="cath">'+c.ic+' '+c.name+'<span>'+list.length+'品</span></div>';
+    list.forEach(it=>{
+      const q = arrVal(it.id);
+      h += '<div class="stp '+(arrOn(it.id)?'on':'')+'" id="stp-'+it.id+'">'
+         +  '<span class="nm">'+esc(it.name)+'<span class="now">'+(ARR.mode==='in'?'在庫 ':'いま ')+it.stock
+         +    (it.unit&&it.unit!=='個'? ' '+esc(it.unit) : '')+'</span></span>'
+         +  '<button onclick="arrQ('+it.id+',-1)">－</button>'
+         +  '<input id="q-'+it.id+'" type="text" inputmode="numeric" pattern="[0-9]*" value="'+q+'" onchange="arrQset('+it.id+',this.value)">'
+         +  '<button onclick="arrQ('+it.id+',1)">＋</button>'
+         + '</div>';
+    });
   });
   h += ARR.mode==='in'
      ? '<button class="btn btn-primary gap" id="arr-btn" '+(arrCount()?'':'disabled')+' onclick="arrCommit()">'+arrLabel()+'</button>'
@@ -810,8 +894,11 @@ function viewPos(){
     h += '<div class="card"><h2>在庫の動き</h2>';
     pv.lines.forEach(l=>{
       h += '<div class="prev"><span class="nm">'+esc(l.name)+'</span>'
-         + '<span class="sl">販売 '+l.qty+(l.per!==1?' ×'+l.per:'')+' → 在庫</span>'
-         + '<span class="mv'+(l.move>0?' plus':'')+'">'+(l.move>0?'+':'')+l.move+'</span></div>';
+         + '<span class="sl">'+(l.auto
+             ? '販売 '+l.qty+(l.per!==1?' ×'+l.per:'')+' → 在庫'
+             : '販売 '+l.qty+'　'+cat(item(l.id)&&item(l.id).cat).name+'は棚卸で合わせます')+'</span>'
+         + (l.auto ? '<span class="mv'+(l.move>0?' plus':'')+'">'+(l.move>0?'+':'')+l.move+'</span>'
+                   : '<span class="mv" style="color:#8a8a8a">±0</span>')+'</div>';
     });
     h += '</div>';
   }else{
@@ -922,8 +1009,9 @@ function posPreview(){
 function buildPreview(sales){
   const byItem = {}, unknown = {}, seenInFile = {}, sums = {}, skipSums = [];
   let newRows = 0, dupRows = 0, sumMode = false, noKey = false;
+  /* auto … この分類はPOSから自動で在庫を引くか。引かない分類は数えるだけで在庫は動かさない */
   const bucket = it => byItem[it.id] = byItem[it.id] ||
-        { id:it.id, name:it.name, per:it.per||1, qty:0, keys:[], sums:[] };
+        { id:it.id, name:it.name, per:it.per||1, qty:0, keys:[], sums:[], auto:autoPos(it) };
   const unk = s => (unknown[s.posName] = unknown[s.posName] || { name:s.posName, qty:0 }).qty += s.qty;
 
   sales.forEach(s=>{
@@ -954,7 +1042,8 @@ function buildPreview(sales){
     const b = bucket(it); b.qty += delta; b.sums.push({ key:g.key, total:g.qty });
   });
 
-  const lines = Object.values(byItem).map(b=>Object.assign(b, { move: -(b.qty * (b.per||1)) }))
+  const lines = Object.values(byItem)
+                 .map(b=>Object.assign(b, { move: b.auto ? -(b.qty * (b.per||1)) : 0 }))
                  .sort((a,b)=>a.move-b.move);
   const un = Object.values(unknown).map(u=>Object.assign(u, { suggest: suggestItem(u.name) }));
   return { lines, unknown:un, newRows, dupRows, sumMode, noKey, skipSums };
@@ -985,10 +1074,13 @@ function posApply(){
   pv.lines.forEach(l=>{
     const it = item(l.id); if(!it) return;
     const amount = l.qty * (l.per||1);
+    /* 「POSから自動で引かない」分類（乾物・調味料、備品）は在庫を動かさない。
+       売れた数は記録するが、減り方は棚卸で合わせる。 */
+    const auto = autoPos(it);
     /* 在庫を動かさないモードでは move しない。rec.lines にも入れない
        （取消したときに、引いていないぶんを戻してしまわないように）。
        取込済みの印は付ける＝同じCSVを入れ直しても二重にならない。 */
-    if(!noStock){
+    if(!noStock && auto){
       /* 在庫は0で止まる（マイナスにしない）ので、«引こうとした量» と
          «実際に引けた量» がずれることがある。取消で戻すのは実際に引けたぶん。
          引こうとした量を戻すと、在庫が元より増えてしまう。 */
@@ -1081,13 +1173,21 @@ function viewSet(){
      + '<a class="btn btn-dark gap" style="text-decoration:none;display:block" href="dashboard.html">📊 売上・原価をひらく</a></div>';
 
   h += '<div class="card"><h2>商品マスタ（'+DB.items.length+'）</h2>'
-     + '<div class="muted">タップして 発注ライン・POSの商品名・1販売あたりの消費数を設定できます。</div><div class="gap">';
-  DB.items.forEach(it=>{
-    const pos = posNamesOf(it.id);
-    h += '<button class="row" style="margin-bottom:8px" onclick="openItem('+it.id+')">'
-       +  '<span class="nm" style="font-size:17px">'+esc(it.name)
-       +   '<span style="display:block;font-size:11px;color:#aaa;font-weight:500">ライン '+it.min+' ／ 1販売で '+it.per+' 減 ／ POS名 '+(pos.length||0)+'件</span></span>'
-       +  '<span class="qty" style="font-size:20px">'+it.stock+'</span></button>';
+     + '<div class="muted">タップして 分類・仕入先・単位・発注ライン・POSの商品名を設定できます。</div><div class="gap">';
+  usedCats().forEach(c=>{
+    const list = DB.items.filter(i=>(i.cat||CAT0)===c.k);
+    h += '<div class="sec">'+c.ic+' '+c.name+'（'+list.length+'）'+(c.pos?'':'　POSからは引かない')+'</div>';
+    list.forEach(it=>{
+      const pos = posNamesOf(it.id);
+      h += '<button class="row" style="margin-bottom:8px" onclick="openItem('+it.id+')">'
+         +  '<span class="nm" style="font-size:17px">'+esc(it.name)
+         +   '<span style="display:block;font-size:11px;color:#aaa;font-weight:500">'
+         +     (it.sup? esc(it.sup)+' ／ ' : '')
+         +     'ライン '+it.min+(it.unit&&it.unit!=='個'?' '+esc(it.unit):'')
+         +     (c.pos? ' ／ 1販売で '+it.per+' 減 ／ POS名 '+(pos.length||0)+'件' : '')
+         +   '</span></span>'
+         +  '<span class="qty" style="font-size:20px">'+it.stock+'</span></button>';
+    });
   });
   h += '</div><button class="btn btn-out gap" onclick="openItem(0)">＋ 商品を追加</button></div>';
 
@@ -1143,20 +1243,48 @@ function delMap(k){ delete DB.map[k]; save(); render(); }
 let EDIT = null;
 function openItem(id){
   const it = id ? item(id) : null;
-  EDIT = it ? { id, name:it.name, min:it.min, per:it.per, stock:it.stock }
-            : { id:0, name:'', min:3, per:1, stock:0 };
+  /* 新しく足すときは、いま一番多い分類を初期値にする（続けて足すとき楽なので） */
+  const guess = ()=>{
+    const n = {}; DB.items.forEach(i=>{ const k=i.cat||CAT0; n[k]=(n[k]||0)+1; });
+    return Object.keys(n).sort((a,b)=>n[b]-n[a])[0] || CAT0;
+  };
+  EDIT = it ? { id, name:it.name, min:it.min, per:it.per, stock:it.stock,
+                cat:it.cat||CAT0, sup:it.sup||'', unit:it.unit||'個' }
+            : { id:0, name:'', min:3, per:1, stock:0, cat:guess(), sup:'', unit:'個' };
   drawItem();
 }
 function drawItem(){
+  /* 分類を変えると描き直すので、打ちかけの文字を先に拾っておく */
+  ['name','sup','unit'].forEach(k=>{
+    const el = document.getElementById('e-'+k);
+    if(el) EDIT[k] = k==='unit' ? (el.value.trim()||'個') : el.value.trim();
+  });
   const pos = EDIT.id ? posNamesOf(EDIT.id) : [];
+  const c = cat(EDIT.cat);
   let h = '<h3>'+(EDIT.id? '商品の設定':'商品を追加')+'</h3><div class="sh-sub">　</div>'
     + '<label class="lab">商品名</label><input class="txt" id="e-name" value="'+esc(EDIT.name)+'" onchange="EDIT.name=this.value">'
-    + '<label class="lab">発注ライン（この数以下で「発注」）</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.min+'" onchange="EDIT.min=Math.max(0,num(this.value))">'
-    + '<label class="lab">POS販売1あたり 減らす在庫数</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.per+'" onchange="EDIT.per=Math.max(1,num(this.value))">'
-    + '<div class="muted" style="margin-top:6px">1皿で2個使うなら 2 にします。</div>';
+    + '<label class="lab">分類</label>'
+    + '<select class="sel" onchange="EDIT.cat=this.value;drawItem()">'
+    +   CATS.map(x=>'<option value="'+x.k+'" '+(x.k===EDIT.cat?'selected':'')+'>'+x.ic+' '+x.name+'</option>').join('')
+    + '</select>'
+    + '<div class="muted" style="margin-top:6px">'
+    +   (c.pos ? 'POSで売れたぶんを自動で在庫から引きます。'
+              : '<b>POSからは自動で引きません。</b>棚卸で数えて合わせる分類です。')
+    + '</div>'
+    + '<label class="lab">仕入先（発注リストをここでまとめます）</label>'
+    + '<input class="txt" id="e-sup" list="suplist" placeholder="例）〇〇食品　空でもOK" value="'+esc(EDIT.sup)+'" onchange="EDIT.sup=this.value.trim()">'
+    + '<datalist id="suplist">'+(DB.sups||[]).map(x=>'<option value="'+esc(x)+'">').join('')+'</datalist>'
+    + '<label class="lab">単位</label>'
+    + '<input class="txt" id="e-unit" list="unitlist" value="'+esc(EDIT.unit)+'" onchange="EDIT.unit=this.value.trim()||\'個\'">'
+    + '<datalist id="unitlist">'+UNITS.map(x=>'<option value="'+x+'">').join('')+'</datalist>'
+    + '<label class="lab">発注ライン（この数以下で「発注」）</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.min+'" onchange="EDIT.min=Math.max(0,num(this.value))">';
+  if(c.pos){
+    h += '<label class="lab">POS販売1あたり 減らす在庫数</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.per+'" onchange="EDIT.per=Math.max(1,num(this.value))">'
+       + '<div class="muted" style="margin-top:6px">1皿で2個使うなら 2 にします。</div>';
+  }
   if(!EDIT.id){
     h += '<label class="lab">いまの在庫</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.stock+'" onchange="EDIT.stock=Math.max(0,num(this.value))">';
-  }else{
+  }else if(c.pos){
     h += '<label class="lab">POSの商品名（'+pos.length+'）</label>'
        + (pos.length? '<div class="chips">'+pos.map(p=>'<button class="on" onclick="delMap(\''+esc(norm(p)).replace(/'/g,"\\'")+'\');openItem('+EDIT.id+')">'+esc(p)+' ✕</button>').join('')+'</div>'
                     : '<div class="muted">まだありません。POS CSV取込のときに設定できます。</div>')
@@ -1176,22 +1304,35 @@ function addPosName(){
   save(); openItem(EDIT.id);
 }
 function saveItem(){
-  const nameEl = document.getElementById('e-name');
-  if(nameEl) EDIT.name = nameEl.value.trim();
+  ['name','sup','unit'].forEach(k=>{
+    const el = document.getElementById('e-'+k);
+    if(el) EDIT[k] = k==='unit' ? (el.value.trim()||'個') : el.value.trim();
+  });
   if(!EDIT.name){ toast('商品名を入れてください'); return; }
+  const usePos = cat(EDIT.cat).pos;
   if(EDIT.id){
     const it = item(EDIT.id);
     it.name = EDIT.name; it.min = EDIT.min; it.per = EDIT.per;
+    it.cat = EDIT.cat; it.sup = EDIT.sup; it.unit = EDIT.unit;
     /* 新しい名前でもPOSから引けるようにしておく。前の名前の対応はそのまま残す
        （過去のCSVを入れ直したときに引けなくなるため）。 */
     const k = norm(EDIT.name);
-    if(k && !DB.map[k]) DB.map[k] = { item:EDIT.id, label:EDIT.name };
+    if(usePos && k && !DB.map[k]) DB.map[k] = { item:EDIT.id, label:EDIT.name };
   }else{
     const id = DB.seq++;
-    DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per, cost:0 });
-    DB.map[norm(EDIT.name)] = { item:id, label:EDIT.name };
+    DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per, cost:0,
+                    cat:EDIT.cat, sup:EDIT.sup, unit:EDIT.unit });
+    if(usePos) DB.map[norm(EDIT.name)] = { item:id, label:EDIT.name };
   }
+  addSup(EDIT.sup);
   save(); closeSheet(); render(); toast('保存しました');
+}
+/* 入れた仕入先を候補に覚えておく（次から選ぶだけで済むように） */
+function addSup(name){
+  const v = String(name||'').trim();
+  if(!v) return;
+  DB.sups = DB.sups || [];
+  if(DB.sups.indexOf(v) < 0){ DB.sups.push(v); DB.sups.sort((a,b)=>a.localeCompare(b,'ja')); }
 }
 function delItem(){
   if(!confirm('「'+item(EDIT.id).name+'」を削除しますか？')) return;
