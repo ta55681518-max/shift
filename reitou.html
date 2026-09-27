@@ -483,6 +483,7 @@ function viewStock(){
   const lastCount = DB.history.find(x=>x.reason===REASONS[0]);
   h += '<div class="pad" style="padding-top:0">'
      + '<button class="btn btn-out" onclick="openItem(0)">＋ 商品を追加</button>'
+     + '<button class="btn btn-out gap" onclick="openBulk()">📋 リストからまとめて登録</button>'
      + '<div class="muted gap">'
      + (lastCount ? '最後の棚卸：'+fmtDay(lastCount.at)+'（'+agoText(lastCount.at)+'）' : 'まだ棚卸をしていません')
      + '<br>商品をタップすると ＋ － ／ 実在庫の入力ができます。'
@@ -1193,7 +1194,8 @@ function viewSet(){
          +  '<span class="qty" style="font-size:20px">'+it.stock+'</span></button>';
     });
   });
-  h += '</div><button class="btn btn-out gap" onclick="openItem(0)">＋ 商品を追加</button></div>';
+  h += '</div><button class="btn btn-out gap" onclick="openItem(0)">＋ 商品を追加</button>'
+     + '<button class="btn btn-out gap" onclick="openBulk()">📋 リストからまとめて登録</button></div>';
 
   const unmapped = Object.keys(DB.map).length;
   h += '<div class="card"><h2>POS商品名の対応（'+unmapped+'）</h2>'
@@ -1302,7 +1304,8 @@ function drawItem(keep){
        そのまま次の入力に移れるようにしておく。 */
     h += '<button class="btn btn-primary gap" onclick="saveItem(1)">保存して、続けて追加</button>'
        + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
-       + '<button class="btn btn-out" onclick="saveItem()">保存して閉じる</button></div>';
+       + '<button class="btn btn-out" onclick="saveItem()">保存して閉じる</button></div>'
+       + '<button class="btn btn-gray gap" onclick="openBulk()">📋 リストからまとめて登録</button>';
   }
   if(EDIT.id) h += '<button class="btn btn-danger gap" onclick="delItem()">この商品を削除</button>';
   openSheet(h);
@@ -1352,6 +1355,155 @@ function saveItem(again){
     toast('保存しました');
   }
 }
+/* ============================================================
+   リストからまとめて登録
+   ------------------------------------------------------------
+   1行1品。区切りはタブでもカンマでもよい。
+     品名 , 分類 , 仕入先 , 単位 , 発注ライン
+   分類より後ろは省略できて、省略したぶんは «前の行と同じ» になる。
+   紙に「ドリンク／酒屋さん」と一度書いてから品名を並べる、という
+   ふだんの書き方がそのまま通るようにするため。
+   ============================================================ */
+/* 「ドリンク」「飲料」「酒」…のような書き方から分類を当てる */
+const CAT_WORDS = {
+  frozen:['冷凍','れいとう','フローズン'],
+  fresh :['生鮮','せいせん','野菜','肉','魚','鮮魚','青果'],
+  drink :['ドリンク','どりんく','飲料','酒','ドリンクー','飲み物'],
+  dry   :['乾物','調味料','乾物・調味料','乾燥','だし','出汁'],
+  misc  :['備品','消耗品','雑貨','その他']
+};
+function catFromWord(w){
+  const t = norm(w);
+  if(!t) return '';
+  for(const c of CATS){ if(norm(c.name) === t) return c.k; }
+  for(const k in CAT_WORDS){ if(CAT_WORDS[k].some(x=>norm(x) === t)) return k; }
+  for(const k in CAT_WORDS){ if(CAT_WORDS[k].some(x=>t.indexOf(norm(x)) >= 0)) return k; }
+  return '';
+}
+function parseItemList(text){
+  const rows = [];
+  /* 前の行から引き継ぐぶん。何も書かれていないうちは、いま覚えている初期値から */
+  const L = DB.last || {};
+  let cur = { cat:L.cat||CAT0, sup:L.sup||'', unit:L.unit||'個', min:3 };
+  const names = {};                      /* このリストの中での重複も見る */
+  String(text||'').split(/\r?\n/).forEach((line, i)=>{
+    const raw = line.trim();
+    if(!raw || /^([#＃]|\/\/)/.test(raw)) return;          /* 空行とメモ行は飛ばす */
+    const f = (raw.indexOf('\t') >= 0 ? raw.split('\t') : raw.split(/[,、，]/)).map(x=>x.trim());
+    const name = f[0];
+    if(!name) return;
+    if(i === 0 && /^(品名|商品名|名前)$/.test(name)) return;  /* 見出し行 */
+
+    const r = { line:i+1, name, note:'' };
+    if(f[1]){
+      const k = catFromWord(f[1]);
+      if(!k){ r.bad = '「'+f[1]+'」がどの分類か分かりません'; rows.push(r); return; }
+      cur.cat = k;
+    }
+    if(f[2]) cur.sup  = f[2];
+    if(f[3]) cur.unit = f[3];
+    if(f[4] !== undefined && f[4] !== '') cur.min = Math.max(0, num(f[4]));
+
+    r.cat = cur.cat; r.sup = cur.sup; r.unit = cur.unit; r.min = cur.min;
+    const k = norm(name);
+    if(DB.items.some(it=>norm(it.name) === k)) r.dup = 'すでにあります';
+    else if(names[k]) r.dup = 'リストの中で重複';
+    names[k] = 1;
+    rows.push(r);
+  });
+  return rows;
+}
+
+let BULK = null;
+function openBulk(){
+  BULK = { text:'', rows:null };
+  drawBulk();
+}
+function drawBulk(){
+  const ex = '瓶ビール,ドリンク,酒屋さん,本,3\nハイボール缶\n生ビール,,,杯,30\n\nキャベツ,生鮮,市場,kg,1\n大根';
+  let h = '<h3>リストからまとめて登録</h3><div class="sh-sub">1行に1品</div>';
+
+  if(!BULK.rows){
+    h += '<div class="info">'
+       +   '<b>品名, 分類, 仕入先, 単位, 発注ライン</b> の順に、カンマ（,）かタブで区切ります。<br>'
+       +   '品名より後ろは<b>省略できます</b>。省略したぶんは<b>すぐ上の行と同じ</b>になるので、'
+       +   '分類と仕入先は<b>そのまとまりの1行目に書くだけ</b>で済みます。'
+       + '</div>'
+       + '<label class="lab">貼り付け</label>'
+       + '<textarea id="bulk-t" style="min-height:190px;font-size:14px" '
+       +   'placeholder="'+esc(ex)+'" onchange="BULK.text=this.value">'+esc(BULK.text)+'</textarea>'
+       + '<div class="muted gap">空の行と、#で始まる行は飛ばします。<br>'
+       +   'いまの在庫は 0 で登録します。数は後から棚卸でまとめて入れてください。</div>'
+       + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
+       + '<button class="btn btn-primary" onclick="bulkRead()">読み取る</button></div>';
+    openSheet(h);
+    return;
+  }
+
+  const rows = BULK.rows;
+  const bad  = rows.filter(r=>r.bad);
+  const dup  = rows.filter(r=>!r.bad && r.dup);
+  const add  = rows.filter(r=>!r.bad && !r.dup);
+
+  h += '<div class="'+(add.length?'info':'note')+'">'
+     +   (add.length ? '<b>'+add.length+' 品</b>を登録します。' : '登録できるものがありませんでした。')
+     +   (dup.length ? '<br>'+dup.length+' 品は<b>すでにあるので飛ばします</b>。' : '')
+     +   (bad.length ? '<br><b>'+bad.length+' 行は読めませんでした。</b>この行は登録しません。' : '')
+     + '</div>';
+
+  if(bad.length){
+    h += '<div class="sec">読めなかった行</div>';
+    bad.forEach(r=>{
+      h += '<div class="prev"><span class="nm">'+r.line+'行目　'+esc(r.name)+'</span>'
+         + '<span class="sl" style="color:#b3261e">'+esc(r.bad)+'</span></div>';
+    });
+  }
+  CATS.forEach(c=>{
+    const list = add.filter(r=>r.cat===c.k);
+    if(!list.length) return;
+    h += '<div class="cath">'+c.ic+' '+c.name+'<span>'+list.length+'品</span></div>';
+    list.forEach(r=>{
+      h += '<div class="prev"><span class="nm">'+esc(r.name)+'</span>'
+         + '<span class="sl">'+(r.sup? esc(r.sup)+'　':'')+'ライン '+r.min
+         +   (r.unit && r.unit!=='個' ? ' '+esc(r.unit) : '')+'</span></div>';
+    });
+  });
+  if(dup.length){
+    h += '<div class="sec">飛ばすもの（すでにある）</div>';
+    dup.forEach(r=>{
+      h += '<div class="prev"><span class="nm">'+esc(r.name)+'</span>'
+         + '<span class="sl">'+esc(r.dup)+'</span></div>';
+    });
+  }
+  h += '<div class="two"><button class="btn btn-gray" onclick="BULK.rows=null;drawBulk()">戻って直す</button>'
+     + '<button class="btn btn-primary" '+(add.length?'':'disabled')
+     +   ' onclick="bulkApply()">この内容で登録する</button></div>';
+  openSheet(h);
+}
+function bulkRead(){
+  const el = document.getElementById('bulk-t');
+  if(el) BULK.text = el.value;
+  const rows = parseItemList(BULK.text);
+  if(!rows.length){ toast('読み取れる行がありませんでした'); return; }
+  BULK.rows = rows;
+  drawBulk();
+}
+function bulkApply(){
+  const add = BULK.rows.filter(r=>!r.bad && !r.dup);
+  if(!add.length) return;
+  add.forEach(r=>{
+    const id = DB.seq++;
+    DB.items.push({ id, name:r.name, stock:0, min:r.min, per:1, cost:0,
+                    cat:r.cat, sup:r.sup, unit:r.unit });
+    if(cat(r.cat).pos) DB.map[norm(r.name)] = { item:id, label:r.name };
+    addSup(r.sup);
+  });
+  const last = add[add.length-1];
+  DB.last = { cat:last.cat, sup:last.sup, unit:last.unit };
+  save(); closeSheet(); render();
+  toast(add.length + ' 品を登録しました');
+}
+
 /* 入れた仕入先を候補に覚えておく（次から選ぶだけで済むように） */
 function addSup(name){
   const v = String(name||'').trim();
