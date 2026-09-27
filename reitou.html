@@ -264,7 +264,10 @@ function usedCats(){ return CATS.filter(c=>DB.items.some(i=>(i.cat||CAT0)===c.k)
 */
 function blank(){
   return { v:1, seq:1, items:[], map:{}, seen:{}, applied:{}, history:[], imports:[],
-           csvMap:null, ordered:{}, sups:[] };
+           csvMap:null, ordered:{}, sups:[],
+           /* last … «前に追加したときに選んだもの»。品目をまとめて登録するとき、
+              ドリンクを10品続けて入れるのに毎回選び直さずに済むように覚えておく。 */
+           last:{ cat:CAT0, sup:'', unit:'個' } };
 }
 let DB = load();
 let TAB = 'stock';
@@ -297,6 +300,7 @@ function migrate(d){
     if(!it.unit){ it.unit = '個'; changed = true; }
   });
   if(!Array.isArray(d.sups)){ d.sups = []; changed = true; }
+  if(!d.last || !d.last.cat){ d.last = { cat:CAT0, sup:'', unit:'個' }; changed = true; }
   if(changed){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} }
   return d;
 }
@@ -1243,28 +1247,26 @@ function delMap(k){ delete DB.map[k]; save(); render(); }
 let EDIT = null;
 function openItem(id){
   const it = id ? item(id) : null;
-  /* 新しく足すときは、いま一番多い分類を初期値にする（続けて足すとき楽なので） */
-  const guess = ()=>{
-    const n = {}; DB.items.forEach(i=>{ const k=i.cat||CAT0; n[k]=(n[k]||0)+1; });
-    return Object.keys(n).sort((a,b)=>n[b]-n[a])[0] || CAT0;
-  };
+  /* 新しく足すときは、前に追加したときの分類・仕入先・単位から始める。
+     同じ分類の品目を続けて入れることが多いので、そのぶんの選び直しが要らなくなる。 */
+  const L = DB.last || { cat:CAT0, sup:'', unit:'個' };
   EDIT = it ? { id, name:it.name, min:it.min, per:it.per, stock:it.stock,
                 cat:it.cat||CAT0, sup:it.sup||'', unit:it.unit||'個' }
-            : { id:0, name:'', min:3, per:1, stock:0, cat:guess(), sup:'', unit:'個' };
+            : { id:0, name:'', min:3, per:1, stock:0,
+                cat:L.cat||CAT0, sup:L.sup||'', unit:L.unit||'個' };
   drawItem();
 }
-function drawItem(){
-  /* 分類を変えると描き直すので、打ちかけの文字を先に拾っておく */
-  ['name','sup','unit'].forEach(k=>{
-    const el = document.getElementById('e-'+k);
-    if(el) EDIT[k] = k==='unit' ? (el.value.trim()||'個') : el.value.trim();
-  });
+/* keep … 開いているシートを描き直すとき（分類を変えたときなど）。
+   打ちかけの文字を拾ってから描き直す。新しく開くときに拾うと、
+   前の品目の入力が残ってしまうので拾わない。 */
+function drawItem(keep){
+  if(keep) readItemFields();
   const pos = EDIT.id ? posNamesOf(EDIT.id) : [];
   const c = cat(EDIT.cat);
   let h = '<h3>'+(EDIT.id? '商品の設定':'商品を追加')+'</h3><div class="sh-sub">　</div>'
     + '<label class="lab">商品名</label><input class="txt" id="e-name" value="'+esc(EDIT.name)+'" onchange="EDIT.name=this.value">'
     + '<label class="lab">分類</label>'
-    + '<select class="sel" onchange="EDIT.cat=this.value;drawItem()">'
+    + '<select class="sel" onchange="EDIT.cat=this.value;drawItem(1)">'
     +   CATS.map(x=>'<option value="'+x.k+'" '+(x.k===EDIT.cat?'selected':'')+'>'+x.ic+' '+x.name+'</option>').join('')
     + '</select>'
     + '<div class="muted" style="margin-top:6px">'
@@ -1292,8 +1294,16 @@ function drawItem(){
        +   '<input class="txt" id="e-pos" placeholder="POSの商品名を追加" style="flex:1">'
        +   '<button class="btn btn-gray btn-sm" onclick="addPosName()">追加</button></div>';
   }
-  h += '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
-     + '<button class="btn btn-primary" onclick="saveItem()">保存</button></div>';
+  if(EDIT.id){
+    h += '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
+       + '<button class="btn btn-primary" onclick="saveItem()">保存</button></div>';
+  }else{
+    /* まとめて登録するときは、保存のたびに閉じて「＋」を探し直すのが一番の手間。
+       そのまま次の入力に移れるようにしておく。 */
+    h += '<button class="btn btn-primary gap" onclick="saveItem(1)">保存して、続けて追加</button>'
+       + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
+       + '<button class="btn btn-out" onclick="saveItem()">保存して閉じる</button></div>';
+  }
   if(EDIT.id) h += '<button class="btn btn-danger gap" onclick="delItem()">この商品を削除</button>';
   openSheet(h);
 }
@@ -1303,11 +1313,15 @@ function addPosName(){
   DB.map[norm(v)] = { item:EDIT.id, label:v };
   save(); openItem(EDIT.id);
 }
-function saveItem(){
+/* シートに打ってある文字を EDIT に取り込む */
+function readItemFields(){
   ['name','sup','unit'].forEach(k=>{
     const el = document.getElementById('e-'+k);
     if(el) EDIT[k] = k==='unit' ? (el.value.trim()||'個') : el.value.trim();
   });
+}
+function saveItem(again){
+  readItemFields();
   if(!EDIT.name){ toast('商品名を入れてください'); return; }
   const usePos = cat(EDIT.cat).pos;
   if(EDIT.id){
@@ -1325,7 +1339,18 @@ function saveItem(){
     if(usePos) DB.map[norm(EDIT.name)] = { item:id, label:EDIT.name };
   }
   addSup(EDIT.sup);
-  save(); closeSheet(); render(); toast('保存しました');
+  /* 次に追加するときの初期値にする（新しく足したときだけ） */
+  if(!EDIT.id) DB.last = { cat:EDIT.cat, sup:EDIT.sup, unit:EDIT.unit };
+  const added = EDIT.name;
+  save(); render();
+  if(again){
+    openItem(0);                                  /* 続けて入れる */
+    const el = document.getElementById('e-name'); if(el) el.focus();
+    toast(added + ' を登録しました');
+  }else{
+    closeSheet();
+    toast('保存しました');
+  }
 }
 /* 入れた仕入先を候補に覚えておく（次から選ぶだけで済むように） */
 function addSup(name){
