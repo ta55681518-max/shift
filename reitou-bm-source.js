@@ -105,26 +105,47 @@
     head.push('商品名\t出数');
     var text = head.concat(out).join('\n');
 
-    /* 冷凍在庫アプリを、読み取った売上を持たせて開く。
-       貼り付けの操作が要らず、開いた時点でプレビューが出る。
-       （うまく開けなかったときのために、クリップボードにもコピーしておく） */
+    /* 読み取った売上をクリップボードへ。そのあとどうするかは2通り。
+
+       ふつう … 冷凍在庫アプリを、売上を持たせて開く。開いた時点で
+                プレビューが出るので、貼り付けの操作が要らない。
+
+       コピーだけ（window.__kemuriCopyOnly を立てて呼んだとき）
+            … アプリを開かず、コピーしたことだけ知らせて終わる。
+              iPhoneで «ホーム画面に追加したアプリ» を使っている場合、
+              そのアプリとブラウザは別の入れ物になっていて、
+              ブラウザからは開けない。中途半端に空のアプリを開くと
+              そちらに取り込んでしまう事故が起きるので、開かない。 */
     var APP = 'https://comfy-khapse-8a3cae.netlify.app/reitou.html';
-    var openApp = function () {
+    var copyOnly = !!window.__kemuriCopyOnly;
+    var done = function () {
+      if (copyOnly) {
+        alert('売上をコピーしました（' + out.length + '品）。\n\n'
+            + 'ホーム画面の「冷凍在庫」を開いて、\n'
+            + '🧾POSタブの「コピーした売上を取り込む」を押してください。');
+        return;
+      }
       try { location.href = APP + '#pos=' + encodeURIComponent(text); }
       catch (e) {
         window.prompt('下の内容をコピーして冷凍在庫アプリに貼ってください', text);
       }
     };
+    var failed = function () {
+      /* コピーできなかったときは、せめて手で拾えるように出す */
+      if (copyOnly) { window.prompt('コピーできませんでした。下の内容を選んでコピーしてください', text); return; }
+      done();
+    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(openApp, openApp);
+      navigator.clipboard.writeText(text).then(done, failed);
     } else {
       var ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed'; ta.style.left = '-9999px';
       document.body.appendChild(ta); ta.focus(); ta.select();
-      try { document.execCommand('copy'); } catch (e) {}
+      var okCopy = false;
+      try { okCopy = document.execCommand('copy'); } catch (e) {}
       ta.remove();
-      openApp();
+      okCopy ? done() : failed();
     }
   } catch (e) {
     alert('エラーが出ました: ' + (e && e.message ? e.message : e));

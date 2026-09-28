@@ -69,6 +69,27 @@
 </div>
 
 <div id="sp">
+  <div class="card" style="border-color:#ffe0a3;background:#fffdf7">
+    <h2>⚠️ ホーム画面のアイコンから使っている人へ</h2>
+    <div style="font-size:15px">
+      アプリを<b>ホーム画面に追加したアイコン</b>から開いている場合、
+      そのアプリとブラウザ（Safari・Chrome）は<b>別の入れ物</b>になります。
+      同じURLでも在庫データは行き来しません。iPhoneの仕組み上、
+      <b>ブラウザからホーム画面のアプリを開くことはできません。</b>
+    </div>
+    <div class="note">ふつうのボタンを押すと<b>空っぽのアプリ</b>が開きます。
+      そこで「在庫に反映する」を押すと、いつものアプリではなく<b>そちらに入ってしまいます</b>。</div>
+    <div class="info">そういう使い方なら、下の<b>「コピーだけ版」</b>を入れてください。
+      アプリを開かず、売上をコピーして終わります。<br><br>
+      <b>使う流れ</b><br>
+      ① POSでボタンを押す →「コピーしました」と出る<br>
+      ② ホーム画面の「冷凍在庫」を開く<br>
+      ③ 🧾POSタブ →「📋 コピーした売上を取り込む」</div>
+    <button class="copy" style="background:#e8531f" onclick="copyCode('copy')">📋 コピーだけ版のコードをコピー</button>
+    <textarea id="code-copy" readonly onclick="this.select()"></textarea>
+    <div class="sub" style="margin-top:8px">入れ方は下と同じです。ブックマークのURL欄をこのコードに差し替えてください。</div>
+  </div>
+
   <div class="card">
     <h2>スマホでの入れ方（iPhone / Android）</h2>
     <div class="sub" style="margin-bottom:12px">ブックマークのURLを、下のコードに差し替えるだけです。</div>
@@ -80,7 +101,8 @@
     <div class="step"><b class="n">4</b> 使うときは、POSの集計表を出した状態で
       <b>Chrome</b>＝アドレスバーに「冷凍在庫」と入力して候補をタップ／
       <b>Safari</b>＝📖ブックマークから「冷凍在庫」をタップ</div>
-    <div class="info">この短い版は、中身をこのサイトから読み込みます。読み取りを直したときも<b>ブックマークの入れ直しは不要</b>です。</div>
+    <div class="info">この短い版は、中身をこのサイトから読み込みます。読み取りを直したときも<b>ブックマークの入れ直しは不要</b>です。<br>
+      <b>ホーム画面のアイコンからアプリを開いている人は、上の「コピーだけ版」を使ってください。</b></div>
   </div>
 
   <div class="card">
@@ -157,6 +179,10 @@ var APP_BASE = 'https://comfy-khapse-8a3cae.netlify.app/';
 
 BM_LONG  = BM_LONG.replace('__APP__', APP_BASE + 'reitou.html');
 BM_SHORT = BM_SHORT.replace('__BM__', APP_BASE + 'reitou-bm.js');
+/* コピーだけ版 … アプリを開かず、クリップボードに入れて終わる。
+   iPhoneで「ホーム画面に追加」したアプリを使っている人向け。 */
+var BM_COPY = BM_SHORT.replace('javascript:(function(){',
+                               'javascript:(function(){window.__kemuriCopyOnly=1;');
 
 /* 行き先を画面に出しておく。古いサイトのボタンを入れてしまう事故を防ぐため */
 (function () {
@@ -177,6 +203,7 @@ BM_SHORT = BM_SHORT.replace('__BM__', APP_BASE + 'reitou-bm.js');
 
 document.getElementById('bm-link').setAttribute('href', BM_SHORT);
 document.getElementById('code-short').value = BM_SHORT;
+document.getElementById('code-copy').value = BM_COPY;
 document.getElementById('code-long').value = BM_LONG;
 document.getElementById('code-test').value = BM_TEST;
 document.querySelectorAll('.tb').forEach(function (b) {
