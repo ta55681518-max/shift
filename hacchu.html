@@ -179,6 +179,15 @@
   .check-row input { width:24px; height:24px; accent-color:#e8531f; }
   .modal-btns { display:flex; gap:10px; margin-top:22px; }
   .modal-btns .btn { flex:1; }
+  .modal .note { font-size:13.5px; color:#888; line-height:1.7; margin-bottom:14px; }
+  .io-ta {
+    width:100%; border:1.5px solid #ddd; border-radius:12px;
+    padding:12px; font-size:13px; font-family:inherit; line-height:1.5;
+    min-height:110px; resize:vertical; background:#fafafa; outline:none;
+    margin:10px 0 4px; word-break:break-all;
+    -webkit-user-select:text; user-select:text;
+  }
+  .io-ta:focus { border-color:#e8531f; background:#fff; }
 
   /* トースト */
   #toast {
@@ -224,8 +233,6 @@
   }
   .progress-note { font-size:14px; color:#888; margin-bottom:10px; font-weight:700; }
 </style>
-<!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -369,6 +376,67 @@ function copyLastOrder(sid){
   });
   save(); render();
   toast(n > 0 ? "前回の" + n + "品を追加したよ" : "前回の分は全部入ってるよ");
+}
+
+/* ---- データの保存・引き継ぎ ---- */
+function exportText(){
+  return JSON.stringify({app:"kemuri_hacchu", ver:1, saved:todayStr(), data:S});
+}
+function openDataModal(){
+  closeModal();
+  modalEl = document.createElement("div");
+  modalEl.className = "modal-bg";
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.appendChild(el("h3",null,"💾 データの保存・引き継ぎ"));
+  const note = el("div","note",
+    "「コピー」した文をLINEのKeepメモなどに貼って保存しておけば、新しいスマホでもこの画面に貼り付けて「取り込む」だけで、商品・履歴ごと引き継げるよ。");
+  box.appendChild(note);
+
+  const copyBtn = el("button","btn btn-primary","📋 今のデータをコピーする");
+  const ta = document.createElement("textarea");
+  ta.className = "io-ta";
+  ta.placeholder = "取り込むときは、保存しておいたデータをここに貼り付けてね";
+  copyBtn.onclick = () => { ta.value = exportText(); copyText(ta.value, "データをコピーしたよ"); };
+  box.appendChild(copyBtn);
+  box.appendChild(ta);
+
+  const impBtn = el("button","btn btn-green","📥 貼り付けたデータを取り込む");
+  impBtn.style.marginTop = "8px";
+  impBtn.onclick = () => {
+    let obj = null;
+    try {
+      obj = JSON.parse(ta.value.trim());
+      if (obj && obj.app === "kemuri_hacchu" && obj.data) obj = obj.data;
+    } catch(e){ obj = null; }
+    if (!obj || !Array.isArray(obj.suppliers) || !Array.isArray(obj.products)) {
+      toast("データの形が違うみたい。コピーした文をそのまま貼ってね");
+      return;
+    }
+    const imported = obj;
+    openModal("今のデータを上書きして取り込む?", [
+      {label:"取り込む", cls:"btn-primary", fn(){
+        S = migrate(imported);
+        if (!S.order) S.order = {};
+        if (!S.done) S.done = {};
+        if (!S.sentToday) S.sentToday = {};
+        if (!S.history) S.history = [];
+        save(); closeModal(); go("home");
+        toast("データを取り込んだよ！");
+      }},
+      {label:"やめる", cls:"btn-gray", fn(){ closeModal(); openDataModal(); }},
+    ]);
+  };
+  box.appendChild(impBtn);
+
+  const cancel = el("button","btn btn-gray","閉じる");
+  cancel.style.marginTop = "10px";
+  cancel.onclick = closeModal;
+  box.appendChild(cancel);
+
+  modalEl.appendChild(box);
+  modalEl.onclick = e => { if (e.target === modalEl) closeModal(); };
+  document.body.appendChild(modalEl);
 }
 
 function clearAll(){
@@ -668,6 +736,10 @@ function renderHome(){
   const h1 = el("h1",null,"KEMURI屋 発注");
   h1.appendChild(el("div","sub", editMode ? "業者をタップで名前・アイコン変更" : todayStr() + " の発注書：" + orderCount() + "品"));
   head.appendChild(h1);
+  const db = el("button","btn btn-gray btn-sm","💾");
+  db.title = "データの保存・引き継ぎ";
+  db.onclick = openDataModal;
+  head.appendChild(db);
   const eb = el("button","btn btn-gray btn-sm", editMode ? "完了" : "編集");
   eb.onclick = () => { editMode = !editMode; render(); };
   head.appendChild(eb);
