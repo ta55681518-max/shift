@@ -151,8 +151,11 @@ const CACHE_KEY = 'kemuri_ai_cache_v1';  // AIの返事の控え（同じ内容�
 const num = KemuriCore.num;
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
+/* '2026-09-30' → '9/30' */
+const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                      return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-let TAB = 'sum';
+let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
 let AI = { loading:false, error:'', result:null, at:'' };
@@ -430,6 +433,175 @@ function tomorrowCard(dst){
      + '日別の売上データが貯まるほど正確になります。'
      + '仕込みの最終判断は、いつもどおりご自身でお願いします。</div></div>';
   return h;
+}
+
+/* ============================================================
+   明日の仕込み
+   ------------------------------------------------------------
+   «その商品が、その曜日に、ふだん何個出るか» を売上履歴から出し、
+   いまの在庫と突き合わせて «足りないぶん» を並べる。
+   数字はぜんぶ素の計算で出す（AIには一言も書かせない）。
+   ============================================================ */
+let TMR_DAY = null;                 /* 見ている日。null = 明日 */
+function tmrTarget(){ return TMR_DAY || KemuriCore.nextDay(KemuriCore.todayStr()); }
+function tmrSub(){
+  const d = tmrTarget();
+  return fmtDay(d) + '（' + ['日','月','火','水','木','金','土'][KemuriCore.dowOf(d)] + '）';
+}
+function tmrShift(n){
+  const base = tmrTarget();
+  TMR_DAY = n > 0 ? KemuriCore.nextDay(base) : KemuriCore.prevDay(base);
+  render(); window.scrollTo(0,0);
+}
+function viewTomorrow(){
+  const f = KemuriData.forecast(tmrTarget());
+  const dst = KemuriData.daily.stats();
+  let h = '<div class="pad">';
+
+  /* 日を前後に動かせるように。木曜が定休日なので «金曜ぶん» を先に見たい日がある */
+  h += '<div class="chips" style="margin-bottom:12px">'
+     + '<button onclick="tmrShift(-1)">← 前の日</button>'
+     + '<button class="on">' + tmrSub() + '</button>'
+     + '<button onclick="tmrShift(1)">次の日 →</button></div>';
+  if(TMR_DAY) h += '<button class="btn btn-out" style="margin-bottom:12px" onclick="TMR_DAY=null;render()">明日に戻す</button>';
+
+  if(!f.hasStock){
+    h += '<div class="warn">冷凍在庫アプリに商品がまだありません。</div></div>';
+    return h;
+  }
+  if(f.closedDow){
+    h += '<div class="warn"><b>' + f.dowName + '曜</b>は、これまで売上のある日がありません。'
+       + '定休日ならこのままで大丈夫です。</div></div>';
+    return h;
+  }
+  if(f.thin){
+    h += '<div class="warn"><b>' + f.dowName + '曜</b>の営業は ' + f.sample + '日ぶんしかないので、'
+       + '予想を出していません。<br>'
+       + 'たまたま開けた日の数字を「その曜日の傾向」にすると、仕込みを外すためです。'
+       + '<br>あと ' + (KemuriData.FORECAST_MIN - f.sample) + '日ぶん取り込めば出ます。</div></div>';
+    return h;
+  }
+
+  /* 見出し … 何日ぶんを見て出した数字なのかを先に言う */
+  const dow = dst.days ? KemuriData.daily.dow().rows[f.dow] : null;
+  h += '<div class="card"><h2>' + f.dowName + '曜の実績から</h2>'
+     + '<div class="muted">直近の' + f.dowName + '曜 <b>' + f.sample + '日ぶん</b>'
+     + '（' + fmtDay(f.days[0]) + '〜' + fmtDay(f.days[f.days.length-1]) + '）の'
+     + '<b>その商品の出数</b>を平均しました。'
+     + (dow && dow.index != null
+        ? '<br>' + f.dowName + '曜はふだんの <b>' + dow.index.toFixed(2) + ' 倍</b>・'
+          + yen(dow.avgGross) + 'の日です。'
+        : '')
+     + '</div></div>';
+
+  const need = f.rows.filter(r=>!r.ok);
+  const ok   = f.rows.filter(r=>r.ok);
+
+  if(need.length){
+    h += '<div class="sec">足りません（' + need.length + '）</div><div class="card">';
+    need.forEach(r=>{ h += tmrRow(r, true); });
+    h += '</div>';
+  }else{
+    h += '<div class="card" style="border-color:#bfe7cf;background:#f4fbf6">'
+       + '<h2 style="color:#0a9d55">いまの在庫で足ります</h2>'
+       + '<div class="muted">予想どおりに出た場合です。'
+       + '幅（いちばん少ない日〜多い日）も見て判断してください。</div></div>';
+  }
+
+  if(ok.length){
+    h += '<div class="sec">足りています（' + ok.length + '）</div><div class="card">';
+    ok.forEach(r=>{ h += tmrRow(r, false); });
+    h += '</div>';
+  }
+
+  if(f.unmapped.length){
+    h += '<div class="sec">在庫に紐づいていない商品</div><div class="card">'
+       + '<div class="muted">POSでは出ていますが、在庫の商品につながっていないので'
+       + '突き合わせていません。冷凍在庫アプリの設定で紐づけられます。</div><div class="gap">';
+    f.unmapped.forEach(u=>{
+      h += '<div class="prow"><span class="nm">' + esc(u.name) + '</span>'
+         + '<span class="m">約 ' + u.avg + '</span></div>';
+    });
+    h += '</div></div>';
+  }
+
+  h += '<div class="warn gap">これは<b>過去の同じ曜日の平均</b>です。'
+     + '天気・宴会・連休で大きく動きます。<b>幅</b>のほうを見て、'
+     + '最後はいつもどおりご自身で決めてください。</div>';
+
+  h += hitCard();
+  h += '</div>';
+  return h;
+}
+
+/* ============================================================
+   予想の答え合わせ
+   ------------------------------------------------------------
+   «当たっているのか» を思い込みでなく実績で見せる。
+   過去の営業日を1日ずつ、その前日までのデータだけで予想し直して
+   実際と比べている（KemuriData.backtest）。
+   ============================================================ */
+let HIT_OPEN = false;
+function hitCard(){
+  const b = KemuriData.backtest({ days:40 });
+  if(!b.tested){
+    return '<div class="sec">予想の答え合わせ</div><div class="card">'
+      + '<div class="muted">まだ試せる日がありません。'
+      + '売上を取り込むほど、当たり具合を出せるようになります。</div></div>';
+  }
+  const good = b.rate != null && b.rate <= 25;
+  let h = '<div class="sec">予想の答え合わせ</div>'
+    + '<div class="card"' + (good ? ' style="border-color:#bfe7cf;background:#f4fbf6"' : '') + '>'
+    + '<div class="muted">過去 <b>' + b.tested + '日ぶん</b>'
+    + '（' + fmtDay(b.from) + '〜' + fmtDay(b.to) + '）を、'
+    + '<b>その日の前日までのデータだけ</b>で予想し直して、実際と比べました。</div>'
+    + '<div class="gap" style="font-size:22px;font-weight:800;'
+    +   'color:' + (good ? '#0a9d55' : '#1a1a1a') + '">'
+    + 'ズレは平均 ±' + b.mae + '個'
+    + (b.rate != null ? '<span style="font-size:15px;font-weight:600;color:#8a8a8a">'
+                      + '　（実際の ' + b.rate + '%）</span>' : '')
+    + '</div>'
+    + '<div class="muted">'
+    + '予想より<b>多く出た</b>のが ' + b.short + '回、<b>少なかった</b>のが ' + b.over + '回'
+    + '（のべ ' + b.pairs + '回ぶん）。'
+    + '<br>多く出たほうが品切れにつながる側です。'
+    + '</div>';
+
+  if(!HIT_OPEN){
+    h += '<button class="btn btn-out gap" onclick="HIT_OPEN=true;render()">商品ごとに見る</button>';
+  }else{
+    h += '<div class="gap">';
+    b.rows.forEach(r=>{
+      const c = r.rate == null ? '#8a8a8a' : r.rate <= 25 ? '#0a9d55' : r.rate <= 50 ? '#c07000' : '#b3261e';
+      h += '<div class="prow"><span class="nm">' + esc(r.name)
+         + '<small>ふだん ' + r.avg + '　ズレ ±' + r.mae + '　'
+         + r.n + '日ぶん</small></span>'
+         + '<span class="m" style="color:' + c + '">'
+         + (r.rate == null ? '—' : r.rate + '%') + '</span></div>';
+    });
+    h += '</div>'
+       + '<div class="muted gap">数字が小さいほどよく当たっています。'
+       + '<b>25%まで</b>なら任せてよい目安、<b>50%を超える</b>ものは'
+       + 'その日の状況で自分で決めたほうが確実です。</div>'
+       + '<button class="btn btn-gray gap" onclick="HIT_OPEN=false;render()">閉じる</button>';
+  }
+  if(b.skipped){
+    h += '<div class="muted gap">' + b.skipped + '日は、同じ曜日の実績が足りず予想できませんでした。</div>';
+  }
+  h += '</div>';
+  return h;
+}
+/* 1行ぶん。予想 → 必要な在庫 → いまの在庫 → 足りないぶん */
+function tmrRow(r, short){
+  const u = (r.unit && r.unit !== '個') ? r.unit : '';
+  return '<div class="prow"><span class="nm">' + esc(r.name)
+    + '<small>予想 ' + r.sell + '（' + r.lo + '〜' + r.hi + '）'
+    + (r.per !== 1 ? ' ×' + r.per : '')
+    + '　在庫 ' + r.stock + u + '</small></span>'
+    + (short
+       ? '<span class="m" style="color:#b3261e">' + r.short + u + ' 不足</span>'
+       : '<span class="m" style="color:#0a9d55">OK</span>')
+    + '</div>';
 }
 
 function viewSum(){
@@ -1074,18 +1246,21 @@ async function testAI(){
    画面の組み立て
    ============================================================ */
 const TABS = [
-  ['sum','売上','📊'], ['cost','原価','💰'], ['recipe','レシピ','📖'], ['set','設定','⚙️'],
+  ['tmr','明日','🌅'], ['sum','売上','📊'], ['cost','原価','💰'],
+  ['recipe','レシピ','📖'], ['set','設定','⚙️'],
 ];
 function go(t){ TAB = t; render(); window.scrollTo(0,0); }
 function render(){
-  const titles = { sum:['売上・原価', rangeLabel()], cost:['仕入原価','単価マスタ'],
+  const titles = { tmr:['明日の仕込み', tmrSub()], sum:['売上・原価', rangeLabel()],
+                   cost:['仕入原価','単価マスタ'],
                    recipe:['レシピ','メニュー → 材料'], set:['設定','合言葉・データ'] };
   const ti = titles[TAB] || ['売上・原価',''];
   document.getElementById('h-title').textContent = ti[0];
   document.getElementById('h-sub').textContent = ti[1];
 
   const v = document.getElementById('view');
-  v.innerHTML = TAB === 'sum' ? viewSum()
+  v.innerHTML = TAB === 'tmr' ? viewTomorrow()
+              : TAB === 'sum' ? viewSum()
               : TAB === 'cost' ? viewCost()
               : TAB === 'recipe' ? viewRecipe()
               : viewSet();
