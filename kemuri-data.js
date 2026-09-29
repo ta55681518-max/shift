@@ -775,7 +775,145 @@
     };
   }
 
+  /* ============================================================
+     明日の出数予想
+     ------------------------------------------------------------
+     «その商品が、その曜日に、ふだん何個出るか» を売上履歴から直に出す。
+
+     いままでの «曜日別の目安» は «商品のふだんの1日平均 × その曜日の
+     売上倍率» だった。店全体の忙しさで一律に伸ばすやり方なので、
+     「土曜だけ出る宴会向け」と「平日に出る一品」の差が消えてしまう。
+     ここでは商品ごとに、その曜日の実績だけを見る。
+
+     ・直近から数えて «その曜日で店を開けていた日» を最大 WEEKS 回ぶん
+     ・売上が1件も無い日は定休日とみなして数えない（木曜が定休日のため）
+     ・回数が MIN_SAMPLE に満たない曜日は数字を出さない。
+       たまたま開けた日の数字を «その曜日の傾向» にすると仕込みを外す
+     ・平均と一緒に最小〜最大も返す。幅を見て判断してもらうため
+
+     在庫と突き合わせるところまでやる。
+       必要な在庫 ＝ 予想の出数 × その商品の «1販売で減らす在庫数»
+       足りないぶん ＝ 必要な在庫 － いまの在庫
+     ============================================================ */
+  var WEEKS = 8;        /* さかのぼって見る «同じ曜日» の回数 */
+  var MIN_SAMPLE = 3;   /* これに満たない曜日は数字を出さない */
+
+  function mean(a) {
+    if (!a.length) return 0;
+    var t = 0; a.forEach(function (x) { t += x; });
+    return t / a.length;
+  }
+
+  /* target … 'YYYY-MM-DD'。省略したら明日 */
+  function forecast(target) {
+    var day = target || C.nextDay(C.todayStr());
+    var dow = C.dowOf(day);
+    var sales = global.KemuriCore && global.KemuriCore.sales;
+    var out = {
+      day: day, dow: dow, dowName: DOW_NAME[dow],
+      sample: 0, days: [], thin: true, rows: [], unmapped: [],
+      hasStock: false, closedDow: false
+    };
+    /* 早い段階で返す道（定休日・日数不足）でも要るので、ここで見ておく。
+       あとで立てると «商品がまだありません» という別の案内が出てしまう。 */
+    out.hasStock = Stock.items().length > 0;
+    if (!sales) return out;
+
+    var db = sales.load();
+    /* その曜日で «店を開けていた日» を新しい順に集める */
+    var all = Object.keys(db.days || {}).sort().reverse();
+    var picked = [];
+    for (var i = 0; i < all.length && picked.length < WEEKS; i++) {
+      var d = all[i];
+      if (C.dowOf(d) !== dow) continue;
+      var rows = db.days[d] || {};
+      var any = false;
+      for (var k in rows) { if (num(rows[k].qty) > 0) { any = true; break; } }
+      if (!any) continue;                     /* 定休日あつかい。数えない */
+      picked.push(d);
+    }
+    out.days = picked.slice().reverse();
+    out.sample = picked.length;
+    out.thin = picked.length < MIN_SAMPLE;
+    /* その曜日の営業日が1日も無い＝ふだん閉めている曜日 */
+    out.closedDow = picked.length === 0;
+    if (out.thin) return out;
+
+    /* 商品（POS名）ごとに、選んだ日の出数を並べる。出ていない日は0 */
+    var perKey = {};
+    picked.forEach(function (d) {
+      var rows = db.days[d] || {};
+      Object.keys(rows).forEach(function (k) {
+        if (!perKey[k]) perKey[k] = { name: rows[k].name || k, qty: [] };
+        perKey[k].name = rows[k].name || perKey[k].name;
+      });
+    });
+    Object.keys(perKey).forEach(function (k) {
+      perKey[k].qty = picked.map(function (d) {
+        var r = (db.days[d] || {})[k];
+        return r ? num(r.qty) : 0;
+      });
+    });
+
+    /* 在庫商品ごとにまとめる。1つの在庫に複数のPOS名がぶら下がることがある
+       （「鶏みそ串カツ」と「串カツおろしポン酢」→ どちらも在庫は「串カツ」）ので、
+       足してから «必要な在庫» にする */
+    var byItem = {}, unmapped = [];
+    Object.keys(perKey).forEach(function (k) {
+      var e = perKey[k];
+      var avg = mean(e.qty);
+      if (!(avg > 0)) return;
+      var it = Stock.itemForPos(e.name) || Stock.itemForPos(k);
+      if (!it) { unmapped.push({ name: e.name, avg: Math.round(avg * 10) / 10 }); return; }
+      var b = byItem[it.id] || (byItem[it.id] = {
+        id: it.id, name: it.name, unit: it.unit || '個',
+        per: num(it.per) || 1, stock: num(it.stock), min: num(it.min),
+        sell: 0, lo: 0, hi: 0, pos: []
+      });
+      b.sell += avg;
+      b.pos.push({ name: e.name, avg: Math.round(avg * 10) / 10 });
+      /* 幅も «その在庫を使うPOS名ぜんぶ» を日ごとに足してから取る */
+    });
+    /* 幅（その日ごとの合計の最小〜最大）は、在庫ごとに日単位で足し直す */
+    Object.keys(byItem).forEach(function (id) {
+      var b = byItem[id];
+      var keys = Object.keys(perKey).filter(function (k) {
+        var it = Stock.itemForPos(perKey[k].name) || Stock.itemForPos(k);
+        return it && it.id === b.id;
+      });
+      var totals = picked.map(function (d, idx) {
+        var t = 0;
+        keys.forEach(function (k) { t += perKey[k].qty[idx]; });
+        return t;
+      });
+      b.lo = Math.min.apply(null, totals);
+      b.hi = Math.max.apply(null, totals);
+    });
+
+    var rows = Object.keys(byItem).map(function (id) {
+      var b = byItem[id];
+      var sell = Math.round(b.sell * 10) / 10;
+      var need = Math.round(sell * b.per * 10) / 10;       /* 必要な在庫 */
+      var short = Math.round(Math.max(0, need - b.stock) * 10) / 10;
+      return {
+        id: b.id, name: b.name, unit: b.unit, per: b.per,
+        sell: sell, lo: b.lo, hi: b.hi,
+        need: need, stock: b.stock, min: b.min, short: short,
+        ok: short <= 0, pos: b.pos
+      };
+    });
+    /* 足りないものが先。同じなら必要量が多いほう */
+    rows.sort(function (a, b) { return (b.short - a.short) || (b.need - a.need); });
+
+    out.rows = rows;
+    out.unmapped = unmapped.sort(function (a, b) { return b.avg - a.avg; }).slice(0, 10);
+    return out;
+  }
+
   global.KemuriData = {
+    forecast: forecast,
+    FORECAST_WEEKS: WEEKS,
+    FORECAST_MIN: MIN_SAMPLE,
     costs: Costs,
     daily: Daily,
     dailyFromCsv: dailyFromCsv,
