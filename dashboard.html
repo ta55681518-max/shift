@@ -474,25 +474,44 @@ function viewTomorrow(){
        + '定休日ならこのままで大丈夫です。</div></div>';
     return h;
   }
-  if(f.thin){
-    h += '<div class="warn"><b>' + f.dowName + '曜</b>の営業は ' + f.sample + '日ぶんしかないので、'
-       + '予想を出していません。<br>'
-       + 'たまたま開けた日の数字を「その曜日の傾向」にすると、仕込みを外すためです。'
-       + '<br>あと ' + (KemuriData.FORECAST_MIN - f.sample) + '日ぶん取り込めば出ます。</div></div>';
+  if(!f.mode){
+    h += '<div class="warn"><b>' + f.dowName + '曜</b>の予想はまだ出せません。<br>'
+       + (f.dowIndex == null
+          ? 'POSの<b>日別</b>売上CSVを取り込むと、曜日ごとの忙しさが分かって出せるようになります。'
+          : '商品ごとの売上がまだ足りません。')
+       + '</div></div>';
     return h;
   }
 
-  /* 見出し … 何日ぶんを見て出した数字なのかを先に言う */
-  const dow = dst.days ? KemuriData.daily.dow().rows[f.dow] : null;
-  h += '<div class="card"><h2>' + f.dowName + '曜の実績から</h2>'
-     + '<div class="muted">直近の' + f.dowName + '曜 <b>' + f.sample + '日ぶん</b>'
-     + '（' + fmtDay(f.days[0]) + '〜' + fmtDay(f.days[f.days.length-1]) + '）の'
-     + '<b>その商品の出数</b>を平均しました。'
-     + (dow && dow.index != null
-        ? '<br>' + f.dowName + '曜はふだんの <b>' + dow.index.toFixed(2) + ' 倍</b>・'
-          + yen(dow.avgGross) + 'の日です。'
-        : '')
-     + '</div></div>';
+  /* 見出し … どういう出し方をした数字なのかを先に言う。
+     大まかなほうを «その曜日の実績» と誤解されると、仕込みを外す。 */
+  const dow = KemuriData.daily.dow().rows[f.dow];
+  if(f.mode === 'dow'){
+    h += '<div class="card"><h2>' + f.dowName + '曜の実績から</h2>'
+       + '<div class="muted">直近の' + f.dowName + '曜 <b>' + f.sample + '日ぶん</b>'
+       + '（' + fmtDay(f.days[0]) + '〜' + fmtDay(f.days[f.days.length-1]) + '）の'
+       + '<b>その商品の出数</b>を平均しました。'
+       + (dow && dow.index != null
+          ? '<br>' + f.dowName + '曜はふだんの <b>' + dow.index.toFixed(2) + ' 倍</b>・'
+            + yen(dow.avgGross) + 'の日です。'
+          : '')
+       + '</div></div>';
+  }else{
+    h += '<div class="card" style="border-color:#ffe0a3;background:#fffdf7">'
+       + '<h2>いまは<b>大まかな</b>出し方です</h2>'
+       + '<div class="muted">商品ごとの売上が<b>期間まとめ</b>で入っているので、'
+       + '«その商品が、その曜日に何個» までは分かりません。いまは<br><br>'
+       + '　<b>商品のふだんの1日平均</b>（' + f.covDays + '日ぶん）<br>'
+       + '　<b>×</b> ' + f.dowName + '曜の忙しさ <b>' + (f.dowIndex||0).toFixed(2) + ' 倍</b>'
+       + '（日別売上 ' + f.dowDays + '日ぶんから）<br><br>'
+       + 'で出しています。<b>「土曜だけ出る商品」と「平日に出る商品」の差は出ません。</b>'
+       + '店ぜんぶの忙しさで一律に伸ばしているだけです。</div>'
+       + '<div class="info">POSの<b>商品別集計を1日ぶんずつ</b>取り込んでいくと、'
+       + '自動で正確な出し方に切り替わります。<br>'
+       + f.dowName + '曜はあと <b>' + f.need + '日ぶん</b>です'
+       + (f.sample ? '（いま ' + f.sample + '日ぶん）' : '')
+       + '。</div></div>';
+  }
 
   const need = f.rows.filter(r=>!r.ok);
   const ok   = f.rows.filter(r=>r.ok);
@@ -525,8 +544,12 @@ function viewTomorrow(){
     h += '</div></div>';
   }
 
-  h += '<div class="warn gap">これは<b>過去の同じ曜日の平均</b>です。'
-     + '天気・宴会・連休で大きく動きます。<b>幅</b>のほうを見て、'
+  h += '<div class="warn gap">'
+     + (f.mode === 'dow'
+        ? 'これは<b>過去の同じ曜日の平均</b>です。天気・宴会・連休で大きく動きます。'
+          + '<b>幅</b>のほうを見て、'
+        : 'これは<b>店ぜんぶの忙しさから割り出した目安</b>です。商品ごとの曜日のクセは'
+          + 'まだ見ていません。<b>多めに見ておくくらい</b>のつもりで、')
      + '最後はいつもどおりご自身で決めてください。</div>';
 
   h += hitCard();
@@ -547,7 +570,9 @@ function hitCard(){
   if(!b.tested){
     return '<div class="sec">予想の答え合わせ</div><div class="card">'
       + '<div class="muted">まだ試せる日がありません。'
-      + '売上を取り込むほど、当たり具合を出せるようになります。</div></div>';
+      + '答え合わせは<b>商品ごとの日別データ</b>でだけできます。'
+      + 'POSの商品別集計を1日ぶんずつ取り込んでいくと、'
+      + '«本当に当たっているか» を実績で出せるようになります。</div></div>';
   }
   const good = b.rate != null && b.rate <= 25;
   let h = '<div class="sec">予想の答え合わせ</div>'
@@ -595,7 +620,8 @@ function hitCard(){
 function tmrRow(r, short){
   const u = (r.unit && r.unit !== '個') ? r.unit : '';
   return '<div class="prow"><span class="nm">' + esc(r.name)
-    + '<small>予想 ' + r.sell + '（' + r.lo + '〜' + r.hi + '）'
+    + '<small>予想 ' + r.sell
+    + (r.lo == null ? '' : '（' + r.lo + '〜' + r.hi + '）')
     + (r.per !== 1 ? ' ×' + r.per : '')
     + '　在庫 ' + r.stock + u + '</small></span>'
     + (short

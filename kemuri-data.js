@@ -851,67 +851,39 @@
     return out;
   }
 
-  /* target … 'YYYY-MM-DD'。省略したら明日 */
-  function forecast(target) {
-    var day = target || C.nextDay(C.todayStr());
-    var dow = C.dowOf(day);
-    var sales = global.KemuriCore && global.KemuriCore.sales;
-    var out = {
-      day: day, dow: dow, dowName: DOW_NAME[dow],
-      sample: 0, days: [], thin: true, rows: [], unmapped: [],
-      hasStock: false, closedDow: false
-    };
-    /* 早い段階で返す道（定休日・日数不足）でも要るので、ここで見ておく。
-       あとで立てると «商品がまだありません» という別の案内が出てしまう。 */
-    out.hasStock = Stock.items().length > 0;
-    if (!sales) return out;
-
-    var db = sales.load();
-    var picked = sameDowDays(db, dow, WEEKS, target ? day : null);
-    out.days = picked.slice().reverse();
-    out.sample = picked.length;
-    out.thin = picked.length < MIN_SAMPLE;
-    /* その曜日の営業日が1日も無い＝ふだん閉めている曜日 */
-    out.closedDow = picked.length === 0;
-    if (out.thin) return out;
-
-    var perKey = avgByKey(db, picked);
-
-    /* 在庫商品ごとにまとめる。1つの在庫に複数のPOS名がぶら下がることがある
-       （「鶏みそ串カツ」と「串カツおろしポン酢」→ どちらも在庫は「串カツ」）ので、
-       足してから «必要な在庫» にする */
+  /* 商品ごとの «その日の予想» を、在庫商品ごとにまとめて突き合わせる。
+     精密な出し方でも、ざっくりした出し方でも、ここから先は同じ計算。
+       est[POSキー] = { name, avg, qty:[日ごとの実績] または null }
+     qty があるときだけ «幅»（いちばん少ない日〜多い日）を出す。 */
+  function matchStock(est, picked) {
     var byItem = {}, unmapped = [];
-    Object.keys(perKey).forEach(function (k) {
-      var e = perKey[k];
-      var avg = e.avg;
-      if (!(avg > 0)) return;
+    Object.keys(est).forEach(function (k) {
+      var e = est[k];
+      if (!(e.avg > 0)) return;
       var it = Stock.itemForPos(e.name) || Stock.itemForPos(k);
-      if (!it) { unmapped.push({ name: e.name, avg: Math.round(avg * 10) / 10 }); return; }
+      if (!it) { unmapped.push({ name: e.name, avg: Math.round(e.avg * 10) / 10 }); return; }
       var b = byItem[it.id] || (byItem[it.id] = {
         id: it.id, name: it.name, unit: it.unit || '個',
         per: num(it.per) || 1, stock: num(it.stock), min: num(it.min),
-        sell: 0, lo: 0, hi: 0, pos: []
+        sell: 0, lo: null, hi: null, keys: []
       });
-      b.sell += avg;
-      b.pos.push({ name: e.name, avg: Math.round(avg * 10) / 10 });
-      /* 幅も «その在庫を使うPOS名ぜんぶ» を日ごとに足してから取る */
+      b.sell += e.avg;
+      b.keys.push(k);
     });
-    /* 幅（その日ごとの合計の最小〜最大）は、在庫ごとに日単位で足し直す */
-    Object.keys(byItem).forEach(function (id) {
-      var b = byItem[id];
-      var keys = Object.keys(perKey).filter(function (k) {
-        var it = Stock.itemForPos(perKey[k].name) || Stock.itemForPos(k);
-        return it && it.id === b.id;
+    /* 幅は «その在庫を使うPOS名ぜんぶ» を日ごとに足してから取る。
+       商品ごとに別々の最小・最大を足すと、ありえない幅になるため。 */
+    if (picked && picked.length) {
+      Object.keys(byItem).forEach(function (id) {
+        var b = byItem[id];
+        var totals = picked.map(function (d, idx) {
+          var t = 0;
+          b.keys.forEach(function (k) { t += (est[k].qty ? est[k].qty[idx] : 0); });
+          return t;
+        });
+        b.lo = Math.min.apply(null, totals);
+        b.hi = Math.max.apply(null, totals);
       });
-      var totals = picked.map(function (d, idx) {
-        var t = 0;
-        keys.forEach(function (k) { t += perKey[k].qty[idx]; });
-        return t;
-      });
-      b.lo = Math.min.apply(null, totals);
-      b.hi = Math.max.apply(null, totals);
-    });
-
+    }
     var rows = Object.keys(byItem).map(function (id) {
       var b = byItem[id];
       var sell = Math.round(b.sell * 10) / 10;
@@ -920,15 +892,74 @@
       return {
         id: b.id, name: b.name, unit: b.unit, per: b.per,
         sell: sell, lo: b.lo, hi: b.hi,
-        need: need, stock: b.stock, min: b.min, short: short,
-        ok: short <= 0, pos: b.pos
+        need: need, stock: b.stock, min: b.min, short: short, ok: short <= 0
       };
     });
     /* 足りないものが先。同じなら必要量が多いほう */
     rows.sort(function (a, b) { return (b.short - a.short) || (b.need - a.need); });
+    return { rows: rows, unmapped: unmapped.sort(function (a, b) { return b.avg - a.avg; }).slice(0, 10) };
+  }
 
-    out.rows = rows;
-    out.unmapped = unmapped.sort(function (a, b) { return b.avg - a.avg; }).slice(0, 10);
+  /* target … 'YYYY-MM-DD'。省略したら明日
+
+     出し方は2通り。データの揃い具合で自動的に決まる。
+       'dow'   … その商品の、その曜日の実績だけを見る（精密）
+       'rough' … 商品のふだんの1日平均 × その曜日の忙しさ（大まか）
+
+     商品別の売上を «期間まるごと» で取り込むと、全部が期間の開始日に
+     積まれるので «その曜日の実績» が作れない。それでも日別売上
+     （総額）が貯まっていれば曜日の忙しさは分かるので、そちらを使って
+     とりあえずの目安を出す。日別の商品データが貯まれば精密に切り替わる。 */
+  function forecast(target) {
+    var day = target || C.nextDay(C.todayStr());
+    var dow = C.dowOf(day);
+    var sales = global.KemuriCore && global.KemuriCore.sales;
+    var out = {
+      day: day, dow: dow, dowName: DOW_NAME[dow],
+      mode: '', sample: 0, need: MIN_SAMPLE, days: [], rows: [], unmapped: [],
+      hasStock: false, closedDow: false, dowIndex: null, dowDays: 0, dowThin: false
+    };
+    out.hasStock = Stock.items().length > 0;
+    if (!sales) return out;
+    var db = sales.load();
+
+    /* その曜日に店を開けているかは «日別売上» で見る。
+       商品別がまとめ取込だと、どの曜日も «実績なし» に見えてしまうため。 */
+    var dr = Daily.dow().rows[dow] || null;
+    out.dowDays  = dr ? dr.days : 0;
+    out.dowIndex = dr ? dr.index : null;
+    out.dowThin  = !!(dr && dr.thin);
+    /* 日別売上がまだ無いときは、商品別の履歴で判断するしかない */
+    var hasDaily = Object.keys(Daily.load().days || {}).length > 0;
+
+    var picked = sameDowDays(db, dow, WEEKS, target ? day : null);
+    out.days = picked.slice().reverse();
+    out.sample = picked.length;
+    out.need = Math.max(0, MIN_SAMPLE - picked.length);
+
+    out.closedDow = hasDaily ? (out.dowDays === 0) : (picked.length === 0);
+    if (out.closedDow) return out;
+
+    if (picked.length >= MIN_SAMPLE) {
+      /* ---- 精密：その商品の、その曜日の実績だけ ---- */
+      var perKey = avgByKey(db, picked);
+      var m = matchStock(perKey, picked);
+      out.mode = 'dow'; out.rows = m.rows; out.unmapped = m.unmapped;
+      return out;
+    }
+
+    /* ---- 大まか：ふだんの1日平均 × その曜日の忙しさ ---- */
+    if (out.dowIndex == null) return out;          /* 忙しさも出せない＝まだ何も言えない */
+    var cov = coverage();
+    var tot = sales.range();                       /* POS名ごとの期間合計 */
+    if (!tot.length) return out;
+    var est = {};
+    tot.forEach(function (r) {
+      est[r.key] = { name: r.name, avg: (num(r.qty) / cov.days) * out.dowIndex, qty: null };
+    });
+    var m2 = matchStock(est, null);
+    out.mode = 'rough'; out.rows = m2.rows; out.unmapped = m2.unmapped;
+    out.covDays = cov.days;
     return out;
   }
 
