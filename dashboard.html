@@ -528,6 +528,66 @@ function viewTomorrow(){
   h += '<div class="warn gap">これは<b>過去の同じ曜日の平均</b>です。'
      + '天気・宴会・連休で大きく動きます。<b>幅</b>のほうを見て、'
      + '最後はいつもどおりご自身で決めてください。</div>';
+
+  h += hitCard();
+  h += '</div>';
+  return h;
+}
+
+/* ============================================================
+   予想の答え合わせ
+   ------------------------------------------------------------
+   «当たっているのか» を思い込みでなく実績で見せる。
+   過去の営業日を1日ずつ、その前日までのデータだけで予想し直して
+   実際と比べている（KemuriData.backtest）。
+   ============================================================ */
+let HIT_OPEN = false;
+function hitCard(){
+  const b = KemuriData.backtest({ days:40 });
+  if(!b.tested){
+    return '<div class="sec">予想の答え合わせ</div><div class="card">'
+      + '<div class="muted">まだ試せる日がありません。'
+      + '売上を取り込むほど、当たり具合を出せるようになります。</div></div>';
+  }
+  const good = b.rate != null && b.rate <= 25;
+  let h = '<div class="sec">予想の答え合わせ</div>'
+    + '<div class="card"' + (good ? ' style="border-color:#bfe7cf;background:#f4fbf6"' : '') + '>'
+    + '<div class="muted">過去 <b>' + b.tested + '日ぶん</b>'
+    + '（' + fmtDay(b.from) + '〜' + fmtDay(b.to) + '）を、'
+    + '<b>その日の前日までのデータだけ</b>で予想し直して、実際と比べました。</div>'
+    + '<div class="gap" style="font-size:22px;font-weight:800;'
+    +   'color:' + (good ? '#0a9d55' : '#1a1a1a') + '">'
+    + 'ズレは平均 ±' + b.mae + '個'
+    + (b.rate != null ? '<span style="font-size:15px;font-weight:600;color:#8a8a8a">'
+                      + '　（実際の ' + b.rate + '%）</span>' : '')
+    + '</div>'
+    + '<div class="muted">'
+    + '予想より<b>多く出た</b>のが ' + b.short + '回、<b>少なかった</b>のが ' + b.over + '回'
+    + '（のべ ' + b.pairs + '回ぶん）。'
+    + '<br>多く出たほうが品切れにつながる側です。'
+    + '</div>';
+
+  if(!HIT_OPEN){
+    h += '<button class="btn btn-out gap" onclick="HIT_OPEN=true;render()">商品ごとに見る</button>';
+  }else{
+    h += '<div class="gap">';
+    b.rows.forEach(r=>{
+      const c = r.rate == null ? '#8a8a8a' : r.rate <= 25 ? '#0a9d55' : r.rate <= 50 ? '#c07000' : '#b3261e';
+      h += '<div class="prow"><span class="nm">' + esc(r.name)
+         + '<small>ふだん ' + r.avg + '　ズレ ±' + r.mae + '　'
+         + r.n + '日ぶん</small></span>'
+         + '<span class="m" style="color:' + c + '">'
+         + (r.rate == null ? '—' : r.rate + '%') + '</span></div>';
+    });
+    h += '</div>'
+       + '<div class="muted gap">数字が小さいほどよく当たっています。'
+       + '<b>25%まで</b>なら任せてよい目安、<b>50%を超える</b>ものは'
+       + 'その日の状況で自分で決めたほうが確実です。</div>'
+       + '<button class="btn btn-gray gap" onclick="HIT_OPEN=false;render()">閉じる</button>';
+  }
+  if(b.skipped){
+    h += '<div class="muted gap">' + b.skipped + '日は、同じ曜日の実績が足りず予想できませんでした。</div>';
+  }
   h += '</div>';
   return h;
 }

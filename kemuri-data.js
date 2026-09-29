@@ -804,6 +804,53 @@
     return t / a.length;
   }
 
+  /* その日に売上が1件でもあるか。無ければ定休日あつかい */
+  function openDay(db, d) {
+    var rows = db.days[d] || {};
+    for (var k in rows) { if (num(rows[k].qty) > 0) return true; }
+    return false;
+  }
+  /* «その曜日で店を開けていた日» を新しい順に最大 n 件。
+     before を渡すと、その日より前だけを見る（答え合わせ用）。 */
+  function sameDowDays(db, dow, n, before) {
+    var all = Object.keys(db.days || {}).sort().reverse();
+    var picked = [];
+    for (var i = 0; i < all.length && picked.length < n; i++) {
+      var d = all[i];
+      if (before && d >= before) continue;
+      if (C.dowOf(d) !== dow) continue;
+      if (!openDay(db, d)) continue;
+      picked.push(d);
+    }
+    return picked;
+  }
+  /* 選んだ日から、POS商品名ごとの «1日あたり何個» を出す。
+     出ていない日は0として数える（たまに出るものを過大評価しないため）。 */
+  function avgByKey(db, picked) {
+    var perKey = {};
+    picked.forEach(function (d) {
+      var rows = db.days[d] || {};
+      Object.keys(rows).forEach(function (k) {
+        if (!perKey[k]) perKey[k] = { name: rows[k].name || k, qty: [] };
+        perKey[k].name = rows[k].name || perKey[k].name;
+      });
+    });
+    Object.keys(perKey).forEach(function (k) {
+      perKey[k].qty = picked.map(function (d) {
+        var r = (db.days[d] || {})[k];
+        return r ? num(r.qty) : 0;
+      });
+      perKey[k].avg = mean(perKey[k].qty);
+    });
+    return perKey;
+  }
+  /* その日に実際に出た数（POS商品名ごと） */
+  function actualByKey(db, day) {
+    var rows = db.days[day] || {}, out = {};
+    Object.keys(rows).forEach(function (k) { out[k] = num(rows[k].qty); });
+    return out;
+  }
+
   /* target … 'YYYY-MM-DD'。省略したら明日 */
   function forecast(target) {
     var day = target || C.nextDay(C.todayStr());
@@ -820,18 +867,7 @@
     if (!sales) return out;
 
     var db = sales.load();
-    /* その曜日で «店を開けていた日» を新しい順に集める */
-    var all = Object.keys(db.days || {}).sort().reverse();
-    var picked = [];
-    for (var i = 0; i < all.length && picked.length < WEEKS; i++) {
-      var d = all[i];
-      if (C.dowOf(d) !== dow) continue;
-      var rows = db.days[d] || {};
-      var any = false;
-      for (var k in rows) { if (num(rows[k].qty) > 0) { any = true; break; } }
-      if (!any) continue;                     /* 定休日あつかい。数えない */
-      picked.push(d);
-    }
+    var picked = sameDowDays(db, dow, WEEKS, target ? day : null);
     out.days = picked.slice().reverse();
     out.sample = picked.length;
     out.thin = picked.length < MIN_SAMPLE;
@@ -839,21 +875,7 @@
     out.closedDow = picked.length === 0;
     if (out.thin) return out;
 
-    /* 商品（POS名）ごとに、選んだ日の出数を並べる。出ていない日は0 */
-    var perKey = {};
-    picked.forEach(function (d) {
-      var rows = db.days[d] || {};
-      Object.keys(rows).forEach(function (k) {
-        if (!perKey[k]) perKey[k] = { name: rows[k].name || k, qty: [] };
-        perKey[k].name = rows[k].name || perKey[k].name;
-      });
-    });
-    Object.keys(perKey).forEach(function (k) {
-      perKey[k].qty = picked.map(function (d) {
-        var r = (db.days[d] || {})[k];
-        return r ? num(r.qty) : 0;
-      });
-    });
+    var perKey = avgByKey(db, picked);
 
     /* 在庫商品ごとにまとめる。1つの在庫に複数のPOS名がぶら下がることがある
        （「鶏みそ串カツ」と「串カツおろしポン酢」→ どちらも在庫は「串カツ」）ので、
@@ -861,7 +883,7 @@
     var byItem = {}, unmapped = [];
     Object.keys(perKey).forEach(function (k) {
       var e = perKey[k];
-      var avg = mean(e.qty);
+      var avg = e.avg;
       if (!(avg > 0)) return;
       var it = Stock.itemForPos(e.name) || Stock.itemForPos(k);
       if (!it) { unmapped.push({ name: e.name, avg: Math.round(avg * 10) / 10 }); return; }
@@ -910,8 +932,115 @@
     return out;
   }
 
+  /* ============================================================
+     予想の答え合わせ（バックテスト）
+     ------------------------------------------------------------
+     過去の営業日を1日ずつ «その日の前日までのデータだけ» で予想し直し、
+     実際に出た数と比べる。当てにしていい数字かどうかを、思い込みでなく
+     実績で見るため。
+
+     出すもの
+       ・ズレ … |予想 － 実際| の平均（何個ずれたか）
+       ・誤差率 … ズレ ÷ 実際の平均（何割ずれたか）
+       ・足りなかった回数 … 実際 > 予想。品切れにつながる側のはずれ
+     商品ごとにも出す。よく当たる商品は任せられるし、外れやすい商品は
+     自分で判断する、という使い分けができる。
+     ============================================================ */
+  function backtest(opts) {
+    var o = opts || {};
+    var testDays = o.days || 40;        /* さかのぼって試す営業日の数 */
+    var sales = global.KemuriCore && global.KemuriCore.sales;
+    var out = { tested: 0, from: '', to: '', pairs: 0, mae: 0, rate: null,
+                short: 0, over: 0, rows: [], skipped: 0 };
+    if (!sales) return out;
+    var db = sales.load();
+
+    var all = Object.keys(db.days || {}).sort();
+    var open = all.filter(function (d) { return openDay(db, d); });
+    var targets = open.slice(-testDays);
+    if (!targets.length) return out;
+
+    /* 在庫商品ごとにまとめる。POS名が複数ぶら下がることがあるため */
+    var itemOf = {};                    /* POSキー -> 在庫商品（null もキャッシュ） */
+    function item(k, name) {
+      if (!(k in itemOf)) itemOf[k] = Stock.itemForPos(name) || Stock.itemForPos(k) || null;
+      return itemOf[k];
+    }
+
+    var acc = {};                       /* 在庫商品ごとの集計 */
+    targets.forEach(function (day) {
+      var picked = sameDowDays(db, C.dowOf(day), WEEKS, day);
+      if (picked.length < MIN_SAMPLE) { out.skipped++; return; }   /* その日は予想できなかった */
+      out.tested++;
+      if (!out.from) out.from = day;
+      out.to = day;
+
+      var perKey = avgByKey(db, picked);
+      var real = actualByKey(db, day);
+
+      /* その日ぶんを在庫商品ごとに寄せる */
+      var pred = {}, act = {};
+      Object.keys(perKey).forEach(function (k) {
+        var it = item(k, perKey[k].name);
+        if (!it) return;
+        pred[it.id] = (pred[it.id] || 0) + perKey[k].avg;
+      });
+      Object.keys(real).forEach(function (k) {
+        var nm = (db.days[day][k] || {}).name || k;
+        var it = item(k, nm);
+        if (!it) return;
+        act[it.id] = (act[it.id] || 0) + real[k];
+      });
+
+      var ids = {};
+      Object.keys(pred).forEach(function (id) { ids[id] = 1; });
+      Object.keys(act).forEach(function (id) { ids[id] = 1; });
+      Object.keys(ids).forEach(function (id) {
+        var p = pred[id] || 0, a = act[id] || 0;
+        if (p <= 0 && a <= 0) return;
+        var st = Stock.items().filter(function (x) { return String(x.id) === String(id); })[0];
+        var b = acc[id] || (acc[id] = { id: id, name: st ? st.name : id,
+                                        unit: (st && st.unit) || '個',
+                                        n: 0, sumAbs: 0, sumAct: 0, short: 0, over: 0 });
+        b.n++;
+        b.sumAbs += Math.abs(a - p);
+        b.sumAct += a;
+        if (a > p) b.short++; else if (p > a) b.over++;
+      });
+    });
+
+    var rows = Object.keys(acc).map(function (id) {
+      var b = acc[id];
+      var mae = b.sumAbs / b.n;
+      var avgAct = b.sumAct / b.n;
+      return {
+        id: b.id, name: b.name, unit: b.unit, n: b.n,
+        mae: Math.round(mae * 10) / 10,
+        avg: Math.round(avgAct * 10) / 10,
+        rate: avgAct > 0 ? Math.round((mae / avgAct) * 100) : null,
+        short: b.short, over: b.over
+      };
+    });
+    /* よく出るものから。まず見たいのは «数の多い商品が当たっているか» なので */
+    rows.sort(function (a, b) { return b.avg - a.avg; });
+
+    var sumAbs = 0, sumAct = 0, n = 0, sh = 0, ov = 0;
+    Object.keys(acc).forEach(function (id) {
+      var b = acc[id];
+      sumAbs += b.sumAbs; sumAct += b.sumAct; n += b.n; sh += b.short; ov += b.over;
+    });
+    out.pairs = n;
+    out.mae = n ? Math.round((sumAbs / n) * 10) / 10 : 0;
+    out.rate = sumAct > 0 ? Math.round((sumAbs / sumAct) * 100) : null;
+    out.short = sh;
+    out.over = ov;
+    out.rows = rows;
+    return out;
+  }
+
   global.KemuriData = {
     forecast: forecast,
+    backtest: backtest,
     FORECAST_WEEKS: WEEKS,
     FORECAST_MIN: MIN_SAMPLE,
     costs: Costs,
