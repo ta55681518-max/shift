@@ -94,6 +94,11 @@
   var Sales = {
     _db: null,
 
+    /* 読み込んだ中身を持ち回っているので、localStorage を外から
+       書きかえたとき（バックアップの読み込み）は捨てて読み直す。
+       これをしないと、古いほうを持ったまま次の保存で上書きしてしまう。 */
+    reload: function () { this._db = null; return this.load(); },
+
     load: function () {
       if (this._db) return this._db;
       try {
