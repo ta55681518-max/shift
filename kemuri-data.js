@@ -53,6 +53,8 @@
   var WARN_STATUS = ['要確認', '要注意'];
   var Costs = {
     _db: null,
+    /* 持ち回っている中身を捨てて読み直す。バックアップを戻したあとに要る */
+    reload: function () { this._db = null; return this.load(); },
     load: function () {
       if (!this._db) this._db = readLS(COST_KEY, { v: 1, items: {}, updatedAt: '' });
       if (!this._db.items) this._db.items = {};
@@ -187,6 +189,7 @@
 
   var Recipes = {
     _db: null,
+    reload: function () { this._db = null; return this.load(); },
     load: function () {
       if (!this._db) this._db = readLS(RECIPE_KEY, { v: 1, items: {}, seeded: 0, updatedAt: '' });
       if (!this._db.items) this._db.items = {};
@@ -574,6 +577,7 @@
 
   var Daily = {
     _db: null,
+    reload: function () { this._db = null; return this.load(); },
     load: function () {
       if (this._db) return this._db;
       try {
@@ -1082,8 +1086,17 @@
     return out;
   }
 
+  /* バックアップを戻したあと、持ち回っている中身をぜんぶ読み直す。
+     どれか1つでも古いままだと «入れたのに出てこない» になる。 */
+  function reloadAll() {
+    try { C.sales.reload && C.sales.reload(); } catch (e) {}
+    Costs.reload(); Recipes.reload(); Daily.reload();
+    /* Stock は毎回 localStorage から読むので、持ち回っていない */
+  }
+
   global.KemuriData = {
     BUILD: '2026-09-30a',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    reloadAll: reloadAll,
     forecast: forecast,
     backtest: backtest,
     FORECAST_WEEKS: WEEKS,
