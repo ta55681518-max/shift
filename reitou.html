@@ -152,6 +152,16 @@
   .chips{display:flex;flex-wrap:wrap;gap:8px;}
   .chips button{border:1.5px solid #e2e2e2;background:#fff;border-radius:999px;padding:10px 15px;font-size:14px;font-weight:700;color:#666;}
   .chips button.on{border-color:#e8531f;background:#fff4ef;color:#e8531f;}
+  /* バックアップを «選んで» 戻すときの1行 */
+  .bk-row{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;background:#fff;
+          border:1.5px solid #ededed;border-radius:14px;padding:13px 14px;margin-bottom:8px;}
+  .bk-row.on{border-color:#e8531f;background:#fff8f5;}
+  .bk-row .bk-ck{font-size:20px;line-height:1.2;color:#bbb;}
+  .bk-row.on .bk-ck{color:#e8531f;}
+  .bk-row .bk-b{flex:1;display:block;}
+  .bk-row b{display:block;font-size:16px;font-weight:700;margin-bottom:3px;}
+  .bk-row small{display:block;font-size:12px;color:#8a8a8a;line-height:1.5;}
+  .bk-row small.bk-ng{color:#c0392b;font-weight:700;margin-top:3px;}
   .two{display:flex;gap:10px;margin-top:14px;}
   .two .btn{flex:1;}
   textarea{width:100%;min-height:110px;padding:12px;font-size:13px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
@@ -1604,21 +1614,62 @@ function bkPick(el){
 }
 function impData(){ bkRestore(document.getElementById('io').value, '貼り付け'); }
 
-/* 読み込む前に «何が入っているか» を見せて確かめる。
-   黙って置きかえると、間違ったファイルで消してしまうため。 */
+/* 読み込む前に «何が何に置きかわるのか» を1つずつ見せて、選ばせる。
+   別の端末から «売上だけ» もらいたい場面があるため（まるごと入れると、
+   こちらで棚卸したばかりの在庫まで置きかわってしまう）。 */
+let BK = { box:null, from:'', pick:{} };
 function bkRestore(text, from){
   const box = KemuriBackup.parse(text);
   if(!box){ toast('バックアップとして読めませんでした'); return; }
+  BK.box = box; BK.from = from; BK.pick = {};
+  /* 既定は «中身が増えるものだけ» 入れる。棚卸した在庫を黙って空にしないため。
+     減るもの・消えるものは、こちらで選んでもらう。 */
+  const now = KemuriBackup.current();
+  KemuriBackup.summary(box).forEach(x=>{
+    BK.pick[x.key] = !now[x.key] || !bkLooksSmaller(x.detail, now[x.key]);
+  });
+  drawBk();
+}
+/* 「22品目」「268日ぶん」のような一言から、先頭の数を取り出して比べる。
+   厳密な比較ではないので «たぶん減る» を既定オフにするためだけに使う。 */
+function bkNum(t){ const m = String(t||'').match(/(\d[\d,]*)/); return m ? +m[1].replace(/,/g,'') : null; }
+function bkLooksSmaller(a, b){
+  const x = bkNum(a), y = bkNum(b);
+  return x != null && y != null && x < y;
+}
+function bkToggle(k){ BK.pick[k] = !BK.pick[k]; drawBk(); }
+function drawBk(){
+  const box = BK.box; if(!box) return;
+  const now = KemuriBackup.current();
   const list = KemuriBackup.summary(box);
   const when = box.at ? fmtDT(box.at) : '日時不明';
-  const body = list.map(x=>'・' + KemuriBackup.label(x.key) + '　' + x.detail).join('\n');
-  const msg = (box.old ? '古い形式（在庫アプリのぶんだけ）のバックアップです。\n\n' : '')
-    + from + ' … ' + when + '\n\n' + body
-    + '\n\nこの内容で置きかえますか？\n'
-    + '※ ここに書かれていないものは、いまのまま残ります。';
-  if(!confirm(msg)) return;
-
-  const res = KemuriBackup.apply(box);
+  let h = '<h3>読み込むものを選ぶ</h3>'
+        + '<div class="sh-sub">' + esc(BK.from) + '　' + esc(when) + '</div>';
+  if(box.old) h += '<div class="warn" style="margin-bottom:12px">古い形式（在庫アプリのぶんだけ）のバックアップです。</div>';
+  list.forEach(x=>{
+    const on = !!BK.pick[x.key];
+    const cur = now[x.key];
+    const gone = cur && bkLooksSmaller(x.detail, cur);
+    h += '<button class="bk-row' + (on?' on':'') + '" onclick="bkToggle(\''+x.key+'\')">'
+       + '<span class="bk-ck">' + (on?'☑':'☐') + '</span>'
+       + '<span class="bk-b"><b>' + esc(KemuriBackup.label(x.key)) + '</b>'
+       + '<small>' + (cur ? 'いま ' + esc(cur) + ' → ' : 'いまは無し → ') + esc(x.detail) + '</small>'
+       + (on && gone ? '<small class="bk-ng">いまのほうが多いので、減ります</small>' : '')
+       + '</span></button>';
+  });
+  const n = Object.keys(BK.pick).filter(k=>BK.pick[k]).length;
+  h += '<div class="muted gap">選ばなかったものは、いまのまま残ります。</div>'
+     + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
+     + '<button class="btn btn-primary" ' + (n?'':'disabled') + ' onclick="bkApply()">'
+     + (n ? n + '件を読み込む' : '選んでください') + '</button></div>';
+  openSheet(h);
+}
+function bkApply(){
+  const box = BK.box; if(!box) return;
+  const keys = Object.keys(BK.pick).filter(k=>BK.pick[k]);
+  if(!keys.length) return;
+  const res = KemuriBackup.apply(box, keys);
+  closeSheet();
   if(!res.ok.length){ toast('読み込めませんでした'); return; }
   /* 在庫アプリぶんを読み直す。後から足した項目はここで埋まる */
   DB = migrate(Object.assign(blank(), JSON.parse(localStorage.getItem(LS_KEY) || '{}')));
