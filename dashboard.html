@@ -82,6 +82,16 @@
   input.txt{width:100%;padding:13px;font-size:17px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
   select.sel{width:100%;padding:13px;font-size:16px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
   textarea{width:100%;min-height:130px;padding:12px;font-size:14px;border:1.5px solid #e2e2e2;border-radius:12px;background:#fff;}
+  /* バックアップを «選んで» 戻すときの1行 */
+  .bk-row{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;background:#fff;
+          border:1.5px solid #ededed;border-radius:14px;padding:13px 14px;margin-bottom:8px;}
+  .bk-row.on{border-color:#e8531f;background:#fff8f5;}
+  .bk-row .bk-ck{font-size:20px;line-height:1.2;color:#bbb;}
+  .bk-row.on .bk-ck{color:#e8531f;}
+  .bk-row .bk-b{flex:1;display:block;}
+  .bk-row b{display:block;font-size:16px;font-weight:700;margin-bottom:3px;}
+  .bk-row small{display:block;font-size:12px;color:#8a8a8a;line-height:1.5;}
+  .bk-row small.bk-ng{color:#c0392b;font-weight:700;margin-top:3px;}
   .two{display:flex;gap:10px;margin-top:10px;}
   .two .btn{flex:1;}
 
@@ -117,7 +127,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js"></script>
+<script src="site-notice.js?v=20260930a"></script>
 </head>
 <body>
 <div id="app">
@@ -130,11 +140,13 @@
 <div class="tabbar" id="tabbar"></div>
 <div class="toast" id="toast"></div>
 
+<input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js"></script>
-<script src="pos-source.js"></script>
-<script src="kemuri-data.js"></script>
+<script src="kemuri-core.js?v=20260930a"></script>
+<script src="kemuri-backup.js?v=20260930a"></script>
+<script src="pos-source.js?v=20260930a"></script>
+<script src="kemuri-data.js?v=20260930a"></script>
 
 <script>
 "use strict";
@@ -155,6 +167,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
+const HTML_BUILD = '2026-09-30a';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -475,10 +488,25 @@ function viewTomorrow(){
     return h;
   }
   if(!f.mode){
-    h += '<div class="warn"><b>' + f.dowName + '曜</b>の予想はまだ出せません。<br>'
-       + (f.dowIndex == null
-          ? 'POSの<b>日別</b>売上CSVを取り込むと、曜日ごとの忙しさが分かって出せるようになります。'
-          : '商品ごとの売上がまだ足りません。')
+    /* «出せません» だけで終わらせない。何が足りないのかを数で見せる。
+       このアプリは端末ごとにデータを持つので、«入れたつもり» のデータが
+       別の端末に入っている、という取り違えがいちばん起きやすい。 */
+    const miss = {
+      nocore:      '売上の読み取りが動いていません。アプリを開き直してください。',
+      nodata:      'この端末には、まだ売上が1件も入っていません。',
+      nodaily:     'POSの<b>日別</b>売上CSVがまだ入っていません。<br>「📊売上」タブから取り込むと、曜日ごとの忙しさが分かります。',
+      dowthin:     f.dowName + '曜の営業が <b>' + f.dowDays + '日ぶん</b>しかないので、忙しさがまだ当てになりません。',
+      noitemsales: 'POSの<b>商品別集計</b>がこの端末にまだ入っていません。<br>ブックマークの取り込みボタンから入れてください。',
+    }[f.why] || 'データがまだ足りません。';
+    h += '<div class="warn"><b>' + f.dowName + '曜</b>の予想はまだ出せません。<br>' + miss + '</div>';
+    h += '<div class="card"><h2>いま、この端末に入っているもの</h2>'
+       + row2('日別の売上', f.dailyDays ? f.dailyDays + '日ぶん' : '✕ まだありません')
+       + row2('商品別の売上', f.salesEntries ? f.salesItems + '商品（' + f.salesEntries + '件の取込）'
+                                             : '✕ まだありません')
+       + row2('在庫の商品', f.stockItems ? f.stockItems + '品' : '✕ まだありません')
+       + '<div class="muted" style="margin-top:10px">ここが「まだありません」なのに'
+       + '入れた覚えがあるときは、<b>別の端末・別のアプリ</b>に入っています。'
+       + '入っているほうで⚙️設定の「📤 送る」からバックアップを取って、こちらで読み込んでください。</div>'
        + '</div></div>';
     return h;
   }
@@ -750,6 +778,153 @@ function list(title, arr){
     + arr.map(x => '<li><b>' + esc(x.name || '') + '</b>　' + esc(x.why || '') + '</li>').join('')
     + '</ul>';
 }
+/* ============================================================
+   バックアップ
+   ------------------------------------------------------------
+   データは «ブラウザ × URL» ごとに別の入れ物に入る。ホーム画面に
+   追加したアプリは Safari とも Chrome とも別で、そこが消えたら
+   9ヶ月ぶんの売上も原価も戻らない。
+   在庫アプリ側にしか作っていなかったので、268日ぶんを持っている
+   ほうの画面から «取り出せない» ということが実際に起きた。
+   ============================================================ */
+let BK = { box:null, from:'', pick:{} };
+
+function viewBackup(){
+  if(BK.box) return bkPickCard();
+  const list = KemuriBackup.summary(KemuriBackup.collect());
+  let h = '<div class="card"><h2>バックアップ</h2>'
+     + '<div class="muted">この端末のこのアプリの中だけにあるデータです。'
+     + '消えると戻せないので、ときどき控えを取ってください。</div>'
+     + '<div class="gap">'
+     + (list.length
+        ? list.map(x=>row2(KemuriBackup.label(x.key), x.detail)).join('')
+        : '<div class="muted">まだ何も入っていません。</div>')
+     + '</div>'
+     + '<button class="btn btn-dark gap" onclick="bkSave()">💾 ファイルに保存する</button>'
+     + (navigator.share ? '<button class="btn btn-out gap" onclick="bkShare()">📤 送る（LINE・メモなど）</button>' : '')
+     + '<button class="btn btn-out gap" onclick="bkCopy()">📋 文字でコピーする</button>'
+     + '<div class="muted gap">iPhoneなら「送る」が一番確実です。'
+     + '「ファイルに保存」がうまくいかないときに使ってください。</div>'
+     + '<div class="sec">戻すとき</div>'
+     + '<label class="file-btn" for="bkfile">📂 バックアップのファイルを選ぶ</label>'
+     + '<textarea id="bkio" class="gap" placeholder="コピーしたバックアップを貼り付けて読み込むこともできます"></textarea>'
+     + '<button class="btn btn-gray gap" onclick="bkPaste()">貼り付けを読み込む</button>'
+     + '</div>';
+  return h;
+}
+
+function bkBlob(){ return new Blob([KemuriBackup.text()], { type:'application/json' }); }
+function bkSave(){
+  try{
+    const url = URL.createObjectURL(bkBlob());
+    const a = document.createElement('a');
+    a.href = url; a.download = KemuriBackup.filename();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    toast('保存しました（' + KemuriBackup.filename() + '）');
+  }catch(e){ toast('保存できませんでした。「送る」を試してください'); }
+}
+async function bkShare(){
+  const name = KemuriBackup.filename();
+  try{
+    const file = new File([bkBlob()], name, { type:'application/json' });
+    if(navigator.canShare && navigator.canShare({ files:[file] })){
+      await navigator.share({ files:[file], title:'串焼KEMURI屋 バックアップ' });
+      return;
+    }
+    await navigator.share({ title:name, text:KemuriBackup.text() });
+  }catch(e){
+    if(e && e.name === 'AbortError') return;
+    toast('送れませんでした。「文字でコピーする」を試してください');
+  }
+}
+async function bkCopy(){
+  const t = KemuriBackup.text();
+  try{
+    await navigator.clipboard.writeText(t);
+    toast('コピーしました（' + Math.round(t.length/1024) + ' KB）');
+  }catch(e){
+    const el = document.getElementById('bkio');
+    if(el){ el.value = t; el.focus(); el.select(); toast('下の枠に出しました。長押しでコピーしてください'); }
+    else toast('コピーできませんでした');
+  }
+}
+function bkPick(el){
+  const f = el.files && el.files[0];
+  el.value = '';
+  if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=> bkRestore(String(r.result||''), f.name);
+  r.onerror = ()=> toast('ファイルを読めませんでした');
+  r.readAsText(f);
+}
+function bkPaste(){
+  const el = document.getElementById('bkio');
+  bkRestore(el ? el.value : '', '貼り付け');
+}
+
+/* 読み込む前に «何が何に置きかわるのか» を1つずつ見せて、選ばせる。
+   別の端末から «売上だけ» もらいたい場面があるため。 */
+function bkRestore(text, from){
+  const box = KemuriBackup.parse(text);
+  if(!box){ toast('バックアップとして読めませんでした'); return; }
+  BK.box = box; BK.from = from; BK.pick = {};
+  const now = KemuriBackup.current();
+  KemuriBackup.summary(box).forEach(x=>{
+    BK.pick[x.key] = !now[x.key] || !bkLooksSmaller(x.detail, now[x.key]);
+  });
+  render();
+}
+function bkNum(t){ const m = String(t||'').match(/(\d[\d,]*)/); return m ? +m[1].replace(/,/g,'') : null; }
+function bkLooksSmaller(a, b){
+  const x = bkNum(a), y = bkNum(b);
+  return x != null && y != null && x < y;
+}
+function bkToggle(k){ BK.pick[k] = !BK.pick[k]; render(); }
+function bkCancel(){ BK = { box:null, from:'', pick:{} }; render(); }
+function bkPickCard(){
+  const now = KemuriBackup.current();
+  let h = '<div class="card"><h2>読み込むものを選ぶ</h2>'
+        + '<div class="muted">' + esc(BK.from) + '　'
+        + esc(BK.box.at ? fmtAt(BK.box.at) : '日時不明') + '</div>';
+  if(BK.box.old) h += '<div class="warn gap">古い形式（在庫アプリのぶんだけ）のバックアップです。</div>';
+  h += '<div class="gap">';
+  KemuriBackup.summary(BK.box).forEach(x=>{
+    const on = !!BK.pick[x.key];
+    const cur = now[x.key];
+    const gone = cur && bkLooksSmaller(x.detail, cur);
+    h += '<button class="bk-row' + (on?' on':'') + '" onclick="bkToggle(\'' + x.key + '\')">'
+       + '<span class="bk-ck">' + (on?'☑':'☐') + '</span>'
+       + '<span class="bk-b"><b>' + esc(KemuriBackup.label(x.key)) + '</b>'
+       + '<small>' + (cur ? 'いま ' + esc(cur) + ' → ' : 'いまは無し → ') + esc(x.detail) + '</small>'
+       + (on && gone ? '<small class="bk-ng">いまのほうが多いので、減ります</small>' : '')
+       + '</span></button>';
+  });
+  const n = Object.keys(BK.pick).filter(k=>BK.pick[k]).length;
+  h += '</div><div class="muted">選ばなかったものは、いまのまま残ります。</div>'
+     + '<div class="two"><button class="btn btn-gray" onclick="bkCancel()">やめる</button>'
+     + '<button class="btn btn-primary" ' + (n?'':'disabled') + ' onclick="bkApply()">'
+     + (n ? n + '件を読み込む' : '選んでください') + '</button></div></div>';
+  return h;
+}
+function bkApply(){
+  const box = BK.box; if(!box) return;
+  const keys = Object.keys(BK.pick).filter(k=>BK.pick[k]);
+  if(!keys.length) return;
+  const res = KemuriBackup.apply(box, keys);
+  BK = { box:null, from:'', pick:{} };
+  if(!res.ok.length){ toast('読み込めませんでした'); return; }
+  /* 持ち回っている中身を読み直す。古いままだと «入れたのに出ない» になる */
+  KemuriData.reloadAll();
+  refresh(); render();
+  if(res.ng.length){
+    alert('一部が入りませんでした（' + res.ng.map(k=>KemuriBackup.label(k)).join('、') + '）。\n'
+        + '端末の空き容量が足りない可能性があります。');
+  }else{
+    toast(res.ok.length + '件を読み込みました');
+  }
+}
+
 function fmtAt(iso){
   const d = new Date(iso); if(isNaN(d)) return '';
   const z = n => ('0'+n).slice(-2);
@@ -1169,14 +1344,34 @@ function viewSet(){
   if(PING.msg) h += (PING.ok ? '<div class="ok-box gap">' : '<div class="warn gap">') + esc(PING.msg) + '</div>';
   h += '</div>';
 
+  /* «いまどの入れ物にいるのか» を、まず数で見せる。
+     ホーム画面に追加したアプリは1つずつ別の入れ物を持つので、
+     同じ見た目のまま中身だけ違う画面がいくつも並ぶ。 */
+  h += viewBackup();
+
+  /* «画面は新しいのに中身が古い» を見分けられるように。
+     ホーム画面のアプリは古いJSを抱えたままになることがある。 */
+  const bOk = HTML_BUILD === KemuriData.BUILD;
+  h += '<div class="card"><h2>アプリの版</h2>'
+     + row2('画面', HTML_BUILD)
+     + row2('計算部分', KemuriData.BUILD || '(古い版)')
+     + (bOk ? '<div class="muted gap">最新です。</div>'
+            : '<div class="warn gap">古い部品が残っています。'
+              + 'このアプリを閉じてから開き直してください。</div>')
+     + '</div>';
+
+  /* «何日ぶん» は、日付の数ではなく «carried している期間» で言う。
+     まとめて入っている取込は1日に見えるが、中身は1ヶ月ぶんだったりする。 */
+  const scov = KemuriData.coverage();
   h += '<div class="card"><h2>たまっているデータ</h2>'
-     + row2('売上の履歴', st.days ? st.days + '日ぶん（' + st.items + '商品・' + num(st.qty).toLocaleString('ja-JP') + '点）' : 'まだありません')
+     + row2('売上の履歴', st.days ? scov.days + '日ぶん（' + st.items + '商品・' + num(st.qty).toLocaleString('ja-JP') + '点）' : 'まだありません')
      + (st.days ? row2('期間', st.from + ' 〜 ' + st.to) : '')
-     + (st.lumpedDays ? row2('うち「まとめて入っている」日', st.lumpedDays + '日') : '')
+     + (st.days ? row2('取り込んだ回数', st.days + ' 回ぶん') : '')
+     + (st.lumpedDays ? row2('うち「まとめて入っている」', st.lumpedDays + ' 回') : '')
      + row2('日別で入っている日', st.dailyDays + '日')
      + row2('仕入単価', cs.filled + ' / ' + cs.total + ' 件')
      + row2('レシピ', KemuriData.recipes.all().length + ' 件')
-     + row2('この端末の使用量', Math.round(ug.bytes/1024).toLocaleString('ja-JP') + ' KB')
+     + row2('売上履歴の大きさ', Math.round(ug.bytes/1024).toLocaleString('ja-JP') + ' KB')
      + '</div>';
 
   /* 自動整理のしくみ。黙って古い日が消えると「入れたのに無い」になるので説明する */

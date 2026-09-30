@@ -266,8 +266,21 @@
         Object.keys(db.days[d]).forEach(function (k) { qty += num(db.days[d][k].qty); names[k] = 1; });
       });
       var lumped = ds.filter(function (d) { return !!db.spans[d]; }).length;
+      /* «いつからいつまでのぶんか» は、日付の並びでは出せない。
+         まとめて入っている日は «その1日» に1ヶ月ぶんが積まれていることがあり、
+         日付の最初〜最後だけを見ると «9/1〜9/1» のように出て、
+         1日ぶんしか無いように見えてしまう（実際それで読み違えた）。
+         印に書いてある期間まで含めて、本当の端から端までを出す。 */
+      var from = ds[0] || '', to = ds[ds.length - 1] || '';
+      ds.forEach(function (d) {
+        var sp = db.spans[d];
+        if (!sp) return;
+        if (sp.from && sp.from < from) from = sp.from;
+        if (sp.to && sp.to > to) to = sp.to;
+      });
       return {
-        days: ds.length, from: ds[0] || '', to: ds[ds.length - 1] || '',
+        days: ds.length, from: from, to: to,
+        entryFrom: ds[0] || '', entryTo: ds[ds.length - 1] || '',   // 日付そのものの端から端
         items: Object.keys(names).length, qty: qty,
         lumpedDays: lumped,                    // まとめて入っている日の数
         dailyDays: ds.length - lumped          // 日別で入っている日の数（予測に使えるのはこっち）

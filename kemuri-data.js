@@ -53,6 +53,8 @@
   var WARN_STATUS = ['要確認', '要注意'];
   var Costs = {
     _db: null,
+    /* 持ち回っている中身を捨てて読み直す。バックアップを戻したあとに要る */
+    reload: function () { this._db = null; return this.load(); },
     load: function () {
       if (!this._db) this._db = readLS(COST_KEY, { v: 1, items: {}, updatedAt: '' });
       if (!this._db.items) this._db.items = {};
@@ -187,6 +189,7 @@
 
   var Recipes = {
     _db: null,
+    reload: function () { this._db = null; return this.load(); },
     load: function () {
       if (!this._db) this._db = readLS(RECIPE_KEY, { v: 1, items: {}, seeded: 0, updatedAt: '' });
       if (!this._db.items) this._db.items = {};
@@ -574,6 +577,7 @@
 
   var Daily = {
     _db: null,
+    reload: function () { this._db = null; return this.load(); },
     load: function () {
       if (this._db) return this._db;
       try {
@@ -917,11 +921,16 @@
     var out = {
       day: day, dow: dow, dowName: DOW_NAME[dow],
       mode: '', sample: 0, need: MIN_SAMPLE, days: [], rows: [], unmapped: [],
-      hasStock: false, closedDow: false, dowIndex: null, dowDays: 0, dowThin: false
+      hasStock: false, closedDow: false, dowIndex: null, dowDays: 0, dowThin: false,
+      /* 出せなかったときに «何が足りないのか» を画面で言えるようにしておく。
+         「まだ出せません」だけだと、直しようがないので。 */
+      why: '', stockItems: 0, salesItems: 0, salesEntries: 0, dailyDays: 0
     };
-    out.hasStock = Stock.items().length > 0;
-    if (!sales) return out;
+    out.stockItems = Stock.items().length;
+    out.hasStock = out.stockItems > 0;
+    if (!sales) { out.why = 'nocore'; return out; }
     var db = sales.load();
+    out.salesEntries = Object.keys(db.days || {}).length;
 
     /* その曜日に店を開けているかは «日別売上» で見る。
        商品別がまとめ取込だと、どの曜日も «実績なし» に見えてしまうため。 */
@@ -930,15 +939,19 @@
     out.dowIndex = dr ? dr.index : null;
     out.dowThin  = !!(dr && dr.thin);
     /* 日別売上がまだ無いときは、商品別の履歴で判断するしかない */
-    var hasDaily = Object.keys(Daily.load().days || {}).length > 0;
+    out.dailyDays = Object.keys(Daily.load().days || {}).length;
+    var hasDaily = out.dailyDays > 0;
 
     var picked = sameDowDays(db, dow, WEEKS, target ? day : null);
     out.days = picked.slice().reverse();
     out.sample = picked.length;
     out.need = Math.max(0, MIN_SAMPLE - picked.length);
 
+    /* 何も入っていないときに «定休日» と言ってはいけない。
+       «売上のある日がありません» は、売上が入っている上での話。 */
+    if (!hasDaily && !out.salesEntries) { out.why = 'nodata'; return out; }
     out.closedDow = hasDaily ? (out.dowDays === 0) : (picked.length === 0);
-    if (out.closedDow) return out;
+    if (out.closedDow) { out.why = 'closed'; return out; }
 
     if (picked.length >= MIN_SAMPLE) {
       /* ---- 精密：その商品の、その曜日の実績だけ ---- */
@@ -949,10 +962,14 @@
     }
 
     /* ---- 大まか：ふだんの1日平均 × その曜日の忙しさ ---- */
-    if (out.dowIndex == null) return out;          /* 忙しさも出せない＝まだ何も言えない */
+    if (out.dowIndex == null) {                    /* 忙しさも出せない＝まだ何も言えない */
+      out.why = out.dowThin ? 'dowthin' : 'nodaily';
+      return out;
+    }
     var cov = coverage();
     var tot = sales.range();                       /* POS名ごとの期間合計 */
-    if (!tot.length) return out;
+    out.salesItems = tot.length;
+    if (!tot.length) { out.why = 'noitemsales'; return out; }
     var est = {};
     tot.forEach(function (r) {
       est[r.key] = { name: r.name, avg: (num(r.qty) / cov.days) * out.dowIndex, qty: null };
@@ -1069,7 +1086,17 @@
     return out;
   }
 
+  /* バックアップを戻したあと、持ち回っている中身をぜんぶ読み直す。
+     どれか1つでも古いままだと «入れたのに出てこない» になる。 */
+  function reloadAll() {
+    try { C.sales.reload && C.sales.reload(); } catch (e) {}
+    Costs.reload(); Recipes.reload(); Daily.reload();
+    /* Stock は毎回 localStorage から読むので、持ち回っていない */
+  }
+
   global.KemuriData = {
+    BUILD: '2026-09-30a',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    reloadAll: reloadAll,
     forecast: forecast,
     backtest: backtest,
     FORECAST_WEEKS: WEEKS,

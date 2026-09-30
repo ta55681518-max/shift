@@ -104,14 +104,27 @@
       return any ? box : null;
     },
 
+    /* いまこの端末に入っているものを、読み込もうとしているものと同じ形で一覧にする。
+       «何が何に置きかわるのか» を、読み込む前に見せるため。 */
+    current: function () {
+      var box = this.collect(), out = {};
+      this.summary(box).forEach(function (x) { out[x.key] = x.detail; });
+      return out;
+    },
+
     /* 読み込む。書かれているキーだけを置きかえ、書かれていないキーは触らない。
+       only に配列を渡すと、そのキーだけを入れる（選んで戻せるように）。
+       別の端末から «売上だけ» もらいたいのに、棚卸したばかりの在庫まで
+       置きかわってしまう、という事故を防ぐため。
        戻り値 … { ok:[キー], ng:[キー] } */
-    apply: function (box) {
+    apply: function (box, only) {
       var s = ls(), ok = [], ng = [];
+      var pick = Array.isArray(only) ? only : null;
       if (!s || !box || !box.data) return { ok: ok, ng: KEYS.slice() };
       KEYS.forEach(function (k) {
         var v = box.data[k];
         if (v === undefined) return;
+        if (pick && pick.indexOf(k) < 0) return;
         var raw = v && ('j' in v) ? JSON.stringify(v.j) : (v && v.s);
         if (raw == null) return;
         try { s.setItem(k, raw); ok.push(k); } catch (e) { ng.push(k); }
