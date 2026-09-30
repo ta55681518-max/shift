@@ -117,7 +117,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js"></script>
+<script src="site-notice.js?v=20260930a"></script>
 </head>
 <body>
 <div id="app">
@@ -132,9 +132,9 @@
 
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js"></script>
-<script src="pos-source.js"></script>
-<script src="kemuri-data.js"></script>
+<script src="kemuri-core.js?v=20260930a"></script>
+<script src="pos-source.js?v=20260930a"></script>
+<script src="kemuri-data.js?v=20260930a"></script>
 
 <script>
 "use strict";
@@ -155,6 +155,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
+const HTML_BUILD = '2026-09-30a';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -475,10 +476,25 @@ function viewTomorrow(){
     return h;
   }
   if(!f.mode){
-    h += '<div class="warn"><b>' + f.dowName + '曜</b>の予想はまだ出せません。<br>'
-       + (f.dowIndex == null
-          ? 'POSの<b>日別</b>売上CSVを取り込むと、曜日ごとの忙しさが分かって出せるようになります。'
-          : '商品ごとの売上がまだ足りません。')
+    /* «出せません» だけで終わらせない。何が足りないのかを数で見せる。
+       このアプリは端末ごとにデータを持つので、«入れたつもり» のデータが
+       別の端末に入っている、という取り違えがいちばん起きやすい。 */
+    const miss = {
+      nocore:      '売上の読み取りが動いていません。アプリを開き直してください。',
+      nodata:      'この端末には、まだ売上が1件も入っていません。',
+      nodaily:     'POSの<b>日別</b>売上CSVがまだ入っていません。<br>「📊売上」タブから取り込むと、曜日ごとの忙しさが分かります。',
+      dowthin:     f.dowName + '曜の営業が <b>' + f.dowDays + '日ぶん</b>しかないので、忙しさがまだ当てになりません。',
+      noitemsales: 'POSの<b>商品別集計</b>がこの端末にまだ入っていません。<br>ブックマークの取り込みボタンから入れてください。',
+    }[f.why] || 'データがまだ足りません。';
+    h += '<div class="warn"><b>' + f.dowName + '曜</b>の予想はまだ出せません。<br>' + miss + '</div>';
+    h += '<div class="card"><h2>いま、この端末に入っているもの</h2>'
+       + row2('日別の売上', f.dailyDays ? f.dailyDays + '日ぶん' : '✕ まだありません')
+       + row2('商品別の売上', f.salesEntries ? f.salesItems + '商品（' + f.salesEntries + '件の取込）'
+                                             : '✕ まだありません')
+       + row2('在庫の商品', f.stockItems ? f.stockItems + '品' : '✕ まだありません')
+       + '<div class="muted" style="margin-top:10px">ここが「まだありません」なのに'
+       + '入れた覚えがあるときは、<b>別の端末・別のアプリ</b>に入っています。'
+       + '入っているほうで⚙️設定の「📤 送る」からバックアップを取って、こちらで読み込んでください。</div>'
        + '</div></div>';
     return h;
   }
@@ -1168,6 +1184,17 @@ function viewSet(){
      + (PING.loading ? '<span class="spin"></span>確認中…' : 'つながるか試す') + '</button></div>';
   if(PING.msg) h += (PING.ok ? '<div class="ok-box gap">' : '<div class="warn gap">') + esc(PING.msg) + '</div>';
   h += '</div>';
+
+  /* «画面は新しいのに中身が古い» を見分けられるように。
+     ホーム画面のアプリは古いJSを抱えたままになることがある。 */
+  const bOk = HTML_BUILD === KemuriData.BUILD;
+  h += '<div class="card"><h2>アプリの版</h2>'
+     + row2('画面', HTML_BUILD)
+     + row2('計算部分', KemuriData.BUILD || '(古い版)')
+     + (bOk ? '<div class="muted gap">最新です。</div>'
+            : '<div class="warn gap">古い部品が残っています。'
+              + 'このアプリを閉じてから開き直してください。</div>')
+     + '</div>';
 
   h += '<div class="card"><h2>たまっているデータ</h2>'
      + row2('売上の履歴', st.days ? st.days + '日ぶん（' + st.items + '商品・' + num(st.qty).toLocaleString('ja-JP') + '点）' : 'まだありません')
