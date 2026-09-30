@@ -1196,10 +1196,14 @@ function viewSet(){
               + 'このアプリを閉じてから開き直してください。</div>')
      + '</div>';
 
+  /* «何日ぶん» は、日付の数ではなく «carried している期間» で言う。
+     まとめて入っている取込は1日に見えるが、中身は1ヶ月ぶんだったりする。 */
+  const scov = KemuriData.coverage();
   h += '<div class="card"><h2>たまっているデータ</h2>'
-     + row2('売上の履歴', st.days ? st.days + '日ぶん（' + st.items + '商品・' + num(st.qty).toLocaleString('ja-JP') + '点）' : 'まだありません')
+     + row2('売上の履歴', st.days ? scov.days + '日ぶん（' + st.items + '商品・' + num(st.qty).toLocaleString('ja-JP') + '点）' : 'まだありません')
      + (st.days ? row2('期間', st.from + ' 〜 ' + st.to) : '')
-     + (st.lumpedDays ? row2('うち「まとめて入っている」日', st.lumpedDays + '日') : '')
+     + (st.days ? row2('取り込んだ回数', st.days + ' 回ぶん') : '')
+     + (st.lumpedDays ? row2('うち「まとめて入っている」', st.lumpedDays + ' 回') : '')
      + row2('日別で入っている日', st.dailyDays + '日')
      + row2('仕入単価', cs.filled + ' / ' + cs.total + ' 件')
      + row2('レシピ', KemuriData.recipes.all().length + ' 件')
