@@ -1344,6 +1344,9 @@ function viewSet(){
   if(PING.msg) h += (PING.ok ? '<div class="ok-box gap">' : '<div class="warn gap">') + esc(PING.msg) + '</div>';
   h += '</div>';
 
+  /* «いまどの入れ物にいるのか» を、まず数で見せる。
+     ホーム画面に追加したアプリは1つずつ別の入れ物を持つので、
+     同じ見た目のまま中身だけ違う画面がいくつも並ぶ。 */
   h += viewBackup();
 
   /* «画面は新しいのに中身が古い» を見分けられるように。
@@ -1368,7 +1371,7 @@ function viewSet(){
      + row2('日別で入っている日', st.dailyDays + '日')
      + row2('仕入単価', cs.filled + ' / ' + cs.total + ' 件')
      + row2('レシピ', KemuriData.recipes.all().length + ' 件')
-     + row2('この端末の使用量', Math.round(ug.bytes/1024).toLocaleString('ja-JP') + ' KB')
+     + row2('売上履歴の大きさ', Math.round(ug.bytes/1024).toLocaleString('ja-JP') + ' KB')
      + '</div>';
 
   /* 自動整理のしくみ。黙って古い日が消えると「入れたのに無い」になるので説明する */
