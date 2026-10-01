@@ -293,6 +293,15 @@
       var z = this.db();
       return (z && Array.isArray(z.items)) ? z.items : [];
     },
+    /* 在庫商品を名前で引く。レシピの材料名（「レタス」など）から引くのに使う。
+       材料名はPOSのメニュー名ではないので、対応表では引けない。 */
+    itemByName: function (name) {
+      var k = norm(name); if (!k) return null;
+      var list = this.items();
+      for (var i = 0; i < list.length; i++) if (norm(list[i].name) === k) return list[i];
+      return null;
+    },
+
     /* POS商品名 → 在庫商品。対応表をそのまま使う */
     itemForPos: function (posName) {
       var z = this.db(); if (!z) return null;
@@ -859,30 +868,71 @@
      精密な出し方でも、ざっくりした出し方でも、ここから先は同じ計算。
        est[POSキー] = { name, avg, qty:[日ごとの実績] または null }
      qty があるときだけ «幅»（いちばん少ない日〜多い日）を出す。 */
+  function r1(x) { return Math.round(x * 10) / 10; }
+
+  /* そのPOS商品が1つ売れると、どの在庫をいくつ使うか。
+     ------------------------------------------------------------
+     サラダのように材料をいくつも使うメニューは、1対1の対応表では
+     表せない。レシピ（材料と数量）があればそちらを使い、無ければ
+     これまでどおり «その商品そのもの» を1対1で見る。
+     レシピの材料のうち、在庫に登録されていないものは数えない
+     （登録したぶんから順に効いていく）。
+     戻り値 … [{ item, per, mismatch, via }] */
+  function usesOf(posName, key) {
+    var r = Recipes.get(posName) || (key ? Recipes.get(key) : null);
+    if (r && r.parts && r.parts.length) {
+      var out = [];
+      r.parts.forEach(function (x) {
+        var it = Stock.itemByName(x.name);
+        if (!it) return;                       /* 在庫に無い材料は数えない */
+        var c = convertQty(num(x.qty) || 1, x.unit, it.unit);
+        if (!(c.qty > 0)) return;
+        out.push({ item: it, per: c.qty, mismatch: c.mismatch, via: 'recipe' });
+      });
+      if (out.length) return out;
+    }
+    var it2 = Stock.itemForPos(posName) || (key ? Stock.itemForPos(key) : null);
+    if (!it2) return [];
+    return [{ item: it2, per: num(it2.per) || 1, mismatch: false, via: 'map' }];
+  }
+
   function matchStock(est, picked) {
     var byItem = {}, unmapped = [];
     Object.keys(est).forEach(function (k) {
       var e = est[k];
       if (!(e.avg > 0)) return;
-      var it = Stock.itemForPos(e.name) || Stock.itemForPos(k);
-      if (!it) { unmapped.push({ name: e.name, avg: Math.round(e.avg * 10) / 10 }); return; }
-      var b = byItem[it.id] || (byItem[it.id] = {
-        id: it.id, name: it.name, unit: it.unit || '個',
-        per: num(it.per) || 1, stock: num(it.stock), min: num(it.min),
-        sell: 0, lo: null, hi: null, keys: []
+      var us = usesOf(e.name, k);
+      if (!us.length) { unmapped.push({ name: e.name, avg: r1(e.avg) }); return; }
+      us.forEach(function (u) {
+        var it = u.item;
+        var b = byItem[it.id] || (byItem[it.id] = {
+          id: it.id, name: it.name, unit: it.unit || '個',
+          stock: num(it.stock), min: num(it.min),
+          need: 0, sell: 0, per: null, recipe: false, mismatch: false,
+          lo: null, hi: null, uses: [], from: []
+        });
+        b.need += e.avg * u.per;               /* «在庫をいくつ使うか» で足す */
+        b.sell += e.avg;                       /* 売れる数そのもの（1対1のときの表示用） */
+        b.uses.push({ key: k, per: u.per });
+        b.from.push({ name: e.name, qty: r1(e.avg), use: r1(e.avg * u.per) });
+        if (u.via === 'recipe') b.recipe = true;
+        if (u.mismatch) b.mismatch = true;
+        /* 1品あたりの数が全部そろっているときだけ «×2» のように出せる */
+        if (b.per === null) b.per = u.per; else if (b.per !== u.per) b.per = 0;
       });
-      b.sell += e.avg;
-      b.keys.push(k);
     });
-    /* 幅は «その在庫を使うPOS名ぜんぶ» を日ごとに足してから取る。
+    /* 幅は «その在庫を使うメニューぜんぶ» を日ごとに足してから取る。
        商品ごとに別々の最小・最大を足すと、ありえない幅になるため。 */
     if (picked && picked.length) {
       Object.keys(byItem).forEach(function (id) {
         var b = byItem[id];
         var totals = picked.map(function (d, idx) {
           var t = 0;
-          b.keys.forEach(function (k) { t += (est[k].qty ? est[k].qty[idx] : 0); });
-          return t;
+          b.uses.forEach(function (u) {
+            var q = est[u.key].qty;
+            t += (q ? num(q[idx]) : 0) * u.per;
+          });
+          return r1(t);
         });
         b.lo = Math.min.apply(null, totals);
         b.hi = Math.max.apply(null, totals);
@@ -890,13 +940,15 @@
     }
     var rows = Object.keys(byItem).map(function (id) {
       var b = byItem[id];
-      var sell = Math.round(b.sell * 10) / 10;
-      var need = Math.round(sell * b.per * 10) / 10;       /* 必要な在庫 */
-      var short = Math.round(Math.max(0, need - b.stock) * 10) / 10;
+      var need = r1(b.need);                               /* 必要な在庫 */
+      var short = r1(Math.max(0, need - b.stock));
       return {
-        id: b.id, name: b.name, unit: b.unit, per: b.per,
-        sell: sell, lo: b.lo, hi: b.hi,
-        need: need, stock: b.stock, min: b.min, short: short, ok: short <= 0
+        id: b.id, name: b.name, unit: b.unit, per: b.per || 1,
+        sell: r1(b.sell), lo: b.lo, hi: b.hi,
+        need: need, stock: b.stock, min: b.min, short: short, ok: short <= 0,
+        recipe: b.recipe, mismatch: b.mismatch,
+        /* 何のためにいくつ要るのか。多い順に */
+        from: b.from.sort(function (x, y) { return y.use - x.use; }).slice(0, 4)
       };
     });
     /* 足りないものが先。同じなら必要量が多いほう */
@@ -1008,11 +1060,12 @@
     var targets = open.slice(-testDays);
     if (!targets.length) return out;
 
-    /* 在庫商品ごとにまとめる。POS名が複数ぶら下がることがあるため */
-    var itemOf = {};                    /* POSキー -> 在庫商品（null もキャッシュ） */
-    function item(k, name) {
-      if (!(k in itemOf)) itemOf[k] = Stock.itemForPos(name) || Stock.itemForPos(k) || null;
-      return itemOf[k];
+    /* 在庫商品ごとにまとめる。1つの在庫に複数のPOS名がぶら下がることも、
+       1つのメニューが複数の材料を使うこともあるので、使い道を配列で持つ。 */
+    var usesCache = {};                 /* POSキー -> [{item, per}] */
+    function uses(k, name) {
+      if (!(k in usesCache)) usesCache[k] = usesOf(name, k);
+      return usesCache[k];
     }
 
     var acc = {};                       /* 在庫商品ごとの集計 */
@@ -1029,15 +1082,15 @@
       /* その日ぶんを在庫商品ごとに寄せる */
       var pred = {}, act = {};
       Object.keys(perKey).forEach(function (k) {
-        var it = item(k, perKey[k].name);
-        if (!it) return;
-        pred[it.id] = (pred[it.id] || 0) + perKey[k].avg;
+        uses(k, perKey[k].name).forEach(function (u) {
+          pred[u.item.id] = (pred[u.item.id] || 0) + perKey[k].avg * u.per;
+        });
       });
       Object.keys(real).forEach(function (k) {
         var nm = (db.days[day][k] || {}).name || k;
-        var it = item(k, nm);
-        if (!it) return;
-        act[it.id] = (act[it.id] || 0) + real[k];
+        uses(k, nm).forEach(function (u) {
+          act[u.item.id] = (act[u.item.id] || 0) + real[k] * u.per;
+        });
       });
 
       var ids = {};
@@ -1095,7 +1148,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-10-01a',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-10-01c',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     forecast: forecast,
     backtest: backtest,
