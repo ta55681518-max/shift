@@ -171,7 +171,7 @@
   .toast.show{opacity:.96;}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261001a"></script>
+<script src="site-notice.js?v=20261001b"></script>
 </head>
 <body>
 <div id="app">
@@ -196,9 +196,9 @@
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261001a"></script>
-<script src="kemuri-backup.js?v=20261001a"></script>
-<script src="pos-source.js?v=20261001a"></script>
+<script src="kemuri-core.js?v=20261001b"></script>
+<script src="kemuri-backup.js?v=20261001b"></script>
+<script src="pos-source.js?v=20261001b"></script>
 
 <script>
 /* ============================================================
@@ -246,7 +246,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-10-01a';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-01b';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -373,6 +373,58 @@ function suggestItem(posName){
   });
   return best;
 }
+/* ============================================================
+   レシピ（材料と数量）
+   ------------------------------------------------------------
+   サラダのように材料をいくつも使うメニューは、1対1の対応表では
+   表せない。レシピがあれば材料ごとに引き、無ければこれまでどおり
+   «その商品そのもの» を1対1で引く。
+   レシピはダッシュボードの📖レシピで作る。ここでは読むだけ。
+   ============================================================ */
+const RECIPE_KEY = 'kemuri_recipes_v1';
+function recipeOf(name){
+  try{
+    const d = JSON.parse(localStorage.getItem(RECIPE_KEY) || '{}');
+    const r = (d && d.items) ? d.items[norm(name)] : null;
+    return (r && Array.isArray(r.parts) && r.parts.length) ? r : null;
+  }catch(e){ return null; }
+}
+/* 単位合わせ。g↔kg・ml↔L だけ。知らない組み合わせはそのままの数で通す */
+const UNIT_K = { g:1, kg:1000, グラム:1, キロ:1000, キログラム:1000,
+                 ml:1, l:1000, cc:1, ミリリットル:1, リットル:1000 };
+const UNIT_B = { g:'g', kg:'g', グラム:'g', キロ:'g', キログラム:'g',
+                 ml:'ml', l:'ml', cc:'ml', ミリリットル:'ml', リットル:'ml' };
+function convQty(qty, from, to){
+  const f = String(from||'').trim(), t = String(to||'').trim();
+  if(!f || !t || norm(f) === norm(t)) return qty;
+  const a = UNIT_B[norm(f)], b = UNIT_B[norm(t)];
+  if(a && b && a === b) return qty * UNIT_K[norm(f)] / UNIT_K[norm(t)];
+  return qty;                                   /* 「個」と「kg」など。数はそのまま */
+}
+function itemByName(name){
+  const k = norm(name); if(!k) return null;
+  return DB.items.find(i=>norm(i.name) === k) || null;
+}
+/* そのPOS商品が1つ売れると、どの在庫をいくつ使うか。
+   戻り値 … [{ it, per }]。引けなければ空 */
+function usesFor(posName){
+  const r = recipeOf(posName);
+  if(r){
+    const out = [];
+    r.parts.forEach(x=>{
+      const it = itemByName(x.name);
+      if(!it) return;                           /* 在庫に無い材料は数えない */
+      const per = convQty(Number(x.qty) || 1, x.unit, it.unit);
+      if(per > 0) out.push({ it, per });
+    });
+    if(out.length) return out;
+  }
+  const m = lookup(posName);
+  if(!m || m.item === '__skip__') return [];
+  const it2 = item(m.item);
+  return it2 ? [{ it: it2, per: Number(it2.per) || 1 }] : [];
+}
+
 function lookup(name){
   const vs = posVariants(name);
   for(let i=0;i<vs.length;i++){ const m = DB.map[norm(vs[i])]; if(m) return m; }
@@ -913,7 +965,9 @@ function viewPos(){
     pv.lines.forEach(l=>{
       h += '<div class="prev"><span class="nm">'+esc(l.name)+'</span>'
          + '<span class="sl">'+(l.auto
-             ? '販売 '+l.qty+(l.per!==1?' ×'+l.per:'')+' → 在庫'
+             ? (l.recipe
+                 ? l.from.map(f=>esc(f.name)+' '+f.qty).join('・')+' → 在庫'
+                 : '販売 '+l.qty+(l.per!==1?' ×'+l.per:'')+' → 在庫')
              : '販売 '+l.qty+'　'+cat(item(l.id)&&item(l.id).cat).name+'は棚卸で合わせます')+'</span>'
          + (l.auto ? '<span class="mv'+(l.move>0?' plus':'')+'">'+(l.move>0?'+':'')+l.move+'</span>'
                    : '<span class="mv" style="color:#8a8a8a">±0</span>')+'</div>';
@@ -1029,23 +1083,40 @@ function buildPreview(sales){
   let newRows = 0, dupRows = 0, sumMode = false, noKey = false;
   /* auto … この分類はPOSから自動で在庫を引くか。引かない分類は数えるだけで在庫は動かさない */
   const bucket = it => byItem[it.id] = byItem[it.id] ||
-        { id:it.id, name:it.name, per:it.per||1, qty:0, keys:[], sums:[], auto:autoPos(it) };
+        { id:it.id, name:it.name, per:it.per||1, qty:0, use:0, from:[], recipe:false,
+          keys:[], sums:[], auto:autoPos(it) };
   const unk = s => (unknown[s.posName] = unknown[s.posName] || { name:s.posName, qty:0 }).qty += s.qty;
+  /* 1つのメニューが、どの在庫をいくつ使うかを «使う量» で積む。
+     レシピがあれば材料ごとに分かれる（サラダ → レタス・トマト…）。 */
+  const put = (posName, qty, onBucket)=>{
+    const us = usesFor(posName);
+    if(!us.length) return false;
+    const many = us.length > 1 || !!recipeOf(posName);
+    us.forEach(u=>{
+      const b = bucket(u.it);
+      b.qty += qty;
+      b.use += qty * u.per;
+      if(many){ b.recipe = true; b.from.push({ name:posName, qty, use: qty * u.per }); }
+      if(onBucket) onBucket(b);
+    });
+    return true;
+  };
 
   sales.forEach(s=>{
     const m = lookup(s.posName);
-    if(!m){ unk(s); return; }
+    /* 対応表で «使わない» にしてあるものは、レシピがあっても引かない */
+    const skip = m && m.item === '__skip__';
+    if(!m && !recipeOf(s.posName)){ unk(s); return; }
     if(s.ticket){                                   /* 明細形式 */
       if(DB.seen[s.key] || seenInFile[s.key]){ dupRows++; return; }
       seenInFile[s.key] = 1; newRows++;
-      if(m.item === '__skip__') return;
-      const it = item(m.item); if(!it){ unk(s); return; }
-      const b = bucket(it); b.qty += s.qty; b.keys.push(s.key);
+      if(skip) return;
+      if(!put(s.posName, s.qty, b=>b.keys.push(s.key))) unk(s);
     }else{                                          /* 集計形式 */
       sumMode = true;
       if(!s.day) noKey = true;
       const k = 'S\u0001'+s.day+'\u0001'+norm(s.posName);
-      const g = sums[k] = sums[k] || { key:k, posName:s.posName, qty:0, m:m };
+      const g = sums[k] = sums[k] || { key:k, posName:s.posName, qty:0, skip:skip };
       g.qty += s.qty;
     }
   });
@@ -1055,13 +1126,15 @@ function buildPreview(sales){
     const delta = g.qty - done;
     if(delta <= 0){ dupRows++; return; }
     newRows++;
-    if(g.m.item === '__skip__'){ skipSums.push({ key:g.key, total:g.qty }); return; }
-    const it = item(g.m.item); if(!it){ unk({ posName:g.posName, qty:delta }); return; }
-    const b = bucket(it); b.qty += delta; b.sums.push({ key:g.key, total:g.qty });
+    if(g.skip){ skipSums.push({ key:g.key, total:g.qty }); return; }
+    if(!put(g.posName, delta, b=>b.sums.push({ key:g.key, total:g.qty }))){
+      unk({ posName:g.posName, qty:delta });
+    }
   });
 
+  const r1 = x => Math.round(x * 10) / 10;
   const lines = Object.values(byItem)
-                 .map(b=>Object.assign(b, { move: b.auto ? -(b.qty * (b.per||1)) : 0 }))
+                 .map(b=>Object.assign(b, { use: r1(b.use), move: b.auto ? -r1(b.use) : 0 }))
                  .sort((a,b)=>a.move-b.move);
   const un = Object.values(unknown).map(u=>Object.assign(u, { suggest: suggestItem(u.name) }));
   return { lines, unknown:un, newRows, dupRows, sumMode, noKey, skipSums };
@@ -1091,7 +1164,7 @@ function posApply(){
   rec.noStock = noStock;
   pv.lines.forEach(l=>{
     const it = item(l.id); if(!it) return;
-    const amount = l.qty * (l.per||1);
+    const amount = l.use;                     /* レシピ換算ずみの «使う量» */
     /* 「POSから自動で引かない」分類（乾物・調味料、備品）は在庫を動かさない。
        売れた数は記録するが、減り方は棚卸で合わせる。 */
     const auto = autoPos(it);

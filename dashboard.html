@@ -127,7 +127,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261001a"></script>
+<script src="site-notice.js?v=20261001b"></script>
 </head>
 <body>
 <div id="app">
@@ -143,10 +143,10 @@
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js?v=20261001a"></script>
-<script src="kemuri-backup.js?v=20261001a"></script>
-<script src="pos-source.js?v=20261001a"></script>
-<script src="kemuri-data.js?v=20261001a"></script>
+<script src="kemuri-core.js?v=20261001b"></script>
+<script src="kemuri-backup.js?v=20261001b"></script>
+<script src="pos-source.js?v=20261001b"></script>
+<script src="kemuri-data.js?v=20261001b"></script>
 
 <script>
 "use strict";
@@ -167,7 +167,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-const HTML_BUILD = '2026-10-01a';   /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-01b';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -647,11 +647,21 @@ function hitCard(){
 /* 1行ぶん。予想 → 必要な在庫 → いまの在庫 → 足りないぶん */
 function tmrRow(r, short){
   const u = (r.unit && r.unit !== '個') ? r.unit : '';
+  /* 出すのは «在庫がいくつ要るか»。サラダのように材料をいくつも使う
+     メニューが混ざると、売れる数ではなく使う量でないと判断できない。 */
+  let sub = '必要 ' + r.need + u
+          + (r.lo == null ? '' : '（' + r.lo + '〜' + r.hi + '）')
+          + '　在庫 ' + r.stock + u;
+  /* 何のために要るのか。1対1で ×1 のときは言うまでもないので出さない */
+  const many = r.from && (r.from.length > 1 || r.recipe);
+  if(many){
+    sub += '<br>' + r.from.map(f => esc(f.name) + ' ' + f.qty).join('・') + ' から';
+  }else if(r.per !== 1){
+    sub += '　（1つで ' + r.per + u + '）';
+  }
+  if(r.mismatch) sub += '<br><b style="color:#c07d00">単位が合っていない材料があります</b>';
   return '<div class="prow"><span class="nm">' + esc(r.name)
-    + '<small>予想 ' + r.sell
-    + (r.lo == null ? '' : '（' + r.lo + '〜' + r.hi + '）')
-    + (r.per !== 1 ? ' ×' + r.per : '')
-    + '　在庫 ' + r.stock + u + '</small></span>'
+    + '<small>' + sub + '</small></span>'
     + (short
        ? '<span class="m" style="color:#b3261e">' + r.short + u + ' 不足</span>'
        : '<span class="m" style="color:#0a9d55">OK</span>')
