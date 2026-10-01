@@ -171,7 +171,7 @@
   .toast.show{opacity:.96;}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261001b"></script>
+<script src="site-notice.js?v=20261001c"></script>
 </head>
 <body>
 <div id="app">
@@ -196,9 +196,9 @@
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261001b"></script>
-<script src="kemuri-backup.js?v=20261001b"></script>
-<script src="pos-source.js?v=20261001b"></script>
+<script src="kemuri-core.js?v=20261001c"></script>
+<script src="kemuri-backup.js?v=20261001c"></script>
+<script src="pos-source.js?v=20261001c"></script>
 
 <script>
 /* ============================================================
@@ -246,7 +246,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-10-01b';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-01c';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -258,7 +258,14 @@ const CAT0 = 'frozen';                       /* 分類が入っていない品�
 const UNITS = ['個','本','枚','袋','パック','kg','g','ケース','箱','L','ml'];
 function cat(k){ return CATS.find(c=>c.k===k) || CATS[0]; }
 function catOf(it){ return cat(it && it.cat); }
-function autoPos(it){ return catOf(it).pos; }
+/* POSから自動で在庫を引くか。
+   分類は «棚卸で回る順» を決めるためのもので、引く・引かないとは別の話。
+   ドレッシングは «乾物・調味料» が正しいが自動で引きたい、という組み合わせが
+   あるので、商品ごとに上書きできるようにしてある。
+   it.auto … undefined なら分類どおり。true/false なら商品の設定が勝つ。 */
+function autoPos(it){ return (it && it.auto != null) ? !!it.auto : catOf(it).pos; }
+/* その商品の分類の «ふつう» はどちらか */
+function autoDefault(catKey){ return cat(catKey).pos; }
 /* いま使われている分類だけを、CATS の並び順で返す */
 function usedCats(){ return CATS.filter(c=>DB.items.some(i=>(i.cat||CAT0)===c.k)); }
 
@@ -1270,12 +1277,16 @@ function viewSet(){
     h += '<div class="sec">'+c.ic+' '+c.name+'（'+list.length+'）'+(c.pos?'':'　POSからは引かない')+'</div>';
     list.forEach(it=>{
       const pos = posNamesOf(it.id);
+      const a = autoPos(it);
       h += '<button class="row" style="margin-bottom:8px" onclick="openItem('+it.id+')">'
          +  '<span class="nm" style="font-size:17px">'+esc(it.name)
          +   '<span style="display:block;font-size:11px;color:#aaa;font-weight:500">'
          +     (it.sup? esc(it.sup)+' ／ ' : '')
          +     'ライン '+it.min+(it.unit&&it.unit!=='個'?' '+esc(it.unit):'')
-         +     (c.pos? ' ／ 1販売で '+it.per+' 減 ／ POS名 '+(pos.length||0)+'件' : '')
+         +     (a? ' ／ 1販売で '+it.per+' 減 ／ POS名 '+(pos.length||0)+'件' : '')
+         /* 分類のふつうと違う設定にしてあるものは、ここで分かるようにしておく */
+         +     (it.auto == null ? '' : ' ／ <b style="color:#e8531f">'
+                + (a ? 'この商品は引く' : 'この商品は引かない') + '</b>')
          +   '</span></span>'
          +  '<span class="qty" style="font-size:20px">'+it.stock+'</span></button>';
     });
@@ -1434,9 +1445,10 @@ function openItem(id){
      同じ分類の品目を続けて入れることが多いので、そのぶんの選び直しが要らなくなる。 */
   const L = DB.last || { cat:CAT0, sup:'', unit:'個' };
   EDIT = it ? { id, name:it.name, min:it.min, per:it.per, stock:it.stock,
-                cat:it.cat||CAT0, sup:it.sup||'', unit:it.unit||'個' }
+                cat:it.cat||CAT0, sup:it.sup||'', unit:it.unit||'個',
+                auto:(it.auto == null ? null : !!it.auto) }
             : { id:0, name:'', min:3, per:1, stock:0,
-                cat:L.cat||CAT0, sup:L.sup||'', unit:L.unit||'個' };
+                cat:L.cat||CAT0, sup:L.sup||'', unit:L.unit||'個', auto:null };
   drawItem();
 }
 /* keep … 開いているシートを描き直すとき（分類を変えたときなど）。
@@ -1445,6 +1457,8 @@ function openItem(id){
 function drawItem(keep){
   if(keep) readItemFields();
   const pos = EDIT.id ? posNamesOf(EDIT.id) : [];
+  /* いまこの商品に効く «引く／引かない»。商品の設定が無ければ分類どおり */
+  const auto = EDIT.auto == null ? autoDefault(EDIT.cat) : !!EDIT.auto;
   const c = cat(EDIT.cat);
   let h = '<h3>'+(EDIT.id? '商品の設定':'商品を追加')+'</h3><div class="sh-sub">　</div>'
     + '<label class="lab">商品名</label><input class="txt" id="e-name" value="'+esc(EDIT.name)+'" onchange="EDIT.name=this.value">'
@@ -1452,9 +1466,17 @@ function drawItem(keep){
     + '<select class="sel" onchange="EDIT.cat=this.value;drawItem(1)">'
     +   CATS.map(x=>'<option value="'+x.k+'" '+(x.k===EDIT.cat?'selected':'')+'>'+x.ic+' '+x.name+'</option>').join('')
     + '</select>'
+    + '<label class="lab">POSで売れたとき</label>'
+    + '<div class="chips">'
+    +   '<button class="'+(auto?'on':'')+'" onclick="setAuto(1)">在庫から引く</button>'
+    +   '<button class="'+(auto?'':'on')+'" onclick="setAuto(0)">棚卸で合わせる</button>'
+    + '</div>'
     + '<div class="muted" style="margin-top:6px">'
-    +   (c.pos ? 'POSで売れたぶんを自動で在庫から引きます。'
-              : '<b>POSからは自動で引きません。</b>棚卸で数えて合わせる分類です。')
+    +   (auto ? 'POSで売れたぶんを自動で在庫から引きます。'
+             : '自動では引きません。減ったぶんは棚卸で数えて合わせます。')
+    +   '<br>' + esc(c.name) + 'のふつうは「'
+    +   (c.pos ? '在庫から引く' : '棚卸で合わせる') + '」です。'
+    +   (EDIT.auto == null ? '' : '<b>　この商品だけ変えてあります。</b>')
     + '</div>'
     + '<label class="lab">仕入先（発注リストをここでまとめます）</label>'
     + '<input class="txt" id="e-sup" list="suplist" placeholder="例）〇〇食品　空でもOK" value="'+esc(EDIT.sup)+'" onchange="EDIT.sup=this.value.trim()">'
@@ -1463,13 +1485,13 @@ function drawItem(keep){
     + '<input class="txt" id="e-unit" list="unitlist" value="'+esc(EDIT.unit)+'" onchange="EDIT.unit=this.value.trim()||\'個\'">'
     + '<datalist id="unitlist">'+UNITS.map(x=>'<option value="'+x+'">').join('')+'</datalist>'
     + '<label class="lab">発注ライン（この数以下で「発注」）</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.min+'" onchange="EDIT.min=Math.max(0,num(this.value))">';
-  if(c.pos){
+  if(auto){
     h += '<label class="lab">POS販売1あたり 減らす在庫数</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.per+'" onchange="EDIT.per=Math.max(1,num(this.value))">'
        + '<div class="muted" style="margin-top:6px">1皿で2個使うなら 2 にします。</div>';
   }
   if(!EDIT.id){
     h += '<label class="lab">いまの在庫</label><input class="txt" type="text" inputmode="numeric" pattern="[0-9]*" value="'+EDIT.stock+'" onchange="EDIT.stock=Math.max(0,num(this.value))">';
-  }else if(c.pos){
+  }else if(auto){
     h += '<label class="lab">POSの商品名（'+pos.length+'）</label>'
        + (pos.length? '<div class="chips">'+pos.map(p=>'<button class="on" onclick="delMap(\''+esc(norm(p)).replace(/'/g,"\\'")+'\');openItem('+EDIT.id+')">'+esc(p)+' ✕</button>').join('')+'</div>'
                     : '<div class="muted">まだありません。POS CSV取込のときに設定できます。</div>')
@@ -1491,6 +1513,13 @@ function drawItem(keep){
   if(EDIT.id) h += '<button class="btn btn-danger gap" onclick="delItem()">この商品を削除</button>';
   openSheet(h);
 }
+/* 分類の «ふつう» と同じものを選んだら上書きを外す。
+   あとで分類を変えたときに、その分類のふつうに付いていけるように。 */
+function setAuto(v){
+  const want = !!v;
+  EDIT.auto = (want === autoDefault(EDIT.cat)) ? null : want;
+  drawItem(1);
+}
 function addPosName(){
   const v = document.getElementById('e-pos').value.trim();
   if(!v) return;
@@ -1507,19 +1536,22 @@ function readItemFields(){
 function saveItem(again){
   readItemFields();
   if(!EDIT.name){ toast('商品名を入れてください'); return; }
-  const usePos = cat(EDIT.cat).pos;
+  const usePos = EDIT.auto == null ? autoDefault(EDIT.cat) : !!EDIT.auto;
   if(EDIT.id){
     const it = item(EDIT.id);
     it.name = EDIT.name; it.min = EDIT.min; it.per = EDIT.per;
     it.cat = EDIT.cat; it.sup = EDIT.sup; it.unit = EDIT.unit;
+    if(EDIT.auto == null) delete it.auto; else it.auto = !!EDIT.auto;
     /* 新しい名前でもPOSから引けるようにしておく。前の名前の対応はそのまま残す
        （過去のCSVを入れ直したときに引けなくなるため）。 */
     const k = norm(EDIT.name);
     if(usePos && k && !DB.map[k]) DB.map[k] = { item:EDIT.id, label:EDIT.name };
   }else{
     const id = DB.seq++;
-    DB.items.push({ id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per, cost:0,
-                    cat:EDIT.cat, sup:EDIT.sup, unit:EDIT.unit });
+    const row = { id, name:EDIT.name, stock:EDIT.stock, min:EDIT.min, per:EDIT.per, cost:0,
+                  cat:EDIT.cat, sup:EDIT.sup, unit:EDIT.unit };
+    if(EDIT.auto != null) row.auto = !!EDIT.auto;
+    DB.items.push(row);
     if(usePos) DB.map[norm(EDIT.name)] = { item:id, label:EDIT.name };
   }
   addSup(EDIT.sup);
