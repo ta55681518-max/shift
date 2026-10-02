@@ -171,7 +171,7 @@
   .toast.show{opacity:.96;}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261001c"></script>
+<script src="site-notice.js?v=20261002a"></script>
 </head>
 <body>
 <div id="app">
@@ -196,9 +196,9 @@
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261001c"></script>
-<script src="kemuri-backup.js?v=20261001c"></script>
-<script src="pos-source.js?v=20261001c"></script>
+<script src="kemuri-core.js?v=20261002a"></script>
+<script src="kemuri-backup.js?v=20261002a"></script>
+<script src="pos-source.js?v=20261002a"></script>
 
 <script>
 /* ============================================================
@@ -246,7 +246,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-10-01c';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-02a';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -1446,9 +1446,9 @@ function openItem(id){
   const L = DB.last || { cat:CAT0, sup:'', unit:'個' };
   EDIT = it ? { id, name:it.name, min:it.min, per:it.per, stock:it.stock,
                 cat:it.cat||CAT0, sup:it.sup||'', unit:it.unit||'個',
-                auto:(it.auto == null ? null : !!it.auto) }
+                auto:(it.auto == null ? null : !!it.auto), supNew:false }
             : { id:0, name:'', min:3, per:1, stock:0,
-                cat:L.cat||CAT0, sup:L.sup||'', unit:L.unit||'個', auto:null };
+                cat:L.cat||CAT0, sup:L.sup||'', unit:L.unit||'個', auto:null, supNew:false };
   drawItem();
 }
 /* keep … 開いているシートを描き直すとき（分類を変えたときなど）。
@@ -1479,8 +1479,7 @@ function drawItem(keep){
     +   (EDIT.auto == null ? '' : '<b>　この商品だけ変えてあります。</b>')
     + '</div>'
     + '<label class="lab">仕入先（発注リストをここでまとめます）</label>'
-    + '<input class="txt" id="e-sup" list="suplist" placeholder="例）〇〇食品　空でもOK" value="'+esc(EDIT.sup)+'" onchange="EDIT.sup=this.value.trim()">'
-    + '<datalist id="suplist">'+(DB.sups||[]).map(x=>'<option value="'+esc(x)+'">').join('')+'</datalist>'
+    + supPick()
     + '<label class="lab">単位</label>'
     + '<input class="txt" id="e-unit" list="unitlist" value="'+esc(EDIT.unit)+'" onchange="EDIT.unit=this.value.trim()||\'個\'">'
     + '<datalist id="unitlist">'+UNITS.map(x=>'<option value="'+x+'">').join('')+'</datalist>'
@@ -1520,6 +1519,37 @@ function setAuto(v){
   EDIT.auto = (want === autoDefault(EDIT.cat)) ? null : want;
   drawItem(1);
 }
+/* 仕入先は «前に使ったもの» から選べるようにする。
+   iPhone の Safari は datalist（打つと候補が出るやつ）に対応しておらず、
+   ただの入力欄にしか見えないため、毎回フルで打つことになっていた。
+   使ったことのある仕入先はタップで入る。新しいときだけ打つ。 */
+function supPick(){
+  const list = DB.sups || [];
+  const cur = EDIT.sup || '';
+  /* 一覧に無い仕入先が入っているなら、打ち込みの状態で開く */
+  const typing = EDIT.supNew || (cur && list.indexOf(cur) < 0);
+  let h = '<div class="chips">'
+        + '<button class="'+(!cur && !typing ?'on':'')+'" onclick="setSup(\'\')">なし</button>'
+        + list.map(x=>'<button class="'+(!typing && cur===x?'on':'')+'" '
+                    + 'onclick="setSup(\''+esc(x).replace(/'/g,"\\'")+'\')">'+esc(x)+'</button>').join('')
+        + '<button class="'+(typing?'on':'')+'" onclick="newSup()">＋ 新しく入れる</button>'
+        + '</div>';
+  if(typing){
+    h += '<input class="txt gap" id="e-sup" placeholder="例）〇〇食品" value="'+esc(cur)+'" '
+       +   'onchange="EDIT.sup=this.value.trim()">';
+  }
+  return h;
+}
+function setSup(v){
+  readItemFields();
+  EDIT.sup = v; EDIT.supNew = false;
+  drawItem();
+}
+function newSup(){
+  readItemFields();
+  EDIT.supNew = true;
+  drawItem();
+}
 function addPosName(){
   const v = document.getElementById('e-pos').value.trim();
   if(!v) return;
@@ -1529,7 +1559,7 @@ function addPosName(){
 /* シートに打ってある文字を EDIT に取り込む */
 function readItemFields(){
   ['name','sup','unit'].forEach(k=>{
-    const el = document.getElementById('e-'+k);
+    const el = document.getElementById('e-'+k);   /* 出ていない欄は触らない */
     if(el) EDIT[k] = k==='unit' ? (el.value.trim()||'個') : el.value.trim();
   });
 }
