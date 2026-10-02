@@ -136,6 +136,10 @@
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
 <script src="site-notice.js?v=20261001c"></script>
+<!-- 共通の土台。POSの出数（売上履歴）・レシピ・原価マスタはここから読む。
+     冷凍在庫アプリでPOSを取り込むと売上履歴にたまり、串在庫はそれを読んで串を引く。 -->
+<script src="kemuri-core.js?v=20261001c"></script>
+<script src="kemuri-data.js?v=20261001c"></script>
 </head>
 <body>
 
@@ -162,9 +166,10 @@
 </div></div>
 
 <h1>🍢 串焼き在庫</h1>
-<div class="sub">串焼KEMURI屋 ／ 仕込み日・消費期限・原価つきで串を管理（zaiko／E-POS連動）</div>
+<div class="sub">串焼KEMURI屋 ／ 仕込み日・消費期限・原価つきで串を管理（POSの出数から自動で引く）</div>
 <div class="nav">
-  <a class="z" href="../zaiko/" >📦 在庫・材料管理（zaiko）</a>
+  <a class="z" href="dashboard.html">🏠 ダッシュボード</a>
+  <a href="reitou.html">🧊 冷凍在庫・POS取り込み</a>
   <a href="./index.html">🗓 シフト希望</a>
 </div>
 
@@ -259,40 +264,32 @@
 <!-- ============ 出数を反映 ============ -->
 <div id="p-reflect" class="hide">
   <div class="card">
-    <h2>E-POSの出数を在庫から引く</h2>
+    <h2>POSの出数から在庫を引く <span class="pill" id="r-auto-pill"></span></h2>
     <div class="muted gap">
-      zaikoに保存ずみの「今日の出数」を読んで、売れたぶんだけ串の在庫から自動で引くさ（期限が近いロットから先入れ先出しで引く）。<br>
-      まだ出数を入れてないときは、先に
-      <a href="../zaiko/" style="color:#2a6b7c;font-weight:600">zaikoを開いて出数を入れて</a>きてね。
+      冷凍在庫アプリでPOSを取り込むと、出数がこの端末の<b>売上履歴</b>にたまるさ。
+      串在庫はそれを読んで、売れたぶんだけ串を<b>自動で</b>引くよ（期限が近いロットから先入れ先出し）。
+      同じ出数を2回引くことはないさ。
     </div>
-    <div id="r-src" class="muted gap"></div>
-    <div class="gap" style="background:#f5efe7;border-radius:10px;padding:9px 11px">
-      <div style="font-size:13px;color:#6a5f56;margin-bottom:6px">反映のもと（どこから本数を出す？）</div>
-      <label style="display:flex;align-items:center;gap:8px;margin:0 0 5px;font-size:14px;color:#2a2420;cursor:pointer">
-        <input type="radio" name="rby" value="material" onchange="setReflectBy('material')" style="width:auto;flex:0 0 auto">
-        <span>材料の使用量（zaikoのレシピ換算）<span class="muted">←おすすめ</span></span>
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:14px;color:#2a2420;cursor:pointer">
-        <input type="radio" name="rby" value="sales" onchange="setReflectBy('sales')" style="width:auto;flex:0 0 auto">
-        <span>商品の出数 × 1注文の本数</span>
-      </label>
-    </div>
-    <label>反映する営業日</label>
-    <div class="row gap">
-      <select id="r-date"></select>
-      <button class="mini" style="flex:0 0 92px" onclick="previewReflect()">中身を見る</button>
-    </div>
-    <div id="r-preview"></div>
-    <div class="row" style="margin-top:9px">
-      <button class="act" onclick="applyReflect()">この日を反映する</button>
-      <button class="act ghost" onclick="applyAllUnreflected()">未反映を全部</button>
-    </div>
-    <div class="muted" style="margin-top:6px">※同じ日を二重に引かないよう、反映ずみの日は下に印がつくさ（取り消しもできる）。</div>
+    <div id="r-src" class="gap"></div>
+    <div id="r-setup"></div>
+    <div id="r-pending"></div>
+  </div>
+
+  <div class="card" id="r-unknown-card">
+    <h2>どの串？（まだ決めてないPOS商品） <span class="pill org" id="r-unknown-count">0</span></h2>
+    <div class="muted gap">POSの商品名が、どの串か分からないものさ。串なら「＋串にする」か、結ぶ串を選んでね。串じゃなければ「串じゃない」。1回決めれば、次からは自動さ。</div>
+    <div id="r-unknown"></div>
   </div>
 
   <div class="card">
-    <h2>反映ずみの日</h2>
-    <div id="r-applied" class="muted">まだ無いさ</div>
+    <h2>引いた記録 <span class="muted">まちがえたら取消できる</span></h2>
+    <div id="r-log" class="muted">まだ無いさ</div>
+  </div>
+
+  <div class="card">
+    <h2>POS商品 → 串 の対応</h2>
+    <div class="muted gap">自分で結んだもの・「串じゃない」にしたもの。外すと、また「どの串？」に出るさ。<br>名前がそのまま同じ商品（例：POSの「ねぎま」→串の「ねぎま」）や、ダッシュボードのレシピに串が入っているメニューは、結ばなくても自動で引くよ。</div>
+    <div id="r-map" class="muted">まだ無いさ</div>
   </div>
 </div>
 
@@ -328,53 +325,24 @@
   </div>
 
   <div class="card">
-    <h2>zaikoとの連携</h2>
-    <div id="z-status" class="muted gap"></div>
+    <h2>POSの出数（売上履歴）</h2>
+    <div id="pos-status" class="muted gap"></div>
     <div class="row">
-      <button class="act ghost" onclick="refreshZaiko()">zaikoを読み直す</button>
-      <a href="../zaiko/" class="act sub2" style="text-decoration:none;text-align:center;line-height:1.4">zaikoを開く</a>
+      <button class="act sub2" onclick="location.href='reitou.html'">🧊 POSを取り込む</button>
+      <button class="act ghost" onclick="location.href='dashboard.html'">🏠 ダッシュボード</button>
     </div>
-  </div>
-
-  <div class="card">
-    <h2>zaikoへ書き戻す（串在庫 → zaiko）</h2>
-    <div class="muted gap">
-      串の残り本数（ロットの合計）を、zaikoの「在庫」タブにも <b>本数（本）</b> で反映するさ。
-      仕込み・棚卸・出数反映・ロスで本数が変わるたびに自動で書き戻すよ。<br>
-      ※<b>同じ端末でzaikoを開いたことがあるとき</b>だけ効くさ（別端末の控えには書き戻せない）。
-      zaikoでは材料（例：豚バラ）とは別に、串（例：豚バラ串）が本数で並ぶよ。
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <input type="checkbox" id="sync-toggle" onchange="toggleSync(this)" style="width:auto;flex:0 0 auto">
-      <label for="sync-toggle" style="margin:0;font-size:14px;color:#2a2420">zaikoにも自動で反映する（同じ端末のとき）</label>
-    </div>
-    <div id="sync-status" class="muted gap"></div>
-    <button class="act" onclick="syncNow()">今すぐzaikoに反映</button>
+    <div class="muted" style="margin-top:6px">POSの取り込みは冷凍在庫アプリ（取り込みボタン）で1回やるだけ。串在庫は、同じ端末・同じURLで開けば自動で読むさ。</div>
   </div>
 
   <div class="card">
     <h2>どれを「串」として管理する？</h2>
-    <div class="muted gap">zaikoの商品名だけでなく、<b>レシピの中の材料名（例：豚バラ串）</b>もここに出るさ。本数で管理したい串を選んでね。チェックした串がこのアプリの在庫表に出るよ。<br>※材料モードで反映するなら、ここで選ぶ串の名前は<b>zaikoのレシピの材料名とぴったり同じ</b>にしてね。</div>
+    <div class="muted gap">POSで売れた商品・原価マスタの商品・レシピの材料が並ぶさ。本数で管理したい串をタップして選んでね。チェックした串が在庫表に出るよ。</div>
     <div class="row gap">
       <button class="mini go" onclick="autoPickKushi()">「串」がつく商品を自動で選ぶ</button>
       <button class="mini" onclick="pickAllKushi(false)">ぜんぶ外す</button>
     </div>
     <div id="genre-pick" class="gap"></div>
     <div id="pick-list">—</div>
-  </div>
-
-  <div class="card">
-    <h2>zaikoが読めないとき（引っ越し・別端末）</h2>
-    <div class="muted gap">
-      別の端末やアプリ内ブラウザだと、zaikoのデータを直接読めないことがあるさ。そのときは
-      zaikoの「データ」タブで<b>書き出した内容</b>をここに貼って「取り込む」を押してね。
-      （zaikoの本物のデータは上書きしない、この端末用の控えとして持つよ）
-    </div>
-    <textarea id="snap-box" placeholder="zaikoの「今のデータを書き出す」で出たJSONを貼り付け"></textarea>
-    <div class="row" style="margin-top:9px">
-      <button class="act sub2" onclick="importSnapshot()">この控えを取り込む</button>
-      <button class="act ghost" onclick="clearSnapshot()">控えを消す</button>
-    </div>
   </div>
 
   <div class="card">
@@ -398,18 +366,35 @@
 /* ============================================================
    串焼き在庫アプリ（ロット／消費期限／ロス／原価つき）
    ・自分のデータ … localStorage['kemuri_kushiyaki_v1']
-   ・zaikoのデータ … localStorage['kemuri_zaiko_v1'] を読む／串在庫は本数で書き戻す
+   ・POSの出数   … 共通の売上履歴（KemuriCore.sales＝kemuri_sales_v1）を読む。
+                   冷凍在庫アプリでPOSを取り込むと、そこにたまる。
+   ・レシピ/原価 … KemuriData（ダッシュボードで作ったもの）を読むだけ。
+   ・zaiko（旧アプリ）… 引っ越し前の名残り。同じ端末にデータがあるときだけ読む。
    ============================================================ */
 const KKEY = 'kemuri_kushiyaki_v1';   // このアプリの保存キー
-const ZKEY = 'kemuri_zaiko_v1';       // zaikoの保存キー
-const SNAP = 'kemuri_zaiko_snapshot'; // zaiko控え
+const ZKEY = 'kemuri_zaiko_v1';       // zaiko（旧アプリ）の保存キー
+const SNAP = 'kemuri_zaiko_snapshot'; // zaiko控え（旧）
 const SOON = 2;                       // 消費期限「まもなく」の日数
+const LOG_KEEP = 30;                  // 「引いた記録」を取消用に残す件数
+const SKIP = '__skip__';              // POS商品の対応で「串じゃない」の印
+const CORE = window.KemuriCore || null;   // 読み込めなかったら出数の連携だけ止める
+const KDATA = window.KemuriData || null;
 
 /* items[name] = {
      min:最低ライン, par:目標(仕込み到達点), per:1品あたり本数, cost:原価(円/本), keep:日持ち日数,
      lots:[ {id, made:仕込み日, exp:消費期限, qty:残り本数} ]
-   } */
-function blank() { return { items: {}, applied: {}, log: [], losses: [], seq: 1, syncZaiko: true, reflectBy: 'material' }; }
+   }
+   POSの出数から引くための台帳（共有ONなら全端末で同じものを持つ）：
+     posFrom  … この日以降の出数だけ引く（'' のうちは自動で引かない＝最初に決めてもらう）
+     posAuto  … 開いたとき・出数が増えたときに自動で引くか
+     posMap[norm(POS商品名)] = { to:串の名前 | '__skip__', per:1注文の本数, label:POSの表記 }
+     posMarks['日\u0001norm(POS商品名)'] = その日その商品で、もう引いた «出数»（売れた数）
+         → 同じ日をあとから取り込み直しても、«増えたぶん» だけ引く（二重に引かない）
+     posLog   … 引いた記録（新しい順）。取消すとロットと台帳を元に戻す */
+function blank() {
+  return { items: {}, applied: {}, log: [], losses: [], seq: 1, syncZaiko: false, reflectBy: 'material',
+           posFrom: '', posAuto: true, posMap: {}, posMarks: {}, posLog: [] };
+}
 let KDB = loadK();
 let VIEW = [];        // 在庫の表示順（名前配列）
 let PICK = [];        // 設定タブの商品チェックリスト表示順
@@ -476,6 +461,10 @@ async function pullShared(opts) {
     SHARE.err = ''; SHARE.lastSync = Date.now();
   } catch (e) { SHARE.err = String(e.message || e); }
   PULLING = false; updateShareStatus();
+  /* 読み込んだ内容に «まだ引いてない出数» があれば引く。
+     ほかの端末が古い内容で上書きして引いたぶんが戻っていても、台帳ごと戻るので
+     ここで引き直せば1回ぶんに収まる。読み込みに失敗したときも、この端末のぶんは引く。 */
+  if (READY) autoApply();
 }
 function startShareLoop() {
   if (SHARE.loop) return;
@@ -587,6 +576,14 @@ function normalizeItems() {
   if (!Array.isArray(KDB.losses)) { KDB.losses = []; changed = true; }
   if (KDB.seq == null) { KDB.seq = 1; changed = true; }
   if (KDB.reflectBy == null) { KDB.reflectBy = 'material'; changed = true; }
+  if (KDB.posFrom == null) { KDB.posFrom = ''; changed = true; }
+  if (KDB.posAuto == null) { KDB.posAuto = true; changed = true; }
+  if (!KDB.posMap || typeof KDB.posMap !== 'object') { KDB.posMap = {}; changed = true; }
+  if (!KDB.posMarks || typeof KDB.posMarks !== 'object') { KDB.posMarks = {}; changed = true; }
+  if (!Array.isArray(KDB.posLog)) { KDB.posLog = []; changed = true; }
+  /* 1回だけ：zaiko（旧アプリ）への書き戻しを止める。新しいURLには zaiko が無く、
+     書き戻しても誰も見ない。設定画面からも外した。 */
+  if (!KDB.migPos) { KDB.syncZaiko = false; KDB.migPos = 1; changed = true; }
   Object.keys(KDB.items).forEach(n => {
     const it = KDB.items[n];
     if (!Array.isArray(it.lots)) {
@@ -608,7 +605,239 @@ function normalizeItems() {
   if (changed) save();
 }
 
-/* ---- zaiko連携（読み） ---- */
+/* ============================================================
+   POSの出数（共通の売上履歴）
+   ------------------------------------------------------------
+   売上履歴は «ブラウザ × URL» ごと。冷凍在庫アプリで取り込んだのと
+   同じ端末・同じURLで開いたときだけ読める（共有シートでは飛ばない）。
+   ============================================================ */
+function salesOk() { return !!(CORE && CORE.sales); }
+function posNorm(s) { return CORE ? CORE.norm(s) : String(s || '').normalize('NFKC').replace(/[\s　]/g, '').toLowerCase(); }
+/* 期間まとめ（9/1〜9/30を1日に積んだ取込）か。日ごとの数が分からないので引かない */
+function lumpOf(d) { return salesOk() ? CORE.sales.spanOf(d) : null; }
+function salesDays() { return salesOk() ? CORE.sales.days() : []; }
+function salesOn(d) { return salesOk() ? CORE.sales.byDay(d) : []; }
+
+/* POS商品名のゆれ（先頭の★・「ランチ/ねぎま」の / のうしろ）。冷凍在庫アプリと同じ考え方 */
+function posVariants(name) {
+  const v = [], add = x => { x = String(x || '').trim(); if (x && v.indexOf(x) < 0) v.push(x); };
+  add(name);
+  const bare = String(name || '').replace(/^[\s★☆◆◇♦●○◎■□▲△▼▽※・?？\-]+/, '');
+  add(bare);
+  const parts = bare.split('/');
+  if (parts.length > 1) { add(parts[parts.length - 1]); add(parts.slice(1).join('/')); }
+  return v;
+}
+/* 串の名前を norm したものから引ける表。«串» の付く・付かないも同じ串とみなす
+   （POSの「ねぎま」と串在庫の「ねぎま串」、またはその逆） */
+function kushiIndex() {
+  const ix = {};
+  Object.keys(KDB.items).forEach(n => {
+    const k = posNorm(n);
+    ix[k] = n;
+    const bare = k.replace(/串$/, '');
+    if (bare && !(bare in ix)) ix[bare] = n;
+    if (!((k + '串') in ix)) ix[k + '串'] = n;
+  });
+  return ix;
+}
+function posMapOf(name) {
+  const vs = posVariants(name);
+  for (let i = 0; i < vs.length; i++) { const m = KDB.posMap[posNorm(vs[i])]; if (m) return m; }
+  return null;
+}
+function recipeOf(name) {
+  if (!KDATA || !KDATA.recipes) return null;
+  const vs = posVariants(name);
+  for (let i = 0; i < vs.length; i++) {
+    const r = KDATA.recipes.get(vs[i]);
+    if (r && Array.isArray(r.parts) && r.parts.length) return r;
+  }
+  return null;
+}
+/* そのPOS商品が1つ売れると、どの串を何本使うか。
+   戻り値 … [{ name:串, per }]（空配列＝串じゃない）／ null＝まだ分からない
+   決め方の順番：
+     ① 自分で結んだ対応（「串じゃない」もここ）… 人が決めたものが一番強い
+     ② ダッシュボードのレシピに串が入っているメニュー（盛り合わせなど）
+     ③ 名前がそのまま同じ串（「串」の有無は問わない） */
+function usesForPos(name, ix) {
+  ix = ix || kushiIndex();
+  const m = posMapOf(name);
+  if (m) {
+    if (m.to === SKIP) return [];
+    if (KDB.items[m.to]) return [{ name: m.to, per: num(m.per) || num(KDB.items[m.to].per) || 1 }];
+    /* 結んだ串が消されていたら「まだ分からない」に戻す */
+  }
+  const r = recipeOf(name);
+  if (r) {
+    const out = [];
+    r.parts.forEach(p => {
+      const k = ix[posNorm(p.name)];
+      if (k) out.push({ name: k, per: num(p.qty) || 1 });   // 串は本で数えるので単位換算はしない
+    });
+    if (out.length) return out;
+  }
+  const vs = posVariants(name);
+  for (let i = 0; i < vs.length; i++) {
+    const k = ix[posNorm(vs[i])];
+    if (k) return [{ name: k, per: num(KDB.items[k].per) || 1 }];
+  }
+  return null;
+}
+
+/* 引く対象の日。«反映を始める日» 以降・今日まで・期間まとめでない・
+   旧方式（zaiko）で反映ずみでない日 */
+function posTargetDays() {
+  if (!KDB.posFrom) return [];
+  const to = today();
+  return salesDays().filter(d => d >= KDB.posFrom && d <= to && !lumpOf(d) && !KDB.applied[d]);
+}
+
+/* まだ引いていない出数を集める。
+   戻り値 … { need:{串:本数}, marks:[{k,prev,total}], perDay:{日:{串:本数}}, unknown:[{name,qty,days}], days:[] } */
+function posPending() {
+  const ix = kushiIndex();
+  const need = {}, perDay = {}, marks = [], unknownBy = {};
+  const days = posTargetDays();
+  days.forEach(d => {
+    salesOn(d).forEach(row => {
+      const qty = num(row.qty);
+      if (!(qty > 0)) return;
+      const uses = usesForPos(row.name, ix);
+      if (uses === null) {
+        const u = unknownBy[row.key] || (unknownBy[row.key] = { name: row.name, qty: 0, days: [] });
+        u.qty += qty; u.days.push(d);
+        return;
+      }
+      if (!uses.length) return;                         // 串じゃない
+      const mk = d + '\u0001' + row.key;
+      const prev = num(KDB.posMarks[mk]);
+      const delta = qty - prev;
+      if (!(delta > 0)) return;                         // もう引いてある
+      uses.forEach(u => {
+        const n = delta * u.per;
+        need[u.name] = (need[u.name] || 0) + n;
+        const pd = perDay[d] || (perDay[d] = {});
+        pd[u.name] = (pd[u.name] || 0) + n;
+      });
+      marks.push({ k: mk, prev, total: qty, day: d, pos: row.name });
+    });
+  });
+  const unknown = Object.keys(unknownBy).map(k => Object.assign({ key: k }, unknownBy[k]))
+    .sort((a, b) => b.qty - a.qty);
+  return { need, marks, perDay, unknown, days };
+}
+
+/* まだ引いていない出数を在庫から引く。auto=true は自動で引いたとき */
+function posApply(auto) {
+  const p = posPending();
+  if (!p.marks.length) return null;
+  const lines = [], shorts = [];
+  Object.keys(p.need).forEach(n => {
+    const r = consume(n, p.need[n]);
+    lines.push({ name: n, qty: p.need[n], slices: r.slices });
+    if (r.short > 0) shorts.push(n + ' ' + fmt(r.short) + '本');
+  });
+  p.marks.forEach(m => { KDB.posMarks[m.k] = m.total; });
+  const days = [...new Set(p.marks.map(m => m.day))].sort();
+  const total = lines.reduce((a, l) => a + l.qty, 0);
+  const rec = {
+    id: 'p' + Date.now().toString(36), at: nowStr(), auto: !!auto, days,
+    lines, marks: p.marks.map(m => ({ k: m.k, prev: m.prev, total: m.total })), shorts, undone: false
+  };
+  KDB.posLog.unshift(rec);
+  if (KDB.posLog.length > LOG_KEEP) KDB.posLog.length = LOG_KEEP;
+  KDB.log.unshift({ at: nowStr(), type: '出数反映',
+    text: `${days.map(mdShort).join('・')} のPOS出数から ${lines.length}種・${fmt(total)}本を引いた${shorts.length ? '（在庫不足：' + shorts.join('、') + '）' : ''}` });
+  save(); syncToZaiko('出数反映');
+  return rec;
+}
+
+/* 引いた記録の取消。ロットを戻し、台帳も戻す。
+   戻したあと自動で引くと同じものをまた引いてしまうので、自動は止める */
+function posUndo(id) {
+  const rec = KDB.posLog.find(r => r.id === id);
+  if (!rec || rec.undone) return;
+  ask(`${rec.days.map(mdShort).join('・')} に引いた ${rec.lines.length}種を、在庫に戻すさ？\n（戻したあとは「自動で引く」を止めるよ。対応を直してから、また引いてね）`, () => {
+    rec.lines.forEach(l => restore(l.name, l.slices || []));
+    /* 台帳は «この記録で進めたぶん» だけ戻す。prev に戻すと、あとの記録で
+       進めたぶんまで消えて、引き直したときに二重に引いてしまう */
+    rec.marks.forEach(m => {
+      const v = num(KDB.posMarks[m.k]) - (num(m.total) - num(m.prev));
+      if (v > 0) KDB.posMarks[m.k] = v; else delete KDB.posMarks[m.k];
+    });
+    rec.undone = true;
+    KDB.posAuto = false;
+    KDB.log.unshift({ at: nowStr(), type: '反映取消', text: `${rec.days.map(mdShort).join('・')} のPOS出数ぶんを在庫に戻した（自動で引くを停止）` });
+    save(); syncToZaiko('反映取消');
+    redrawAll(); renderReflect();
+    toast('在庫に戻したさ。自動で引くのは止めたよ');
+  });
+}
+
+/* 自動で引く。開いたとき・画面に戻ったとき・別タブでPOSを取り込んだとき・共有から読んだときに呼ぶ */
+let LAST_AUTO = null;
+function autoApply() {
+  if (!salesOk() || !KDB.posAuto || !KDB.posFrom) return;
+  const rec = posApply(true);
+  if (!rec) return;
+  LAST_AUTO = rec;
+  redrawAll();
+  if (!document.getElementById('p-reflect').classList.contains('hide')) renderReflect();
+  const total = rec.lines.reduce((a, l) => a + l.qty, 0);
+  toast(`POSの出数から ${rec.lines.length}種・${fmt(total)}本を引いたさ`);
+}
+
+/* POS商品をどの串にするか決める（to = 串の名前 / SKIP / '' で外す） */
+function setPosMap(name, to, per) {
+  const k = posNorm(name);
+  if (!k) return;
+  if (!to) delete KDB.posMap[k];
+  else KDB.posMap[k] = { to, per: num(per) || (to !== SKIP && KDB.items[to] ? num(KDB.items[to].per) || 1 : 1), label: name };
+  save();
+}
+/* POS商品名のまま、新しい串として登録して結ぶ */
+function posAsKushi(name) {
+  const n = String(name || '').trim();
+  if (!n) return;
+  if (!KDB.items[n]) KDB.items[n] = newItem();
+  save();   // 名前がそのまま同じなので、対応表に書かなくても引ける
+  afterMapChange('「' + n + '」を串にしたさ（在庫タブで本数・原価を入れてね）');
+}
+function newItem() { return { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; }
+function afterMapChange(msg) {
+  const rec = (KDB.posAuto && KDB.posFrom) ? posApply(true) : null;
+  redrawAll(); renderReflect();
+  if (rec) {
+    const total = rec.lines.reduce((a, l) => a + l.qty, 0);
+    toast(msg + `\nPOSの出数から ${fmt(total)}本を引いたよ（取消できる）`);
+  } else if (msg) toast(msg);
+}
+
+/* 串の候補にする名前：最近POSで売れた商品・原価マスタ・レシピの材料・（あれば）zaiko */
+function kushiCandidates() {
+  const s = new Set();
+  if (salesOk()) CORE.sales.range(addDays(today(), -90), today()).forEach(r => { if (r.name) s.add(r.name); });
+  if (KDATA && KDATA.costs) KDATA.costs.all().forEach(c => { if (c.name) s.add(c.name); });
+  if (KDATA && KDATA.recipes) KDATA.recipes.all().forEach(r => (r.parts || []).forEach(p => { if (p.name) s.add(p.name); }));
+  zProducts().forEach(n => s.add(n));
+  return [...s].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ja'));
+}
+/* まとめて登録するためのグループ：原価マスタの «分類»（例：串焼き）と、zaikoの材料ジャンル */
+function kushiGroups() {
+  const by = {};
+  if (KDATA && KDATA.costs) KDATA.costs.all().forEach(c => {
+    const g = String(c.category || '').trim();
+    if (!g || !c.name) return;
+    (by['原価：' + g] = by['原価：' + g] || []).push(c.name);
+  });
+  const zg = zGenreGroups();
+  Object.keys(zg).forEach(g => { by['zaiko：' + g] = zg[g]; });
+  return by;
+}
+
+/* ---- zaiko（旧アプリ）。引っ越し前のデータが同じ端末にあるときだけ読む ---- */
 function readZaiko() {
   try { const live = JSON.parse(localStorage.getItem(ZKEY)); if (live && typeof live === 'object') return live; } catch (e) {}
   try { const snap = JSON.parse(localStorage.getItem(SNAP)); if (snap && typeof snap === 'object') return snap; } catch (e) {}
@@ -624,14 +853,6 @@ function zProducts() {
   Object.values(z.days || {}).forEach(rows => rows.forEach(r => s.add(r.name)));
   return [...s].filter(Boolean).sort();
 }
-/* レシピに出てくる材料名だけ（串の候補） */
-function zMaterials() {
-  const z = readZaiko(); if (!z) return [];
-  const s = new Set();
-  Object.values(z.recipes || {}).forEach(rec => (rec || []).forEach(ing => { if (ing && ing.name) s.add(ing.name); }));
-  return [...s].sort();
-}
-function zDays() { const z = readZaiko(); return z ? (z.days || {}) : {}; }
 /* 材料をジャンルごとにまとめる（ジャンル未設定の材料は入れない） */
 function zGenreGroups() {
   const z = readZaiko(); if (!z) return {};
@@ -668,27 +889,18 @@ function syncToZaiko(reason, force) {
   try { localStorage.setItem(ZKEY, JSON.stringify(z)); return true; }
   catch (e) { toast('zaikoへの反映に失敗したさ…'); return false; }
 }
-function syncNow() {
-  if (!zaikoIsLive()) { toast('同じ端末のzaikoが見つからないさ。\nこの端末でzaikoを一度ひらいてね\n（別端末の控えには書き戻せない）'); return; }
-  const ok = syncToZaiko('手動反映', true);
-  toast(ok ? 'zaikoに反映したさ！\nzaikoの「在庫」タブに串が本数で出るよ' : '反映するものが無かったさ（先に本数を入れてね）');
-  renderSetup(); renderLinkBanner();
-}
-function toggleSync(el) {
-  KDB.syncZaiko = el.checked; save();
-  if (el.checked) syncToZaiko('自動反映ON');
-  renderSetup(); renderLinkBanner();
-  toast(el.checked ? 'zaikoへの自動反映をONにしたさ' : '自動反映をOFFにしたさ');
-}
-
 /* ---- 小物 ---- */
 function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function fmt(n) { return (Math.round(n * 100) / 100).toLocaleString(); }
 function yen(n) { return '¥' + fmt(Math.round(num(n))); }
-function today() { return new Date().toISOString().slice(0, 10); }
+/* 日付は «この端末の» 年月日で扱う。toISOString は世界時なので、日本では
+   朝9時まで「今日」が前日になり、消費期限も1日ずれていた */
+function z2(n) { return ('0' + n).slice(-2); }
+function ymd(t) { return t.getFullYear() + '-' + z2(t.getMonth() + 1) + '-' + z2(t.getDate()); }
+function today() { return ymd(new Date()); }
 function nowStr() { return new Date().toLocaleString('ja-JP'); }
-function addDays(d, n) { if (!d) return ''; const t = new Date(d + 'T00:00:00'); t.setDate(t.getDate() + num(n)); return t.toISOString().slice(0, 10); }
+function addDays(d, n) { if (!d) return ''; const t = new Date(d + 'T00:00:00'); if (isNaN(t)) return ''; t.setDate(t.getDate() + num(n)); return ymd(t); }
 function mdShort(d) { if (!d) return '—'; const p = d.split('-'); return p.length === 3 ? (+p[1]) + '/' + (+p[2]) : d; }
 function isKushiName(n) { return /串/.test(n); }
 
@@ -798,19 +1010,41 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
 });
 
 /* ========== 串の在庫 ========== */
+/* 在庫タブのいちばん上：POSの出数とつながっているか・次にやること・最後に引いたもの */
 function renderLinkBanner() {
   const el = document.getElementById('link-banner');
-  const z = readZaiko();
-  if (!z) {
-    el.innerHTML = '<div class="warn">zaikoのデータがまだ読めてないさ。「串の設定・連携」タブで読み直すか、控えを取り込んでね。</div>';
-    return;
+  el.innerHTML = posStatusHTML(true);
+}
+function posStatusHTML(withLast) {
+  if (!salesOk()) return '<div class="alert">共通の部品（kemuri-core.js）が読めなかったさ。ページを再読み込みしてね。</div>';
+  const days = salesDays();
+  const nKushi = Object.keys(KDB.items).length;
+  const go = (t, label) => ` <button class="mini warnbtn" onclick="goTab('${t}')">${label}</button>`;
+  if (!days.length) {
+    return `<div class="warn">まだこの端末にPOSの出数が無いさ。冷凍在庫アプリでPOSを取り込むと、ここで串を自動で引くよ。
+      <button class="mini warnbtn" onclick="location.href='reitou.html'">POSを取り込む</button></div>`;
   }
-  const days = Object.keys(zDays()).sort();
-  const latest = days.length ? days[days.length - 1] : 'なし';
-  const src = zaikoIsLive() ? '同じ端末のzaiko' : '控え（取り込みぶん）';
-  const sync = KDB.syncZaiko ? (zaikoIsLive() ? '／zaikoへ自動反映 <b>ON</b>' : '／自動反映ON（この端末では書き戻し不可）') : '';
-  const shr = shareOn() ? `／👥スタッフ共有 <b>ON</b>` : '';
-  el.innerHTML = `<div class="ok">zaikoと連携中（${src}）／串の登録 ${Object.keys(KDB.items).length}種・最新の出数 ${esc(latest)}${sync}${shr}</div>`;
+  const latest = days[days.length - 1];
+  const head = `最新の出数 <b>${mdShort(latest)}</b>／串 ${nKushi}種`;
+  if (!nKushi) return `<div class="warn">${head}。まず串を登録してね（POSの商品からワンタップでできる）${go('reflect', '登録する')}</div>`;
+  if (!KDB.posFrom) return `<div class="warn">${head}。あと1つ：<b>いつの出数から引くか</b>を決めると、自動で引きはじめるさ${go('reflect', '決める')}</div>`;
+  const p = posPending();
+  let out = '';
+  if (!KDB.posAuto) {
+    out += `<div class="warn">自動で引くのを止めてるさ（${head}）。` +
+      (p.marks.length ? `まだ引いてない出数が ${p.marks.length}件あるよ。` : '') + go('reflect', '開く') + '</div>';
+  } else {
+    out += `<div class="ok">POSの出数と連携中／${head}／<b>${mdShort(KDB.posFrom)}</b>から自動で引く <b>ON</b>${shareOn() ? '／👥共有ON' : ''}</div>`;
+  }
+  if (p.unknown.length) out += `<div class="warn">どの串か決めてないPOS商品が <b>${p.unknown.length}件</b> あるさ（決めるまで引けない）${go('reflect', '決める')}</div>`;
+  const last = withLast ? KDB.posLog.find(r => !r.undone) : null;
+  if (last) {
+    const total = last.lines.reduce((a, l) => a + num(l.qty), 0);
+    const top = last.lines.slice().sort((a, b) => b.qty - a.qty).slice(0, 3).map(l => esc(l.name) + ' ' + fmt(l.qty) + '本').join('、');
+    out += `<div class="muted gap">最後に引いた：${esc(last.at)}（${last.days.map(mdShort).join('・')}ぶん）${top}${last.lines.length > 3 ? ' ほか' : ''}／計${fmt(total)}本
+      <button class="mini del" onclick="posUndo('${last.id}')">取消</button></div>`;
+  }
+  return out;
 }
 
 function renderStock() {
@@ -1141,168 +1375,241 @@ function addItemManual() {
   toast(name + ' を追加したさ');
 }
 
-/* ========== 出数を反映 ========== */
-function reflectableDays() { return Object.keys(zDays()).sort(); }
-
+/* ========== 出数を反映（POSの売上履歴から） ========== */
 function renderReflect() {
-  const z = readZaiko();
-  const src = document.getElementById('r-src');
-  if (!z) { src.innerHTML = '<span class="warn" style="display:block">zaikoが読めてないさ。「串の設定・連携」で読み直してね。</span>'; }
-  else src.innerHTML = `連携元：${zaikoIsLive() ? '同じ端末のzaiko' : '控え'}／串の登録 ${Object.keys(KDB.items).length}種`;
-
-  document.querySelectorAll('input[name="rby"]').forEach(r => { r.checked = (r.value === (KDB.reflectBy || 'material')); });
-
-  const days = reflectableDays();
-  const sel = document.getElementById('r-date');
-  const unappliedLatest = [...days].reverse().find(d => !KDB.applied[d]);
-  sel.innerHTML = days.length ? days.slice().reverse().map(d =>
-    `<option value="${d}"${KDB.applied[d] ? ' style="color:#8a7f76"' : ''}>${d}${KDB.applied[d] ? '（反映ずみ）' : ''}</option>`).join('')
-    : '<option value="">（zaikoに出数が無いさ）</option>';
-  if (unappliedLatest) sel.value = unappliedLatest;
-  document.getElementById('r-preview').innerHTML = '';
-  renderApplied();
-  if (sel.value) previewReflect();
+  document.getElementById('r-src').innerHTML = posSourceHTML();
+  const pill = document.getElementById('r-auto-pill');
+  pill.className = 'pill ' + (KDB.posFrom && KDB.posAuto ? 'grn' : 'org');
+  pill.textContent = !KDB.posFrom ? 'まだ設定前' : (KDB.posAuto ? '自動 ON' : '自動 OFF');
+  renderPosSetup();
+  renderPosPending();
+  renderPosUnknown();
+  renderPosLog();
+  renderPosMap();
+}
+/* いま開いているタブだけ描き直す（在庫タブは redrawAll で描く） */
+function refreshOpen() {
+  if (!document.getElementById('p-reflect').classList.contains('hide')) renderReflect();
+  if (!document.getElementById('p-setup').classList.contains('hide')) renderSetup();
 }
 
-/* 指定日に売れた本数 = 出数 × per（串として登録済みのものだけ） */
-function soldOn(d) {
-  const rows = zDays()[d] || [];
-  const map = {};
-  rows.forEach(r => {
-    if (KDB.items[r.name] != null) {
-      const per = num(KDB.items[r.name].per) || 1;
-      map[r.name] = (map[r.name] || 0) + num(r.qty) * per;
-    }
-  });
-  return map;
-}
-
-/* 指定日の材料使用量 = zaikoのレシピ（分量）× 出数。串は「本数」で登録している前提。
-   zaikoのcalcUsageと同じ計算（ing.amount × 出数）。
-   matched=串登録ずみ／unreg=使ったのに串未登録／noRecipe=レシピ未登録の商品 */
-function usageDetail(d) {
-  const z = readZaiko();
-  const rec = z ? (z.recipes || {}) : {};
-  const rows = z ? ((z.days || {})[d] || []) : [];
-  const use = {}; const noRecipe = new Set();
-  rows.forEach(r => {
-    const rc = rec[r.name];
-    if (!rc || !rc.length) { if (num(r.qty) > 0) noRecipe.add(r.name); return; }
-    rc.forEach(ing => { if (ing && ing.name) use[ing.name] = (use[ing.name] || 0) + num(ing.amount) * num(r.qty); });
-  });
-  const matched = {}, unreg = {};
-  Object.keys(use).forEach(n => { if (!use[n]) return; (KDB.items[n] != null ? matched : unreg)[n] = use[n]; });
-  return { matched, unreg, noRecipe: [...noRecipe] };
-}
-function usedOn(d) { return usageDetail(d).matched; }
-
-/* レシピ材料を串として1タップ登録 */
-function addKushiFromMaterial(name) {
-  if (!name || KDB.items[name]) return;
-  KDB.items[name] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] };
-  save(); renderReflect(); toast('「' + name + '」を串として追加したさ（在庫タブで本数・原価を入れてね）');
-}
-
-/* 反映のもと：material=材料使用量（レシピ換算）／sales=出数×本数 */
-function consumedOn(d) { return KDB.reflectBy === 'material' ? usedOn(d) : soldOn(d); }
-function setReflectBy(v) { KDB.reflectBy = (v === 'material' ? 'material' : 'sales'); save(); renderReflect(); toast(KDB.reflectBy === 'material' ? '材料使用量（レシピ換算）で引くさ' : '出数×本数で引くさ'); }
-
-function previewReflect() {
-  const d = document.getElementById('r-date').value;
-  const box = document.getElementById('r-preview');
-  if (!d) { box.innerHTML = ''; return; }
-  const sold = consumedOn(d);
-  const names = Object.keys(sold);
-
-  // 材料モードのときは「拾えなかった原因」を出す（レシピの材料＝串が未登録／商品にレシピが無い）
-  let diag = '';
-  if (KDB.reflectBy === 'material') {
-    const det = usageDetail(d);
-    const unregNames = Object.keys(det.unreg).sort((a, b) => det.unreg[b] - det.unreg[a]);
-    if (unregNames.length) {
-      diag += `<div class="warn" style="margin-top:9px">レシピで使われてるけど、まだ<b>串として登録してない</b>材料があるさ。タップで串に追加できるよ：<br>${
-        unregNames.map(n => `<span class="chip" style="cursor:pointer" onclick="addKushiFromMaterial('${esc(n).replace(/'/g, "\\'")}')">＋ ${esc(n)}（${fmt(det.unreg[n])}本）</span>`).join(' ')
-      }</div>`;
-    }
-    if (det.noRecipe.length) {
-      diag += `<div class="muted" style="margin-top:6px">※レシピ未登録の商品：${det.noRecipe.map(esc).join('、')}（zaikoの「レシピ」タブで 商品→串◯本 を登録すると拾えるさ）</div>`;
-    }
+function posSourceHTML() {
+  if (!salesOk()) return '<div class="alert">共通の部品（kemuri-core.js）が読めなかったさ。ページを再読み込みしてね。</div>';
+  const st = CORE.sales.stats();
+  if (!st.days) {
+    return `<div class="warn">まだこの端末にPOSの出数が無いさ。<br>
+      冷凍在庫アプリでPOSを取り込んでね（取り込みボタンでも、CSVファイルでもOK）。
+      <b>同じ端末・同じURL</b>で串在庫を開けば、自動でここに来るよ。
+      <div style="margin-top:6px"><button class="mini warnbtn" onclick="location.href='reitou.html'">🧊 POSを取り込みに行く</button></div></div>`;
   }
+  return `<div class="muted">出数のもと：この端末の売上履歴（${mdShort(st.entryFrom)}〜${mdShort(st.entryTo)}・${st.days}日ぶん` +
+    (st.lumpedDays ? `。うち «期間まとめ» の${st.lumpedDays}日は日ごとの数が分からないので引かない` : '') + '）</div>';
+}
 
+/* «いつの出数から引くか» と «自動で引くか» */
+function renderPosSetup() {
+  const el = document.getElementById('r-setup');
+  if (!salesOk()) { el.innerHTML = ''; return; }
+  const first = !KDB.posFrom;
+  const def = KDB.posFrom || today();
+  el.innerHTML = `<div class="${first ? 'warn' : ''}" style="${first ? '' : 'background:#f5efe7;border-radius:10px;padding:9px 11px;margin-bottom:9px'}">
+    ${first
+      ? '<b>はじめに1つだけ：</b>いつの出数から在庫を引く？<br><span class="muted">今の在庫の本数が «その日の営業の前» の数なら、その日を選んでね。«営業のあと» に数えたなら次の日。選んだ日より前の出数は引かないさ。</span>'
+      : '<span style="font-size:13px;color:#6a5f56">この日以降の出数を引く</span>'}
+    <div class="row" style="margin-top:6px;align-items:center">
+      <input type="date" id="pos-from" value="${def}">
+      <button class="mini go" style="flex:0 0 auto" onclick="savePosFrom()">${first ? 'これで自動で引きはじめる' : '変える'}</button>
+    </div>
+    ${first ? '' : `<label style="display:flex;align-items:center;gap:8px;margin:8px 0 0;font-size:14px;color:#2a2420;cursor:pointer">
+      <input type="checkbox" ${KDB.posAuto ? 'checked' : ''} onchange="setPosAuto(this.checked)" style="width:auto;flex:0 0 auto">
+      <span>開いたとき・POSを取り込んだときに<b>自動で引く</b></span></label>`}
+  </div>`;
+}
+function totalOf(rec) { return rec ? rec.lines.reduce((a, l) => a + num(l.qty), 0) : 0; }
+function savePosFrom() {
+  const v = document.getElementById('pos-from').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { toast('日付を選んでね'); return; }
+  const first = !KDB.posFrom;
+  const go = () => {
+    KDB.posFrom = v;
+    if (first) KDB.posAuto = true;
+    save();
+    const rec = KDB.posAuto ? posApply(true) : null;
+    redrawAll(); renderReflect();
+    toast(rec ? `${mdShort(v)}からの出数で ${fmt(totalOf(rec))}本を引いたさ（取消できる）`
+              : `${mdShort(v)}からの出数を自動で引くようにしたさ`);
+  };
+  if (!first && v < KDB.posFrom) ask(`${mdShort(v)}まで さかのぼって引くさ？\n（その間に在庫を数え直していたら、二重に引くことになるよ）`, go);
+  else go();
+}
+function setPosAuto(on) {
+  KDB.posAuto = !!on; save();
+  const rec = on ? posApply(true) : null;
+  redrawAll(); renderReflect();
+  if (!on) toast('自動で引くのを止めたさ（「今すぐ在庫から引く」で手で引けるよ）');
+  else toast(rec ? `自動をONにして、まだの出数から ${fmt(totalOf(rec))}本を引いたさ` : '自動で引くのをONにしたさ');
+}
+
+/* まだ引いていない出数（自動OFFのとき・決めたばかりのとき） */
+function renderPosPending() {
+  const el = document.getElementById('r-pending');
+  if (!salesOk() || !KDB.posFrom) { el.innerHTML = ''; return; }
+  const p = posPending();
+  const names = Object.keys(p.need).sort((a, b) => p.need[b] - p.need[a]);
   if (!names.length) {
-    const hint = KDB.reflectBy === 'material'
-      ? 'zaikoの「レシピ」タブで 商品→串◯本 を登録し、レシピの材料名を串在庫の串名と合わせてね'
-      : 'zaikoの商品名と、串の名前が合ってるか確認してね';
-    box.innerHTML = diag + `<div class="warn" style="margin-top:9px">${esc(d)} は、登録した串に当てはまる${KDB.reflectBy === 'material' ? '材料使用量' : '出数'}が無かったさ。<br>（${hint}）</div>`;
+    el.innerHTML = `<div class="ok">まだ引いてない出数は無いさ👍${p.unknown.length ? '<br>（下の «どの串？» が決まったら、そのぶんも引くよ）' : ''}</div>`;
     return;
   }
-  box.innerHTML = diag + `<div class="${KDB.applied[d] ? 'warn' : 'ok'}" style="margin-top:9px">
-      ${esc(d)}${KDB.applied[d] ? ' はもう反映ずみさ（もう一度押すと二重に引くよ→止めてある）' : (KDB.reflectBy === 'material' ? ' の材料使用量を引くと…' : ' の出数を引くと…')}</div>
-    <table style="margin-top:6px"><thead><tr><th>串</th><th class="num">使う本数</th><th class="num">反映後の残り</th></tr></thead><tbody>${
-      names.sort((a, b) => sold[b] - sold[a]).map(n => {
-        const after = stockOf(n) - sold[n];
-        return `<tr><td>${esc(n)}</td><td class="num"><b>${fmt(sold[n])}</b></td>
-          <td class="num" style="${after < 0 ? 'color:#b0402a;font-weight:700' : ''}">${fmt(after)}</td></tr>`;
+  const days = [...new Set(p.marks.map(m => m.day))].map(mdShort).join('・');
+  el.innerHTML = `<div class="warn">まだ引いてない出数があるさ（${days}）</div>
+    <table><thead><tr><th>串</th><th class="num">引く本数</th><th class="num">引いたあと</th></tr></thead><tbody>${
+      names.map(n => {
+        const after = stockOf(n) - p.need[n];
+        return `<tr><td>${esc(n)}</td><td class="num"><b>${fmt(p.need[n])}</b></td>
+          <td class="num" style="${after < 0 ? 'color:#b0402a;font-weight:700' : ''}">${after < 0 ? '0（' + fmt(-after) + '本たりない）' : fmt(after)}</td></tr>`;
       }).join('')
-    }</tbody></table>`;
+    }</tbody></table>
+    <button class="act" style="margin-top:9px" onclick="posApplyNow()">今すぐ在庫から引く</button>`;
+}
+function posApplyNow() {
+  const rec = posApply(false);
+  redrawAll(); renderReflect();
+  toast(rec ? `${rec.lines.length}種・${fmt(totalOf(rec))}本を引いたさ` : '引くものが無かったさ');
 }
 
-function doReflect(d) {
-  if (!d || KDB.applied[d]) return false;
-  const sold = consumedOn(d);
-  const changes = {}; const shorts = [];
-  Object.keys(sold).forEach(n => {
-    const r = consume(n, sold[n]);
-    changes[n] = r.slices;
-    if (r.short > 0) shorts.push(n + ' ' + fmt(r.short) + '本');
-  });
-  KDB.applied[d] = { at: nowStr(), changes };
-  KDB.log.unshift({ at: nowStr(), type: '出数反映', text: `${d} の出数を反映（${Object.keys(changes).length}種）${shorts.length ? ' ※在庫不足:' + shorts.join('、') : ''}` });
-  return true;
+/* ---- どの串？（まだ決めてないPOS商品） ---- */
+/* 候補さがし用のゆるい正規化：カタカナ→ひらがな、記号を落とす、末尾の「串」を落とす */
+function loose(s) {
+  return String(s || '').normalize('NFKC').toLowerCase()
+    .replace(/[ァ-ヶ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60))
+    .replace(/[\s　()（）\[\]【】「」・,，、。.／\/\-－—–~〜～*★☆◆◇●○◎■□▲△▼▽※?？!！]/g, '')
+    .replace(/串$/, '');
 }
-function applyReflect() {
-  const d = document.getElementById('r-date').value;
-  if (!d) { toast('反映する日が無いさ'); return; }
-  if (KDB.applied[d]) { toast('その日はもう反映ずみさ'); return; }
-  if (!Object.keys(consumedOn(d)).length) { toast('この日は引くものが無いさ'); return; }
-  ask(d + (KDB.reflectBy === 'material' ? ' の材料使用量' : ' の出数') + 'を在庫から引くさ？', () => {
-    doReflect(d); save(); syncToZaiko('出数反映'); renderReflect(); toast(d + ' を反映したさ');
+/* POS商品名に、登録ずみの串の名前が入っていればそれを候補に（例：ささみわさび → ささみ） */
+function suggestKushi(posName) {
+  const t = loose(posName); if (!t) return null;
+  let best = null;
+  Object.keys(KDB.items).forEach(n => {
+    const k = loose(n); if (k.length < 2) return;
+    if (t.indexOf(k) >= 0 && (!best || k.length > loose(best).length)) best = n;
+  });
+  return best;
+}
+function costCategory(name) {
+  if (!KDATA || !KDATA.costs) return '';
+  const e = KDATA.costs.get(name);
+  return e && e.category ? String(e.category) : '';
+}
+/* 決めてないPOS商品。開始日を決める前でも、直近30日ぶんから串を登録できるようにする */
+function posUnknownList() {
+  if (KDB.posFrom) return posPending().unknown;
+  const ds = salesDays(); if (!ds.length) return [];
+  const ix = kushiIndex(), by = {};
+  const from = addDays(ds[ds.length - 1], -30);
+  ds.filter(d => d >= from).forEach(d => salesOn(d).forEach(row => {
+    if (!(num(row.qty) > 0) || usesForPos(row.name, ix) !== null) return;
+    const u = by[row.key] || (by[row.key] = { key: row.key, name: row.name, qty: 0, days: [] });
+    u.qty += num(row.qty); u.days.push(d);
+  }));
+  return Object.keys(by).map(k => by[k]).sort((a, b) => b.qty - a.qty);
+}
+let UNK = [];
+function renderPosUnknown() {
+  const card = document.getElementById('r-unknown-card');
+  const el = document.getElementById('r-unknown');
+  const list = salesOk() ? posUnknownList() : [];
+  document.getElementById('r-unknown-count').textContent = list.length;
+  if (!list.length) { card.style.display = 'none'; UNK = []; return; }
+  card.style.display = '';
+  /* 串らしいもの（候補あり・名前に串・原価マスタの分類が串）を上に */
+  const score = u => (suggestKushi(u.name) ? 2 : 0) + (/串/.test(u.name) || /串/.test(costCategory(u.name)) ? 1 : 0);
+  UNK = list.slice().sort((a, b) => score(b) - score(a) || b.qty - a.qty);
+  const opts = Object.keys(KDB.items).sort((a, b) => a.localeCompare(b, 'ja'))
+    .map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  el.innerHTML = `<div class="row gap" style="flex-wrap:wrap">
+      <button class="mini" style="flex:0 0 auto" onclick="posSkipRest()">残りをぜんぶ「串じゃない」にする</button>
+    </div>` +
+    UNK.map((u, i) => {
+      const sug = suggestKushi(u.name), cat = costCategory(u.name);
+      return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:7px 0;border-bottom:1px solid #f0e9e0">
+        <span style="flex:1 1 150px"><b>${esc(u.name)}</b> <span class="muted">${fmt(u.qty)}個</span>${cat ? ` <span class="pill">${esc(cat)}</span>` : ''}</span>
+        ${sug ? `<button class="mini go" onclick="posSuggestAt(${i})">「${esc(sug)}」に結ぶ</button>` : ''}
+        <button class="mini go" onclick="posAsKushiAt(${i})">＋串にする</button>
+        ${opts ? `<select onchange="posMapAt(${i}, this.value)" style="width:auto;flex:0 0 auto;padding:5px 6px;font-size:13px">
+          <option value="">ほかの串に結ぶ…</option>${opts}</select>` : ''}
+        <button class="mini" onclick="posSkipAt(${i})">串じゃない</button>
+      </div>`;
+    }).join('');
+}
+function posMapAt(i, to) {
+  const u = UNK[i]; if (!u || !to || !KDB.items[to]) return;
+  setPosMap(u.name, to);
+  afterMapChange(`「${u.name}」を「${to}」に結んださ`);
+}
+function posSuggestAt(i) { const u = UNK[i]; if (u) posMapAt(i, suggestKushi(u.name)); }
+function posAsKushiAt(i) { const u = UNK[i]; if (u) posAsKushi(u.name); }
+function posSkipAt(i) {
+  const u = UNK[i]; if (!u) return;
+  setPosMap(u.name, SKIP);
+  afterMapChange('');
+}
+function posSkipRest() {
+  if (!UNK.length) return;
+  ask(`いま並んでいる ${UNK.length}件を、ぜんぶ «串じゃない» にするさ？\n（先に串の商品を «＋串にする» で登録してから押してね。あとで下の対応表から戻せるよ）`, () => {
+    UNK.forEach(u => { const k = posNorm(u.name); if (k) KDB.posMap[k] = { to: SKIP, per: 1, label: u.name }; });
+    save();
+    afterMapChange(`${UNK.length}件を «串じゃない» にしたさ`);
   });
 }
-function applyAllUnreflected() {
-  const days = reflectableDays().filter(d => !KDB.applied[d] && Object.keys(consumedOn(d)).length);
-  if (!days.length) { toast('未反映の日は無いさ'); return; }
-  ask(`未反映の ${days.length}日ぶん（${days[0]}〜${days[days.length - 1]}）をまとめて引くさ？`, () => {
-    let n = 0; days.forEach(d => { if (doReflect(d)) n++; });
-    save(); syncToZaiko('出数反映'); renderReflect(); toast(n + '日ぶん反映したさ');
-  });
-}
-function renderApplied() {
-  const ds = Object.keys(KDB.applied).sort().reverse();
-  const el = document.getElementById('r-applied');
-  if (!ds.length) { el.innerHTML = 'まだ無いさ'; return; }
-  el.innerHTML = ds.map(d => {
-    const rec = KDB.applied[d];
-    const tot = Object.values(rec.changes).reduce((a, c) => a + (Array.isArray(c) ? c.reduce((x, s) => x + num(s.take), 0) : num(c)), 0);
-    return `<div style="padding:5px 0;border-bottom:1px solid #f0e9e0">
-      <b style="color:#2a2420">${esc(d)}</b> <span class="pill grn">反映ずみ</span>
-      — ${Object.keys(rec.changes).length}種 / 合計${fmt(tot)}本
-      <button class="mini del" onclick="undoReflect('${esc(d)}')">取消（戻す）</button>
-      <br><span style="font-size:11px" class="muted">${esc(rec.at)}</span></div>`;
+
+/* ---- 引いた記録 ---- */
+function renderPosLog() {
+  const el = document.getElementById('r-log');
+  if (!KDB.posLog.length) { el.innerHTML = 'まだ無いさ'; return; }
+  el.innerHTML = KDB.posLog.map(r => {
+    const detail = r.lines.slice().sort((a, b) => b.qty - a.qty).map(l => esc(l.name) + ' ' + fmt(l.qty)).join('、');
+    return `<div style="padding:6px 0;border-bottom:1px solid #f0e9e0">
+      <b style="color:#2a2420">${r.days.map(mdShort).join('・')}</b>ぶん
+      ${r.undone ? '<span class="pill">取消ずみ</span>' : `<span class="pill grn">${r.auto ? '自動' : '手動'}</span>`}
+      — ${r.lines.length}種／計${fmt(totalOf(r))}本
+      ${r.undone ? '' : `<button class="mini del" style="float:right" onclick="posUndo('${r.id}')">取消（戻す）</button>`}
+      <div class="muted">${detail}${r.shorts && r.shorts.length ? '<br><span style="color:#b0402a">在庫不足：' + esc(r.shorts.join('、')) + '</span>' : ''}</div>
+      <div class="muted" style="font-size:11px">${esc(r.at)}</div></div>`;
   }).join('');
 }
-function undoReflect(d) {
-  const rec = KDB.applied[d]; if (!rec) return;
-  ask(d + ' の反映を取り消して、引いたぶんを在庫に戻すさ？', () => {
-    Object.keys(rec.changes).forEach(n => {
-      const c = rec.changes[n];
-      if (Array.isArray(c)) restore(n, c);
-      else if (typeof c === 'number') { const it = KDB.items[n]; if (it) it.lots.push({ id: nextSeq(), made: '', exp: '', qty: c }); }
-    });
-    delete KDB.applied[d];
-    KDB.log.unshift({ at: nowStr(), type: '反映取消', text: `${d} の反映を取り消し（在庫を戻した）` });
-    save(); syncToZaiko('反映取消'); renderReflect(); toast('取り消したさ');
-  });
+
+/* ---- POS商品 → 串 の対応 ---- */
+let MAPK = [];
+function renderPosMap() {
+  const el = document.getElementById('r-map');
+  const lab = k => String(KDB.posMap[k].label || k);
+  MAPK = Object.keys(KDB.posMap).sort((a, b) => lab(a).localeCompare(lab(b), 'ja'));
+  if (!MAPK.length) { el.innerHTML = 'まだ無いさ'; return; }
+  const row = k => {
+    const m = KDB.posMap[k], i = MAPK.indexOf(k);
+    const right = m.to === SKIP
+      ? '<span class="muted">串じゃない</span>'
+      : `<b>${esc(m.to)}</b>${KDB.items[m.to] ? '' : ' <span class="pill red">串が無い</span>'}
+         <span class="muted">×</span><input type="number" min="1" step="1" value="${fmt(num(m.per) || 1)}" onchange="posPerAt(${i}, this.value)"
+           style="width:56px;padding:4px 5px;font-size:13px;display:inline-block"><span class="muted">本</span>`;
+    return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid #f0e9e0">
+      <span style="flex:1">${esc(lab(k))} → ${right}</span>
+      <button class="mini" onclick="posUnmapAt(${i})">外す</button></div>`;
+  };
+  const kushi = MAPK.filter(k => KDB.posMap[k].to !== SKIP), skip = MAPK.filter(k => KDB.posMap[k].to === SKIP);
+  el.innerHTML = kushi.map(row).join('') +
+    (skip.length ? `<details style="margin-top:6px"><summary>串じゃない（${skip.length}件）</summary>${skip.map(row).join('')}</details>` : '');
+}
+function posUnmapAt(i) {
+  const k = MAPK[i]; if (!k) return;
+  delete KDB.posMap[k]; save();
+  redrawAll(); renderReflect();
+  toast('外したさ。«どの串？» にまた出るよ');
+}
+function posPerAt(i, v) {
+  const k = MAPK[i]; if (!k || !KDB.posMap[k]) return;
+  KDB.posMap[k].per = Math.max(1, num(v) || 1); save();
+  toast('1注文の本数を ' + fmt(KDB.posMap[k].per) + '本にしたさ（これからの出数に効くよ）');
 }
 
 /* ========== 串の設定・連携 ========== */
@@ -1314,85 +1621,74 @@ function renderSetup() {
   if (gc && !gc.value) gc.value = GAS_SRC;
   updateShareStatus();
 
-  const z = readZaiko();
-  const st = document.getElementById('z-status');
-  if (!z) {
-    st.innerHTML = '<span class="warn" style="display:block">zaikoのデータが読めてないさ。同じ端末でzaikoを一度開くか、下の「控え」を取り込んでね。</span>';
-  } else {
-    const prods = zProducts().length, days = Object.keys(zDays()).length;
-    st.innerHTML = `<span class="ok" style="display:block">読み込めたさ（${zaikoIsLive() ? '同じ端末のzaiko' : '控え'}）／商品 ${prods}件・出数の記録 ${days}日</span>`;
+  // POSの出数
+  const ps = document.getElementById('pos-status');
+  if (ps) {
+    if (!salesOk()) ps.innerHTML = '<span class="alert" style="display:block">共通の部品が読めなかったさ。再読み込みしてね。</span>';
+    else {
+      const st = CORE.sales.stats();
+      ps.innerHTML = !st.days
+        ? '<span class="warn" style="display:block">この端末には、まだPOSの出数が無いさ。</span>'
+        : `<span class="ok" style="display:block">この端末の売上履歴：${mdShort(st.entryFrom)}〜${mdShort(st.entryTo)}（${st.days}日・${st.items}品）／` +
+          (KDB.posFrom ? `${mdShort(KDB.posFrom)}から${KDB.posAuto ? '自動で引く <b>ON</b>' : '自動で引くのは止めてる'}` : 'まだ «いつから引くか» を決めてない（出数を反映タブで決めてね）') + '</span>';
+    }
   }
-  const tg = document.getElementById('sync-toggle');
-  if (tg) tg.checked = !!KDB.syncZaiko;
-  const ss = document.getElementById('sync-status');
-  if (ss) ss.innerHTML = zaikoIsLive()
-    ? `この端末のzaikoに書き戻せるさ（自動反映：<b>${KDB.syncZaiko ? 'ON' : 'OFF'}</b>）`
-    : '※いまは同じ端末のzaikoが見つからないさ。zaikoをこの端末で一度ひらいてね';
 
-  // zaikoの材料ジャンルから、まとめて登録するボタン
+  // まとめて登録（原価マスタの分類・zaikoの材料ジャンル）
   const gp = document.getElementById('genre-pick');
   if (gp) {
-    const by = zGenreGroups();
-    const gs = Object.keys(by).sort((a, b) => by[b].length - by[a].length);
+    const by = kushiGroups();
+    const gs = Object.keys(by).sort((a, b) => (/串/.test(b) - /串/.test(a)) || by[b].length - by[a].length);
+    GROUPS = gs;
     gp.innerHTML = gs.length
-      ? '<div class="muted" style="margin-bottom:4px">zaikoの材料ジャンルから、まとめて登録もできるさ：</div>' +
-        gs.map(g => {
+      ? '<div class="muted" style="margin-bottom:4px">原価マスタの分類（ジャンル）から、まとめて登録もできるさ：</div>' +
+        gs.map((g, i) => {
           const total = by[g].length, done = by[g].filter(n => KDB.items[n] != null).length;
-          const q = esc(g).replace(/'/g, "\\'");
-          return `<button class="mini ${done === total ? '' : 'go'}" onclick="addGenreBulk('${q}')">${esc(g)}（${done}/${total}）${done === total ? '✓' : 'をまとめて登録'}</button>`;
+          return `<button class="mini ${done === total ? '' : 'go'}" onclick="addGenreBulk(${i})">${esc(g)}（${done}/${total}）${done === total ? '✓' : 'をまとめて登録'}</button>`;
         }).join(' ')
       : '';
   }
 
-  const prods = zProducts();
+  // 候補のチップ。登録ずみの串は候補に無くても出す（外せるように）
+  const s = new Set(kushiCandidates());
+  Object.keys(KDB.items).forEach(n => s.add(n));
+  const prods = [...s].sort((a, b) => a.localeCompare(b, 'ja'));
   PICK = prods;
   const box = document.getElementById('pick-list');
-  if (!prods.length) { box.innerHTML = '<span class="muted">zaikoの商品が読めないさ。連携できたら、ここに商品が並ぶよ。</span>'; return; }
+  if (!prods.length) { box.innerHTML = '<span class="muted">まだ候補が無いさ。POSを取り込むか、在庫タブの「串を手で追加」で足してね。</span>'; return; }
   box.innerHTML = prods.map((n, i) =>
     `<span class="chip ${KDB.items[n] ? 'on' : ''}" onclick="togglePick(${i})">${KDB.items[n] ? '✓ ' : ''}${esc(n)}</span>`).join('');
 }
+let GROUPS = [];
 function togglePick(i) {
   const n = PICK[i]; if (n == null) return;
-  if (KDB.items[n]) { delete KDB.items[n]; }
-  else { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; }
+  if (KDB.items[n]) {
+    const drop = () => { delete KDB.items[n]; save(); renderSetup(); };
+    if (stockOf(n) > 0) ask(`「${n}」を外すさ？（残り ${fmt(stockOf(n))}本・ロットの記録も消えるよ）`, drop);
+    else drop();
+    return;
+  }
+  KDB.items[n] = newItem();
   save(); renderSetup();
 }
 function autoPickKushi() {
   let added = 0;
-  zProducts().forEach(n => { if (isKushiName(n) && !KDB.items[n]) { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; added++; } });
+  kushiCandidates().forEach(n => { if (isKushiName(n) && !KDB.items[n]) { KDB.items[n] = newItem(); added++; } });
   save(); renderSetup();
   toast(added ? added + '種の串を選んださ（在庫タブで本数・原価を入れてね）' : '「串」がつく新しい商品は無かったさ');
 }
-/* zaikoの材料ジャンル（例：串）の材料を、まとめて串として登録 */
-function addGenreBulk(genre) {
-  const names = zGenreGroups()[genre] || [];
-  if (!names.length) { toast('このジャンルの材料が見つからないさ'); return; }
+/* 原価マスタの分類（例：串焼き）や zaikoのジャンルの商品を、まとめて串として登録 */
+function addGenreBulk(i) {
+  const g = GROUPS[i];
+  const names = (kushiGroups()[g] || []);
+  if (!names.length) { toast('このグループの商品が見つからないさ'); return; }
   let added = 0;
-  names.forEach(n => { if (!KDB.items[n]) { KDB.items[n] = { min: 0, par: 0, per: 1, cost: 0, costMode: 'piece', gPer: 0, gPrice: 0, keep: '', lots: [] }; added++; } });
+  names.forEach(n => { if (!KDB.items[n]) { KDB.items[n] = newItem(); added++; } });
   save(); renderSetup();
-  toast(added ? 'ジャンル「' + genre + '」から ' + added + '種を登録したさ（在庫タブで本数・原価を入れてね）' : 'ジャンル「' + genre + '」は もう全部登録ずみさ');
+  toast(added ? '「' + g + '」から ' + added + '種を登録したさ（在庫タブで本数・原価を入れてね）' : '「' + g + '」は もう全部登録ずみさ');
 }
 function pickAllKushi(on) {
   if (!on) { ask('選んだ串をぜんぶ外すさ？（本数・ロットの記録も消えるよ）', () => { KDB.items = {}; save(); renderSetup(); toast('外したさ'); }); }
-}
-
-/* ---- zaiko控え ---- */
-function refreshZaiko() {
-  renderSetup(); renderLinkBanner();
-  toast(readZaiko() ? 'zaikoを読み直したさ' : 'まだ読めないさ…控えを取り込んでみて');
-}
-function importSnapshot() {
-  let d;
-  try { d = JSON.parse(document.getElementById('snap-box').value); }
-  catch (e) { toast('JSONが読めなかったさ'); return; }
-  if (!d || typeof d !== 'object') { toast('中身が変さ'); return; }
-  localStorage.setItem(SNAP, JSON.stringify(d));
-  document.getElementById('snap-box').value = '';
-  renderSetup(); renderLinkBanner();
-  toast('zaikoの控えを取り込んださ！');
-}
-function clearSnapshot() {
-  ask('取り込んだzaikoの控えを消すさ？', () => { localStorage.removeItem(SNAP); renderSetup(); renderLinkBanner(); toast('消したさ'); });
 }
 
 /* ---- バックアップ ---- */
@@ -1425,6 +1721,25 @@ const _joined = applyJoinHash();   // 参加リンクから開いたら共有URL
 renderShareBar();                  // 全タブ共通の共有ON/OFF表示
 if (shareOn()) { startShareLoop(); pullShared({ force: true }); if (_joined) toast('共有につないださ！みんなの串在庫を読み込むよ🍢'); }   // 起動時：共有先の最新を取得
 READY = true;
+/* まだ引いていないPOSの出数を引く。共有ONのときは、共有から読み込んだあと（pullShared の最後）に引く。
+   先に引くと、読み込みで上書きされて引いたぶんが消えるため */
+if (!shareOn()) autoApply();
+
+/* POSの取り込みは冷凍在庫アプリ（別のタブ）でやる。売上履歴が書きかわったら読み直して引く */
+function salesChanged() {
+  if (!salesOk()) return;
+  CORE.sales.reload();
+  if (KDATA && KDATA.reloadAll) KDATA.reloadAll();
+  autoApply();
+  redrawAll(); refreshOpen();
+}
+window.addEventListener('storage', e => {
+  if (!salesOk()) return;
+  if (e.key === CORE.SALES_KEY || e.key === null) salesChanged();
+  else if (KDATA && (e.key === KDATA.RECIPE_KEY || e.key === KDATA.COST_KEY)) { KDATA.reloadAll(); refreshOpen(); }
+});
+/* ほかのアプリから戻ってきたとき（スマホはタブの切り替えで storage が届かないことがある） */
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') salesChanged(); });
 </script>
 </body>
 </html>
