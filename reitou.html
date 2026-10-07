@@ -152,6 +152,25 @@
   .chips{display:flex;flex-wrap:wrap;gap:8px;}
   .chips button{border:1.5px solid #e2e2e2;background:#fff;border-radius:999px;padding:10px 15px;font-size:14px;font-weight:700;color:#666;}
   .chips button.on{border-color:#e8531f;background:#fff4ef;color:#e8531f;}
+  /* 発注リストの1行 */
+  .orow{display:flex;gap:10px;align-items:flex-start;padding:12px 2px;border-bottom:1px solid #f0f0f0;}
+  .orow:last-of-type{border-bottom:none;}
+  .orow.off{opacity:.42;}
+  .orow .ock{font-size:24px;line-height:1.1;color:#e8531f;background:none;border:none;padding:0 2px;}
+  .orow.off .ock{color:#bbb;}
+  .orow .ob{flex:1;min-width:0;}
+  /* «>» を付けないと、小さい字の中の太字まで行が分かれてしまう */
+  .orow .ob > b{display:block;font-size:17px;font-weight:700;line-height:1.3;word-break:break-word;}
+  .orow .ob small{display:block;font-size:12px;color:#8a8a8a;line-height:1.6;}
+  .oq{display:flex;align-items:center;gap:6px;margin-top:8px;}
+  .oq button{border:1.5px solid #e2e2e2;background:#fff;border-radius:10px;padding:10px 8px;
+             font-size:13px;font-weight:700;color:#555;min-width:46px;}
+  .oq button:active{background:#f1f1f3;}
+  .oq input{width:68px;padding:10px 8px;font-size:19px;font-weight:800;text-align:center;
+            border:1.5px solid #e2e2e2;border-radius:10px;background:#fff;
+            font-variant-numeric:tabular-nums;}
+  .oq .ou{font-size:13px;color:#888;font-weight:700;min-width:26px;}
+
   /* バックアップを «選んで» 戻すときの1行 */
   .bk-row{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;background:#fff;
           border:1.5px solid #ededed;border-radius:14px;padding:13px 14px;margin-bottom:8px;}
@@ -171,7 +190,7 @@
   .toast.show{opacity:.96;}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261005a"></script>
+<script src="site-notice.js?v=20261007a"></script>
 </head>
 <body>
 <div id="app">
@@ -196,9 +215,9 @@
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261005a"></script>
-<script src="kemuri-backup.js?v=20261005a"></script>
-<script src="pos-source.js?v=20261005a"></script>
+<script src="kemuri-core.js?v=20261007a"></script>
+<script src="kemuri-backup.js?v=20261007a"></script>
+<script src="pos-source.js?v=20261007a"></script>
 
 <script>
 /* ============================================================
@@ -249,7 +268,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-10-05a';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-07a';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -280,6 +299,12 @@ function usedCats(){ return CATS.filter(c=>DB.items.some(i=>(i.cat||CAT0)===c.k)
        sup … 仕入先。発注リストをここでまとめる（空なら「仕入先なし」）
        unit… 単位（個・本・kg…）。数字のうしろに出すだけで、計算には使わない
    sups[] … これまでに使った仕入先。入力の候補に出すためだけのもの
+   supCfg … 仕入先ごとの注文のしかた。{ 仕入先名: { how:'line'|'app'|'', url } }
+             how … '' は «まだ決めていない»。画面で選んでもらう
+             url … 専用アプリ業者の注文サイト。入っているときだけボタンを出す
+   orders[] … 発注の記録。{ id, at, sup, date, lines:[{itemId,name,qty,unit,got}] }
+             got … そのうち入荷ずみの数。qty-got が «未入荷»。
+             発注しても在庫は増やさない（増えるのは入荷を記録したとき）
    map   … POS商品名(正規化) -> { item:itemId | '__skip__', label:表示名 }
    seen  … 取込済み売上行のキー（同じ売上を二重で引かないため）
    history[] … { at, name, before, after, reason }
@@ -287,7 +312,7 @@ function usedCats(){ return CATS.filter(c=>DB.items.some(i=>(i.cat||CAT0)===c.k)
 */
 function blank(){
   return { v:1, seq:1, items:[], map:{}, seen:{}, applied:{}, history:[], imports:[],
-           csvMap:null, ordered:{}, sups:[],
+           csvMap:null, ordered:{}, sups:[], supCfg:{}, orders:[],
            /* last … «前に追加したときに選んだもの»。品目をまとめて登録するとき、
               ドリンクを10品続けて入れるのに毎回選び直さずに済むように覚えておく。 */
            last:{ cat:CAT0, sup:'', unit:'個' } };
@@ -323,6 +348,8 @@ function migrate(d){
     if(!it.unit){ it.unit = '個'; changed = true; }
   });
   if(!Array.isArray(d.sups)){ d.sups = []; changed = true; }
+  if(!d.supCfg || typeof d.supCfg !== 'object'){ d.supCfg = {}; changed = true; }
+  if(!Array.isArray(d.orders)){ d.orders = []; changed = true; }
   if(!d.last || !d.last.cat){ d.last = { cat:CAT0, sup:'', unit:'個' }; changed = true; }
   if(changed){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} }
   return d;
@@ -624,71 +651,345 @@ function adjSave(){
 /* ---------- ② 発注リスト ---------- */
 /* 仕入先ごとにまとめる。仕入先が1つも入っていないうちは分類でまとめ、
    それも1つだけなら «まとめない»（冷凍しか無いいまの状態の見た目を変えないため）。 */
-function orderGroups(list){
-  if(list.some(i=>i.sup)){
-    const by = {};
-    list.forEach(i=>{ const k = i.sup || ''; (by[k] = by[k] || []).push(i); });
-    return Object.keys(by).sort((a,b)=>(a?0:1)-(b?0:1) || a.localeCompare(b,'ja'))
-             .map(k=>({ key:'sup:'+k, label:k || '仕入先なし', items:by[k] }));
-  }
-  const cats = CATS.filter(c=>list.some(i=>(i.cat||CAT0)===c.k));
-  if(cats.length <= 1) return [{ key:'all', label:'', items:list }];
-  return cats.map(c=>({ key:'cat:'+c.k, label:c.ic+' '+c.name,
-                        items:list.filter(i=>(i.cat||CAT0)===c.k) }));
-}
-function viewOrder(){
-  const list = needList().sort((a,b)=>(a.stock-a.min)-(b.stock-b.min));
-  if(!list.length){
-    return '<div class="pad"><div class="summary ok"><div class="big">OK</div>'
-      + '<div class="lab">発注が必要な商品はありません</div></div></div>';
-  }
-  let h = '<div class="pad">';
-  h += '<div class="muted" style="margin-bottom:12px">発注ライン以下の '+list.length+' 商品です。発注したらタップしてチェック。</div>';
+/* ============================================================
+   業者別の発注
+   ------------------------------------------------------------
+   仕入先ごとに «注文のしかた» を持たせ、不足している商品だけを
+   まとめて出す。LINEの業者には注文文を作り、専用アプリの業者には
+   手で打ち込みやすい一覧を出す。
+   ・発注数量は不足量と別に持つ。既定は不足量だが、画面で変えられる
+   ・発注単位や入数は登録していないので、袋やケースへの換算はしない
+   ・発注しても在庫は増やさない。増えるのは入荷を記録したとき
+   ============================================================ */
+const SHOP = '串焼KEMURI屋';
+const NOSUP = '\u0001nosup';                 /* 仕入先が空の商品をまとめるための内部キー */
 
-  orderGroups(list).forEach(g=>{
-    const yet  = g.items.filter(i=>!DB.ordered[i.id]);
-    const done = g.items.filter(i=>DB.ordered[i.id]);
-    if(g.label){
-      h += '<div class="cath">'+esc(g.label)+'<span>'+g.items.length+'品'
-         + (done.length? '　済 '+done.length : '')+'</span></div>';
-    }
-    if(yet.length){
-      if(!g.label || done.length) h += '<div class="sec">これから発注（'+yet.length+'）</div>';
-      yet.forEach(it=>{
-        h += '<button class="chk" onclick="toggleOrder('+it.id+')">'
-           +  '<span class="box"></span><span class="nm">'+esc(it.name)+'</span>'
-           +  '<span class="now">残 '+it.stock+(it.unit&&it.unit!=='個'?it.unit:'')+' / ライン '+it.min+'</span></button>';
-      });
-    }
-    if(done.length){
-      h += '<div class="sec">発注済み（'+done.length+'）　届いたら「入荷」</div>';
-      done.forEach(it=>{
-        h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:9px">'
-           +  '<button class="chk on" style="margin:0;flex:1" onclick="toggleOrder('+it.id+')">'
-           +    '<span class="box">✓</span><span class="nm">'+esc(it.name)+'</span></button>'
-           +  '<button class="btn btn-primary btn-sm" onclick="openArriveOne('+it.id+')">入荷</button>'
-           + '</div>';
-      });
-    }
-  });
-  h += '<button class="btn btn-out gap" onclick="copyOrder()">発注リストをコピー（LINE用）</button>';
+/* 数量の表示。0.1きざみで丸めて、1.0 → 1 のように整える。
+   2.2000000000000002 のような浮動小数のゴミを画面に出さないため。 */
+function fmtQ(n){ return String(q1(n)); }
+function unitOf(it){ return it.unit || '個'; }
+function qu(n, it){ return fmtQ(n) + unitOf(it); }
+
+function supName(key){ return key === NOSUP ? '仕入先なし' : key; }
+function supCfg(key){
+  const c = (DB.supCfg || {})[key];
+  return { how:(c && c.how) || '', url:(c && c.url) || '' };
+}
+function setSupHow(key, how){
+  DB.supCfg = DB.supCfg || {};
+  const c = DB.supCfg[key] = DB.supCfg[key] || { how:'', url:'' };
+  c.how = how; save(); render();
+}
+function askSupUrl(key){
+  const c = supCfg(key);
+  const v = prompt('注文サイトのURL（空にすると消します）', c.url || '');
+  if(v === null) return;                      /* やめた */
+  DB.supCfg[key] = DB.supCfg[key] || { how:'app', url:'' };
+  DB.supCfg[key].url = String(v).trim();
+  save(); render();
+  toast(DB.supCfg[key].url ? 'URLを保存しました' : 'URLを消しました');
+}
+
+/* その商品の «発注したがまだ届いていない» 数 */
+function pendingOf(itemId){
+  let n = 0;
+  (DB.orders || []).forEach(o=>o.lines.forEach(l=>{
+    if(l.itemId === itemId) n += Math.max(0, num(l.qty) - num(l.got));
+  }));
+  return q1(n);
+}
+/* 入荷したぶんを «未入荷» から古い順に消していく。
+   発注の記録と実際の入荷をつなぐのはここだけ。 */
+function fillPending(itemId, qty){
+  let rest = q1(qty);
+  const list = (DB.orders || []).slice().sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+  list.forEach(o=>o.lines.forEach(l=>{
+    if(rest <= 0 || l.itemId !== itemId) return;
+    const left = Math.max(0, num(l.qty) - num(l.got));
+    if(left <= 0) return;
+    const take = Math.min(left, rest);
+    l.got = q1(num(l.got) + take);
+    rest = q1(rest - take);
+  }));
+  /* 全部届いた商品は「発注済み」の印を外す */
+  if(pendingOf(itemId) <= 0) delete DB.ordered[itemId];
+}
+
+/* 不足している商品を仕入先ごとにまとめる */
+function needBySup(){
+  const by = {};
+  needList().forEach(i=>{ const k = i.sup || NOSUP; (by[k] = by[k] || []).push(i); });
+  return Object.keys(by).sort((a,b)=>(a===NOSUP?1:0)-(b===NOSUP?1:0) || a.localeCompare(b,'ja'))
+           .map(k=>({ key:k, items:by[k].sort((a,b)=>(a.stock-a.min)-(b.stock-b.min)) }));
+}
+/* 不足量 … 発注ラインまで戻すのに要る数。ちょうどラインなら 0 */
+function shortOf(it){ return q1(Math.max(0, num(it.min) - num(it.stock))); }
+
+/* 画面で触っているぶん（発注数量と、外した商品）。保存はしない */
+let ORD = { qty:{}, off:{}, date:'', sheet:null, text:'', chk:{} };
+function ordQty(it){
+  const v = ORD.qty[it.id];
+  return v == null ? shortOf(it) : q1(v);
+}
+function ordOn(it){ return !ORD.off[it.id] && ordQty(it) > 0; }
+function ordSetQty(id, v){
+  const it = item(id); if(!it) return;
+  ORD.qty[id] = Math.max(0, q1(num(v)));
+  paintOrdRow(id);
+}
+function ordStep(id, d){
+  const it = item(id); if(!it) return;
+  ORD.qty[id] = Math.max(0, q1(ordQty(it) + d));
+  paintOrdRow(id);
+}
+function ordToggle(id){
+  if(ORD.off[id]) delete ORD.off[id]; else ORD.off[id] = 1;
+  render();
+}
+/* 行だけ描き直す（画面ごと作り直すと入力中の値が飛ぶため） */
+function paintOrdRow(id){
+  const it = item(id); if(!it) return;
+  const v = document.getElementById('oq-'+id);
+  if(v) v.value = fmtQ(ordQty(it));
+  const row = document.getElementById('or-'+id);
+  if(row) row.classList.toggle('off', !ordOn(it));
+}
+/* 注文する商品だけ。数量0と、外したものは入れない */
+function ordLines(key){
+  const g = needBySup().find(x=>x.key === key);
+  if(!g) return [];
+  return g.items.filter(ordOn).map(it=>({ it, qty:ordQty(it) }));
+}
+
+/* 注文文。業者ごとに、その業者の商品だけで作る */
+function ordText(key){
+  const lines = ordLines(key);
+  const nm = key === NOSUP ? '' : key;
+  let t = (nm ? nm + '様\n' : '')
+        + 'お世話になっております。' + SHOP + 'です。\n'
+        + '下記の注文をお願いします。\n\n'
+        + lines.map(l=>'・' + l.it.name + '　' + qu(l.qty, l.it)).join('\n');
+  if(ORD.date) t += '\n\n希望納品日：' + fmtDate(ORD.date);
+  t += '\n\nよろしくお願いいたします。';
+  return t;
+}
+/* 専用アプリ業者に出す、打ち込み用の一覧 */
+function ordListText(key){
+  return ordLines(key).map(l=>l.it.name + '　' + qu(l.qty, l.it)).join('\n');
+}
+function fmtDate(iso){
+  const m = String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return String(iso||'');
+  const d = new Date(iso+'T00:00:00');
+  const w = isNaN(d) ? '' : '（'+DOW[d.getDay()]+'）';
+  return (+m[2]) + '月' + (+m[3]) + '日' + w;
+}
+const DOW = ['日','月','火','水','木','金','土'];
+
+function viewOrder(){
+  const groups = needBySup();
+  if(!groups.length){
+    return '<div class="pad"><div class="summary ok"><div class="big">OK</div>'
+      + '<div class="lab">発注が必要な商品はありません</div></div>'
+      + ordPendingCard() + '</div>';
+  }
+  const n = groups.reduce((a,g)=>a+g.items.length, 0);
+  let h = '<div class="pad">';
+  h += '<div class="muted" style="margin-bottom:12px">発注ライン以下の <b>'+n+'商品</b>です。'
+     + '仕入先ごとに注文できます。</div>';
+  groups.forEach(g=>{ h += ordCard(g); });
+  h += ordPendingCard();
   h += '</div>';
   return h;
 }
-function toggleOrder(id){
-  if(DB.ordered[id]) delete DB.ordered[id]; else DB.ordered[id] = nowISO();
-  save(); render();
+
+/* 仕入先1つぶんのカード */
+function ordCard(g){
+  const key = g.key, cfg = supCfg(key);
+  const on = g.items.filter(ordOn).length;
+  let h = '<div class="card gap" style="padding:14px 12px">'
+        + '<div class="cath" style="margin:0 2px 10px">'
+        + '<b style="font-size:18px;color:#222">'+esc(supName(key))+'</b>'
+        + '<span>'+(cfg.how==='line' ? 'LINEで注文' : cfg.how==='app' ? '専用アプリ' : '注文方法が未設定')+'</span></div>';
+
+  g.items.forEach(it=>{ h += ordRow(it); });
+
+  if(!cfg.how){
+    h += '<div class="warn gap">この仕入先の注文方法がまだ決まっていません。</div>'
+       + '<div class="two"><button class="btn btn-dark" onclick="setSupHow(\'' + esc(key).replace(/'/g,"\\'") + '\',\'line\')">LINEで注文</button>'
+       + '<button class="btn btn-gray" onclick="setSupHow(\'' + esc(key).replace(/'/g,"\\'") + '\',\'app\')">専用アプリ</button></div>'
+       + '</div>';
+    return h;
+  }
+
+  const k = esc(key).replace(/'/g,"\\'");
+  if(cfg.how === 'line'){
+    h += '<label class="lab">希望納品日（入れなければ書きません）</label>'
+       + '<input class="txt" type="date" value="'+esc(ORD.date)+'" onchange="ORD.date=this.value">'
+       + '<button class="btn btn-primary gap" ' + (on?'':'disabled') + ' onclick="ordOpenLine(\''+k+'\')">'
+       +   '📱 注文文をつくる（' + on + '品）</button>';
+  }else{
+    h += '<button class="btn btn-primary gap" ' + (on?'':'disabled') + ' onclick="ordOpenApp(\''+k+'\')">'
+       +   '📋 注文リストを見る（' + on + '品）</button>'
+       + '<button class="btn btn-out gap" ' + (on?'':'disabled') + ' onclick="ordCopy(\''+k+'\',1)">注文リストをコピー</button>'
+       + (cfg.url
+          ? '<a class="btn btn-dark gap" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(cfg.url)+'">🌐 注文サイトを開く</a>'
+          : '');
+  }
+  h += '<div class="two"><button class="btn btn-gray btn-sm" onclick="ordSetup(\''+k+'\')">⚙️ 注文方法</button>'
+     + '<button class="btn btn-out" ' + (on?'':'disabled') + ' onclick="ordDone(\''+k+'\')">✅ 発注済みにする</button></div>';
+  h += '</div>';
+  return h;
 }
-function copyOrder(){
-  /* 仕入先ごとに分けて書き出す。LINEで業者別にそのまま送れるように。 */
-  const gs = orderGroups(needList().sort((a,b)=>(a.stock-a.min)-(b.stock-b.min)));
-  const body = i=>'・'+i.name+'（残'+i.stock+(i.unit&&i.unit!=='個'?i.unit:'')+'）';
-  const txt = gs.length===1 && !gs[0].label
-    ? '【冷凍 発注】\n' + gs[0].items.map(body).join('\n')
-    : gs.map(g=>'【'+g.label+' 発注】\n' + g.items.map(body).join('\n')).join('\n\n');
-  navigator.clipboard ? navigator.clipboard.writeText(txt).then(()=>toast('コピーしました'), ()=>toast('コピーできんかった'))
-                      : toast('コピーできんかった');
+
+/* 1商品の行。チェック・不足・発注数量 */
+function ordRow(it){
+  const sh = shortOf(it), q = ordQty(it), pend = pendingOf(it.id);
+  const u = unitOf(it);
+  return '<div class="orow'+(ordOn(it)?'':' off')+'" id="or-'+it.id+'">'
+    + '<button class="ock" onclick="ordToggle('+it.id+')">'+(ordOn(it)?'☑':'☐')+'</button>'
+    + '<div class="ob">'
+    +   '<b>'+esc(it.name)+'</b>'
+    +   '<small>現在庫 '+fmtQ(it.stock)+u+'　／　不足 '
+    +     (sh>0 ? '<b style="color:#c0392b">'+fmtQ(sh)+u+'</b>'
+                : '0'+u+'（発注ラインちょうど）') + '</small>'
+    +   (pend>0 ? '<small style="color:#c07d00;font-weight:700">⚠️ 未入荷の発注が '+fmtQ(pend)+u+' あります</small>' : '')
+    +   '<div class="oq">'
+    +     '<button onclick="ordStep('+it.id+',-0.1)">−0.1</button>'
+    +     '<button onclick="ordStep('+it.id+',-1)">−1</button>'
+    +     '<input id="oq-'+it.id+'" type="text" inputmode="decimal" value="'+fmtQ(q)+'" '
+    +       'onchange="ordSetQty('+it.id+',this.value)">'
+    +     '<span class="ou">'+esc(u)+'</span>'
+    +     '<button onclick="ordStep('+it.id+',1)">＋1</button>'
+    +     '<button onclick="ordStep('+it.id+',0.1)">＋0.1</button>'
+    +   '</div>'
+    + '</div></div>';
 }
+
+/* 未入荷の発注。二重発注に気づけるように、発注タブの下にいつも出す */
+function ordPendingCard(){
+  const rows = [];
+  DB.items.forEach(it=>{ const p = pendingOf(it.id); if(p>0) rows.push({ it, p }); });
+  if(!rows.length) return '';
+  let h = '<div class="card gap"><h2>未入荷の発注（'+rows.length+'）</h2>'
+        + '<div class="muted">発注したが、まだ入荷を記録していないぶんです。'
+        + '届いたら「🚚入荷」で数を入れてください。</div><div class="gap">';
+  rows.forEach(r=>{
+    h += '<div class="hist"><span class="n">'+esc(r.it.name)+'</span>'
+       + '<span class="r">'+fmtQ(r.p)+unitOf(r.it)+'</span></div>';
+  });
+  h += '</div></div>';
+  return h;
+}
+
+/* ---------- 注文方法の設定 ---------- */
+function ordSetup(key){
+  const cfg = supCfg(key), k = esc(key).replace(/'/g,"\\'");
+  openSheet('<h3>'+esc(supName(key))+'</h3><div class="sh-sub">注文のしかた</div>'
+    + '<div class="chips" style="justify-content:center;margin-bottom:14px">'
+    +   '<button class="'+(cfg.how==='line'?'on':'')+'" onclick="setSupHow(\''+k+'\',\'line\');ordSetup(\''+k+'\')">LINEで注文</button>'
+    +   '<button class="'+(cfg.how==='app'?'on':'')+'" onclick="setSupHow(\''+k+'\',\'app\');ordSetup(\''+k+'\')">専用アプリ</button>'
+    + '</div>'
+    + (cfg.how==='app'
+       ? '<label class="lab">注文サイトのURL（任意）</label>'
+         + '<div class="muted" style="margin-bottom:8px">入れておくと「注文サイトを開く」が出ます。'
+         + 'アプリの起動はこちらでは分からないので、ブラウザで開くだけです。</div>'
+         + '<div class="hist"><span class="n">'+(cfg.url? esc(cfg.url) : '未登録')+'</span>'
+         + '<button class="btn btn-gray btn-sm" onclick="askSupUrl(\''+k+'\')">変える</button></div>'
+       : '')
+    + '<button class="btn btn-gray gap" onclick="closeSheet()">閉じる</button>');
+}
+
+/* ---------- LINEの業者 ---------- */
+function ordOpenLine(key){
+  ORD.sheet = key; ORD.text = ordText(key);
+  drawOrdLine();
+}
+function drawOrdLine(){
+  const key = ORD.sheet, k = esc(key).replace(/'/g,"\\'");
+  openSheet('<h3>'+esc(supName(key))+' への注文</h3>'
+    + '<div class="sh-sub">送る前に直せます</div>'
+    + '<textarea id="ord-t" style="min-height:220px" onchange="ORD.text=this.value">'+esc(ORD.text)+'</textarea>'
+    + '<button class="btn btn-primary gap" onclick="ordShareLine()">📱 LINEで送る</button>'
+    + '<div class="muted gap">LINEが開いて、送り先を自分で選ぶ形です。'
+    + '送る相手はこちらでは指定できません。</div>'
+    + '<button class="btn btn-out gap" onclick="ordCopy(\''+k+'\')">📋 注文文をコピー</button>'
+    + '<button class="btn btn-gray gap" onclick="closeSheet()">閉じる</button>');
+}
+/* LINEの公式なURLスキーム。開くとLINEが «誰に送るか» を聞いてくる。
+   https://developers.line.biz/ja/docs/messaging-api/using-line-url-scheme/ */
+function ordShareLine(){
+  const el = document.getElementById('ord-t');
+  if(el) ORD.text = el.value;
+  const t = String(ORD.text || '').trim();
+  if(!t){ toast('注文文が空です'); return; }
+  try{
+    window.location.href = 'https://line.me/R/share?text=' + encodeURIComponent(t);
+  }catch(e){
+    toast('LINEを開けませんでした。「注文文をコピー」を使ってください');
+  }
+}
+
+/* ---------- 専用アプリの業者 ---------- */
+function ordOpenApp(key){
+  ORD.sheet = key; ORD.chk = {};
+  drawOrdApp();
+}
+function ordChk(id){ if(ORD.chk[id]) delete ORD.chk[id]; else ORD.chk[id] = 1; drawOrdApp(); }
+function drawOrdApp(){
+  const key = ORD.sheet, k = esc(key).replace(/'/g,"\\'"), cfg = supCfg(key);
+  const lines = ordLines(key);
+  const n = lines.filter(l=>ORD.chk[l.it.id]).length;
+  let h = '<h3>'+esc(supName(key))+' への注文</h3>'
+        + '<div class="sh-sub">専用アプリに打ち込みながら確認してください（'+n+'/'+lines.length+'）</div>';
+  lines.forEach(l=>{
+    h += '<button class="chk'+(ORD.chk[l.it.id]?' on':'')+'" onclick="ordChk('+l.it.id+')">'
+       +  '<span class="box">'+(ORD.chk[l.it.id]?'✓':'')+'</span>'
+       +  '<span class="nm">'+esc(l.it.name)+'</span>'
+       +  '<span class="now">'+qu(l.qty, l.it)+'</span></button>';
+  });
+  h += '<button class="btn btn-out gap" onclick="ordCopy(\''+k+'\',1)">📋 注文リストをコピー</button>'
+     + (cfg.url ? '<a class="btn btn-dark gap" style="text-decoration:none" target="_blank" rel="noopener" href="'+esc(cfg.url)+'">🌐 注文サイトを開く</a>' : '')
+     + '<div class="muted gap">専用アプリへの自動入力はできません。'
+     + 'コピーした一覧を見ながら打ち込んでください。</div>'
+     + '<button class="btn btn-gray gap" onclick="closeSheet()">閉じる</button>';
+  openSheet(h);
+}
+
+/* ---------- コピー ---------- */
+async function ordCopy(key, listOnly){
+  const t = listOnly ? ordListText(key) : (ORD.sheet === key && ORD.text ? ORD.text : ordText(key));
+  if(!t.trim()){ toast('注文するものがありません'); return; }
+  try{
+    if(!navigator.clipboard) throw new Error('no clipboard');
+    await navigator.clipboard.writeText(t);
+    toast('コピーしました');
+  }catch(e){
+    /* コピーできない端末・場面がある。そのときは枠に出して、長押しで取れるようにする */
+    openSheet('<h3>コピーできませんでした</h3>'
+      + '<div class="sh-sub">下の枠を長押しして、すべて選択してコピーしてください</div>'
+      + '<textarea style="min-height:240px">'+esc(t)+'</textarea>'
+      + '<button class="btn btn-gray gap" onclick="closeSheet()">閉じる</button>');
+  }
+}
+
+/* ---------- 発注済みにする ---------- */
+function ordDone(key){
+  const lines = ordLines(key);
+  if(!lines.length){ toast('注文する商品がありません'); return; }
+  const body = lines.map(l=>'・'+l.it.name+'　'+qu(l.qty, l.it)).join('\n');
+  if(!confirm(supName(key)+' に発注したことを記録します。\n\n'+body
+            + '\n\n※ 在庫は増えません。届いたら「🚚入荷」で数を入れてください。')) return;
+  const rec = { id: DB.seq++, at: nowISO(), sup: key, date: ORD.date || '',
+                lines: lines.map(l=>({ itemId:l.it.id, name:l.it.name,
+                                       qty:q1(l.qty), unit:unitOf(l.it), got:0 })) };
+  DB.orders.unshift(rec);
+  if(DB.orders.length > 200) DB.orders.length = 200;
+  lines.forEach(l=>{ DB.ordered[l.it.id] = rec.at; delete ORD.qty[l.it.id]; });
+  save(); closeSheet(); render();
+  toast(lines.length + '商品を発注済みにしました');
+}
+
 function openArriveOne(id){
   const it = item(id);
   ADJ = { id, val:0 };
@@ -701,7 +1002,7 @@ function openArriveOne(id){
 function arrStep(d){ ADJ.val = Math.max(0, ADJ.val + d); document.getElementById('arr-v').textContent = ADJ.val; }
 function arrSave(){
   const it = item(ADJ.id);
-  if(ADJ.val>0){ move(it, it.stock + ADJ.val, '入荷'); delete DB.ordered[it.id]; save(); toast(it.name+' +'+ADJ.val); }
+  if(ADJ.val>0){ move(it, it.stock + ADJ.val, '入荷'); fillPending(it.id, ADJ.val); save(); toast(it.name+' +'+fmtQ(ADJ.val)); }
   closeSheet(); render();
 }
 
@@ -765,7 +1066,7 @@ function arrQ(id,d){ ARR.qty[id] = Math.max(0, q1(arrVal(id) + d)); paintArr(id)
 function arrQset(id,v){ ARR.qty[id] = Math.max(0, q1(num(v))); paintArr(id); }
 function arrCommit(){
   let n=0;
-  DB.items.forEach(it=>{ const q = ARR.qty[it.id]||0; if(q>0){ move(it, it.stock+q, '入荷'); delete DB.ordered[it.id]; n++; } });
+  DB.items.forEach(it=>{ const q = ARR.qty[it.id]||0; if(q>0){ move(it, it.stock+q, '入荷'); fillPending(it.id, q); n++; } });
   ARR.qty = {}; save(); render(); toast(n+'商品を入荷しました');
 }
 function countCommit(){
@@ -1303,6 +1604,21 @@ function viewSet(){
      + '<button class="btn btn-out gap" onclick="openBulk()">📋 リストからまとめて登録</button></div>';
 
   h += viewMap();
+
+  /* 発注の記録。いつ・どこに・何を頼んだかを後から見られるように */
+  h += '<div class="card"><h2>発注の履歴（'+(DB.orders||[]).length+'）</h2>';
+  if(!(DB.orders||[]).length) h += '<div class="muted">まだありません。</div>';
+  (DB.orders||[]).slice(0,20).forEach(o=>{
+    const left = o.lines.reduce((a,l)=>a + Math.max(0, num(l.qty)-num(l.got)), 0);
+    h += '<div class="hist" style="align-items:flex-start">'
+       + '<span class="t">'+fmtDT(o.at)+'</span>'
+       + '<span class="n">'+esc(supName(o.sup))+'<br>'
+       +   '<small style="color:#aaa;font-size:11px">'
+       +     o.lines.map(l=>esc(l.name)+' '+fmtQ(l.qty)+esc(l.unit)).join('／')
+       +   '</small></span>'
+       + '<span class="r">'+(left>0 ? '未入荷 '+fmtQ(left) : '入荷ずみ')+'</span></div>';
+  });
+  h += '</div>';
 
   h += '<div class="card"><h2>取込履歴</h2>';
   if(!DB.imports.length) h += '<div class="muted">まだありません。</div>';
@@ -1959,6 +2275,8 @@ document.addEventListener('focusout', ()=>{
     if(it.stock==null) it.stock = 0;
   });
   if(!DB.ordered) DB.ordered = {};
+  if(!DB.supCfg) DB.supCfg = {};
+  if(!Array.isArray(DB.orders)) DB.orders = [];
   if(!DB.applied) DB.applied = {};
   if(!DB.posSeeded){ applySeedPos(DB); DB.posSeeded = 1; }
   /* 「うまれば」→「馬レバ刺し」に名前変更、「鶏はらみ」を追加（すでに使っている端末ぶん） */
