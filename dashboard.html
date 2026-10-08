@@ -127,7 +127,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261007a"></script>
+<script src="site-notice.js?v=20261008a"></script>
 </head>
 <body>
 <div id="app">
@@ -143,10 +143,10 @@
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js?v=20261007a"></script>
-<script src="kemuri-backup.js?v=20261007a"></script>
-<script src="pos-source.js?v=20261007a"></script>
-<script src="kemuri-data.js?v=20261007a"></script>
+<script src="kemuri-core.js?v=20261008a"></script>
+<script src="kemuri-backup.js?v=20261008a"></script>
+<script src="pos-source.js?v=20261008a"></script>
+<script src="kemuri-data.js?v=20261008a"></script>
 
 <script>
 "use strict";
@@ -167,7 +167,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-const HTML_BUILD = '2026-10-07a';   /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-08a';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果

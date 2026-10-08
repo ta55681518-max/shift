@@ -77,6 +77,7 @@
   .opt input{width:22px;height:22px;flex:none;accent-color:#e8531f;}
   .gap{margin-top:10px;}
   .warn{background:#fff8e6;border:1.5px solid #ffe0a3;border-radius:14px;padding:12px 14px;font-size:14px;color:#8a6100;line-height:1.6;}
+  .ok-box{background:#eafaf1;border:1.5px solid #b9ebd0;border-radius:14px;padding:12px 14px;font-size:14px;color:#0a7a44;line-height:1.6;}
   .info{background:#f4f7ff;border:1.5px solid #d8e3ff;border-radius:14px;padding:12px 14px;font-size:14px;color:#3a4d8f;line-height:1.6;}
 
   /* 発注チェックリスト */
@@ -190,7 +191,7 @@
   .toast.show{opacity:.96;}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261007a"></script>
+<script src="site-notice.js?v=20261008a"></script>
 </head>
 <body>
 <div id="app">
@@ -213,11 +214,14 @@
 
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
+<input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261007a"></script>
-<script src="kemuri-backup.js?v=20261007a"></script>
-<script src="pos-source.js?v=20261007a"></script>
+<script src="kemuri-core.js?v=20261008a"></script>
+<script src="kemuri-backup.js?v=20261008a"></script>
+<script src="pos-source.js?v=20261008a"></script>
+<!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
+<script src="kemuri-data.js?v=20261008a"></script>
 
 <script>
 /* ============================================================
@@ -268,7 +272,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-10-07a';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-08a';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -1154,6 +1158,131 @@ function dailyWarnBox(){
        + '<br><br>日別の売上は、<b>ダッシュボードの📊売上タブ</b>で取り込んでください。'
        + '<br><a href="dashboard.html" style="color:#8a6100;font-weight:700">ダッシュボードをひらく →</a></div>';
 }
+/* ============================================================
+   日別の売上（総売上・客数）
+   ------------------------------------------------------------
+   商品別とは別のCSV。曜日ごとの忙しさを出すのに使う。
+   いままでダッシュボード側にしか入口が無く、ふだん使っている
+   このアプリからは取り込めなかった。
+   期間ぶんが1枚に入っているCSVも、1日1枚のCSVを何枚もまとめても
+   取り込めるようにする（POSによってどちらで出るか違うため）。
+   ============================================================ */
+let DAY = { open:false, text:'', res:null, err:'', files:[] };
+
+function viewDaily(){
+  const st = (window.KemuriData ? KemuriData.daily.stats() : { days:0 });
+  let h = '<div class="card gap"><h2>📅 日別の売上（総売上・客数）</h2>'
+        + '<div class="muted">POSの「日別集計」CSVです。商品名は入っていなくて大丈夫。'
+        + '<b>曜日ごとの忙しさ</b>を出すのに使います。在庫は動きません。</div>'
+        + '<div class="hist gap"><span class="n">たまっているぶん</span>'
+        +   '<span class="r">'+(st.days ? st.days+'日ぶん（'+esc(st.from)+'〜'+esc(st.to)+'）' : 'まだありません')+'</span></div>';
+
+  if(!DAY.open){
+    h += '<button class="btn btn-dark gap" onclick="DAY.open=true;render()">'
+       + (st.days ? '追加で取り込む' : '日別売上CSVを取り込む') + '</button></div>';
+    return h;
+  }
+
+  h += '<label class="file-btn gap" for="dayfile">📄 CSVファイルを選ぶ（何枚でも）</label>'
+     + '<div class="muted gap">期間ぶんが1枚に入っていても、1日1枚を何枚選んでも大丈夫です。'
+     + '文字コード（Shift_JIS／UTF-8）は自動で判定します。'
+     + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
+  if(DAY.files.length){
+    h += '<div class="muted gap">読んだファイル：'+DAY.files.map(esc).join('、')+'</div>';
+  }
+  h += '<div class="muted" style="font-weight:700;margin-bottom:6px">うまくいかないときは貼り付け</div>'
+     + '<textarea id="dcsv" placeholder="日付,天気,総売上(税抜),総売上(税込),客計,客単価,組計,組単価&#10;01月05日(月),,93897,103220,13,7940,12,8602">'
+     + esc(DAY.text) + '</textarea>'
+     + '<button class="btn btn-gray gap" onclick="readDailyCsv()">貼り付けた日別売上を読み取る</button>';
+
+  if(DAY.err) h += '<div class="warn gap">'+DAY.err+'</div>';
+  if(DAY.res && DAY.res.rows.length){
+    const r = DAY.res;
+    h += '<div class="ok-box gap">'+r.rows.length+'日ぶん読み取りました（'+esc(r.from)+' 〜 '+esc(r.to)+'）。</div>';
+    if(r.year){
+      h += '<div class="muted gap">年が書かれていないので <b>'+r.year+'年</b> として読みました'
+         + ((r.matched != null && r.checked) ? '（'+r.matched+'/'+r.checked+'日ぶんの曜日が一致）' : '')
+         + '。ちがうときは貼り付けで直してください。</div>';
+    }
+    h += '<div class="gap">' + r.rows.slice(0,5).map(x=>
+          '<div class="hist"><span class="t">'+esc(x.day)+'</span>'
+          + '<span class="n">'+(x.guests?x.guests+'人':'')+'</span>'
+          + '<span class="r">'+Math.round(num(x.gross)).toLocaleString('ja-JP')+'円</span></div>').join('')
+       + (r.rows.length>5 ? '<div class="muted">ほか '+(r.rows.length-5)+'日ぶん</div>' : '')
+       + '</div>'
+       + '<button class="btn btn-primary gap" onclick="saveDailyCsv()">'+r.rows.length+'日ぶんを登録する</button>';
+  }
+  h += '<button class="btn btn-gray gap" onclick="DAY={open:false,text:\'\',res:null,err:\'\',files:[]};render()">やめる</button>';
+  h += '</div>';
+  return h;
+}
+
+/* ファイルから読む。何枚でもまとめて読み、日付でひとつにする */
+async function onPickDaily(el){
+  const fs = [].slice.call(el.files || []); el.value = '';
+  if(!fs.length) return;
+  DAY.open = true; DAY.err = ''; DAY.res = null; DAY.files = [];
+  const rows = {}, bad = [];
+  let any = null;
+  for(const f of fs){
+    let text = '';
+    try{ text = await KemuriPos.decodeFile(f); }
+    catch(e){ bad.push(f.name + '（読めません）'); continue; }
+    if(text.slice(0,2) === 'PK'){ bad.push(f.name + '（エクセル形式）'); continue; }
+    let r = null;
+    try{ r = KemuriData.dailyFromCsv(text); }catch(e){}
+    if(!r || !r.headerFound || !r.rows.length){ bad.push(f.name + '（日別の売上表として読めません）'); continue; }
+    DAY.files.push(f.name);
+    if(fs.length === 1) DAY.text = text;        /* 1枚なら枠にも出して、何を読んだか見えるように */
+    /* 同じ日が何枚かに出てきたら、あとから読んだほうを採る */
+    r.rows.forEach(x=>{ rows[x.day] = x; });
+    any = any || r;
+  }
+  const list = Object.keys(rows).sort().map(d=>rows[d]);
+  if(!list.length){
+    DAY.err = bad.length ? ('取り込めませんでした：<br>'+bad.map(esc).join('<br>'))
+                         : '日別の売上表として読めませんでした。「日付」と「総売上」または「客計」の列があるCSVを選んでください。'
+                         + '（商品名と出数が並んでいるCSVは、上の「商品別」のほうで取り込みます）';
+    render(); return;
+  }
+  /* 曜日の一致は «何枚目の» 話なのか分からなくなるので、何枚も読んだときは出さない。
+     年の推測だけは、ずれていると全部ずれるので必ず知らせる。 */
+  DAY.res = { rows:list, from:list[0].day, to:list[list.length-1].day,
+              year:(any && any.yearGuessed) ? any.year : null,
+              matched:(DAY.files.length===1 && any) ? any.matched : null,
+              checked:(DAY.files.length===1 && any) ? any.checked : null };
+  if(bad.length) DAY.err = '読めなかったファイル：<br>' + bad.map(esc).join('<br>');
+  render();
+}
+/* 貼り付けから読む */
+function readDailyCsv(){
+  const el = document.getElementById('dcsv');
+  DAY.text = el ? el.value : '';
+  DAY.err = ''; DAY.res = null; DAY.files = [];
+  if(!DAY.text.trim()){ DAY.err = 'CSVを貼り付けてください。'; render(); return; }
+  let r = null;
+  try{ r = KemuriData.dailyFromCsv(DAY.text); }catch(e){}
+  if(!r || !r.headerFound){
+    DAY.err = '日別の売上表として読めませんでした。「日付」と「総売上」または「客計」の列があるCSVを入れてください。'
+            + '（商品名と出数が並んでいるCSVは、上の「商品別」のほうで取り込みます）';
+  }else if(!r.rows.length){
+    DAY.err = '日付の行が見つかりませんでした。';
+  }else{
+    const list = r.rows.slice().sort((a,b)=>a.day.localeCompare(b.day));
+    DAY.res = { rows:list, from:list[0].day, to:list[list.length-1].day,
+                year:r.yearGuessed ? r.year : null, matched:r.matched, checked:r.checked };
+  }
+  render();
+}
+function saveDailyCsv(){
+  const r = DAY.res;
+  if(!r || !r.rows.length) return;
+  const res = KemuriData.daily.importRows(r.rows);
+  DAY = { open:false, text:'', res:null, err:'', files:[] };
+  render();
+  toast(res.added + '日ぶんを登録しました' + (res.updated ? '（' + res.updated + '日ぶんは上書き）' : ''));
+}
+
 function viewPos(){
   let h = '<div class="pad">';
   h += '<div class="step">'
@@ -1176,7 +1305,9 @@ function viewPos(){
        + '<br>iPhoneでファイルが選べないときは、CSVを一度「ファイル」アプリに保存してから選んでください。</div>';
     const last = DB.imports.filter(x=>!x.undone)[0];
     if(last) h += '<div class="info gap">前回の取込：'+fmtDT(last.at)+'　'+esc(last.file)+'（'+last.rows+'件）<br>同じ期間をもう一度取り込んでも、同じ売上は二重で引かれません。</div>';
-    h += '</div>'; return h;
+    h += '</div>';
+    h += viewDaily();
+    return h;
   }
 
   const p = POS.parsed, head = (p.headIdx>=0 ? p.rows[p.headIdx] : (p.rows[0]||[]).map((c,i)=>(i+1)+'列目'));
