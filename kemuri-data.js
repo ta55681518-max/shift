@@ -325,17 +325,40 @@
     return Math.round((t2 - t1) / 86400000);
   }
 
+  /* from から len 日間のうち、休みだった日数 */
+  function closedIn(cl, from, len) {
+    var n = 0, d = from;
+    for (var i = 0; i < len; i++) {
+      if (cl.days[d] || cl.dows.indexOf(C.dowOf(d)) >= 0) n++;
+      d = C.nextDay(d);
+    }
+    return n;
+  }
+
+  /* 何日ぶんの売上を見ているか。「1日あたり」はこの日数で割る。
+
+     期間まるごとの取込み（まとめ取込み）だと、その期間の暦日数を
+     そのまま数えてしまう。定休日まで «売れなかった日» として割ることに
+     なるので、一日平均が実際より低く出て、仕込みを少なく見積もる。
+     日別の売上から分かる休みの日（売上0円・定休日）は数えない。 */
   function coverage(from, to) {
     var days = C.sales.days().filter(function (d) {
       return (!from || d >= from) && (!to || d <= to);
     });
-    var n = 0, lumped = 0;
+    var cl = Daily.closedSet();
+    var n = 0, lumped = 0, off = 0;
     days.forEach(function (d) {
       var sp = C.sales.spanOf(d);
-      if (sp) { n += Math.max(1, daysBetween(sp.from, sp.to) + 1); lumped++; }
-      else n += 1;
+      if (sp) {
+        var len = Math.max(1, daysBetween(sp.from, sp.to) + 1);
+        var c = Math.min(len - 1, closedIn(cl, sp.from, len));
+        n += len - c; off += c; lumped++;
+      } else {
+        n += 1;          /* 売上が入っている日なので、開けていた日 */
+      }
     });
-    return { days: Math.max(1, n), entries: days.length, lumped: lumped, list: days };
+    return { days: Math.max(1, n), entries: days.length, lumped: lumped,
+             closed: off, closedDows: cl.dowNames, list: days };
   }
 
   /* ============================================================
@@ -432,7 +455,8 @@
     else if (cs.filled < cs.total) caution.push('仕入単価が入っていない商品が ' + (cs.total - cs.filled) + ' 件あります。');
 
     return {
-      period: { from: from || (cov.list[0] || ''), to: to || (cov.list[cov.list.length - 1] || ''), days: cov.days },
+      period: { from: from || (cov.list[0] || ''), to: to || (cov.list[cov.list.length - 1] || ''),
+                days: cov.days, closed: cov.closed, closedDows: cov.closedDows },
       totals: {
         qty: totalQty,
         amount: Math.round(totalAmount),
@@ -641,12 +665,10 @@
       return {
         days: ds.length, from: ds[0] || '', to: ds[ds.length - 1] || '',
         gross: g, guests: gu,
-        avgGross: ds.length ? Math.round(g / ds.length) : 0,
-        avgGuests: ds.length ? Math.round(gu / ds.length * 10) / 10 : 0,
-        /* 営業した日だけの平均。画面に出すのはこちら */
+        /* 平均は営業した日だけで出す。休みを混ぜると下がる */
+        avgGross: open ? Math.round(og / open) : 0,
+        avgGuests: open ? Math.round(ogu / open * 10) / 10 : 0,
         openDays: open, closedDays: ds.length - open,
-        avgOpenGross: open ? Math.round(og / open) : 0,
-        avgOpenGuests: open ? Math.round(ogu / open * 10) / 10 : 0,
       };
     },
 
@@ -723,6 +745,26 @@
         thin: acc.filter(function (a) { return a.thin; }).length,
         closed: acc.filter(function (a) { return !a.days; }).length,
       };
+    },
+
+    /* 休みの日を見分ける。
+       ・売上0円で入っている日 … その日は休み
+       ・その曜日が «0円の日しか無い» … その曜日は定休日
+         （たまたま1日休んだだけで曜日ごと消さないよう、
+           2回以上見ている曜日だけを定休日とみなす）
+       まとめ取込みの期間から «何日分で割るか» を決めるのに使う。 */
+    closedSet: function () {
+      var db = this.load(), set = {}, by = [];
+      for (var i = 0; i < 7; i++) by.push({ open: 0, closed: 0 });
+      Object.keys(db.days).forEach(function (d) {
+        var i = C.dowOf(d);
+        if (i < 0 || i > 6) return;
+        if (num(db.days[d].gross) > 0) by[i].open++;
+        else { by[i].closed++; set[d] = true; }
+      });
+      var dows = [];
+      by.forEach(function (a, i) { if (a.open === 0 && a.closed >= 2) dows.push(i); });
+      return { days: set, dows: dows, dowNames: dows.map(function (i) { return DOW_NAME[i]; }) };
     },
 
     /* その曜日の «忙しさ指数»（全体平均＝1.00）。当てにならなければ null */
@@ -1193,7 +1235,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-10-12a',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-10-12b',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     forecast: forecast,
     backtest: backtest,

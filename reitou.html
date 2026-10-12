@@ -202,7 +202,7 @@
   .toast.show{opacity:.96;}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261012a"></script>
+<script src="site-notice.js?v=20261012b"></script>
 </head>
 <body>
 <div id="app">
@@ -228,11 +228,11 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261012a"></script>
-<script src="kemuri-backup.js?v=20261012a"></script>
-<script src="pos-source.js?v=20261012a"></script>
+<script src="kemuri-core.js?v=20261012b"></script>
+<script src="kemuri-backup.js?v=20261012b"></script>
+<script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
-<script src="kemuri-data.js?v=20261012a"></script>
+<script src="kemuri-data.js?v=20261012b"></script>
 
 <script>
 /* ============================================================
@@ -283,7 +283,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-10-12a';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-12b';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -1218,7 +1218,7 @@ function viewDaily(){
         +   '<span class="r">'+(st.days ? st.days+'日ぶん（'+esc(st.from)+'〜'+esc(st.to)+'）' : 'まだありません')+'</span></div>';
   if(st.days){
     h += '<div class="hist"><span class="n">1日の平均</span>'
-       +   '<span class="r">'+yen(st.avgOpenGross)+'　'+st.avgOpenGuests+'人'
+       +   '<span class="r">'+yen(st.avgGross)+'　'+st.avgGuests+'人'
        +   '<br>営業 '+st.openDays+'日'+(st.closedDays?'・休み '+st.closedDays+'日':'')+'</span></div>';
   }
 

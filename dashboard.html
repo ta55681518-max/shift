@@ -138,7 +138,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261012a"></script>
+<script src="site-notice.js?v=20261012b"></script>
 </head>
 <body>
 <div id="app">
@@ -154,10 +154,10 @@
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js?v=20261012a"></script>
-<script src="kemuri-backup.js?v=20261012a"></script>
-<script src="pos-source.js?v=20261012a"></script>
-<script src="kemuri-data.js?v=20261012a"></script>
+<script src="kemuri-core.js?v=20261012b"></script>
+<script src="kemuri-backup.js?v=20261012b"></script>
+<script src="pos-source.js?v=20261012b"></script>
+<script src="kemuri-data.js?v=20261012b"></script>
 
 <script>
 "use strict";
@@ -178,7 +178,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-const HTML_BUILD = '2026-10-12a';   /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-12b';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -297,7 +297,7 @@ function dailyCard(dst){
   let h = '<div class="card"><h2>日別の売上（POSの日別集計）</h2>';
   if(dst.days){
     h += '<div class="muted">' + dst.days + '日ぶん（' + esc(dst.from) + ' 〜 ' + esc(dst.to) + '）'
-       + '<br>営業した日の1日あたり ' + yen(dst.avgOpenGross) + '・' + dst.avgOpenGuests + '人'
+       + '<br>営業した日の1日あたり ' + yen(dst.avgGross) + '・' + dst.avgGuests + '人'
        + '（営業 ' + dst.openDays + '日' + (dst.closedDays ? '・休み ' + dst.closedDays + '日' : '') + '）</div>';
   }else{
     h += '<div class="muted">POSの「日別」集計CSVを入れると、<b>曜日ごとの忙しさ</b>が出せます。'
@@ -570,7 +570,7 @@ function viewTomorrow(){
        + '<h2>いまは<b>大まかな</b>出し方です</h2>'
        + '<div class="muted">商品ごとの売上が<b>期間まとめ</b>で入っているので、'
        + '«その商品が、その曜日に何個» までは分かりません。いまは<br><br>'
-       + '　<b>商品のふだんの1日平均</b>（' + f.covDays + '日ぶん）<br>'
+       + '　<b>商品のふだんの1日平均</b>（営業した ' + f.covDays + '日ぶん）<br>'
        + '　<b>×</b> ' + f.dowName + '曜の忙しさ <b>' + (f.dowIndex||0).toFixed(2) + ' 倍</b>'
        + '（日別売上 ' + f.dowDays + '日ぶんから）<br><br>'
        + 'で出しています。<b>「土曜だけ出る商品」と「平日に出る商品」の差は出ません。</b>'
@@ -732,7 +732,7 @@ function viewSum(){
   }
 
   h += '<div class="kpis">'
-     + kpi('売上', yen(t.amount), p.days + '日ぶん')
+     + kpi('売上', yen(t.amount), p.days + '日ぶん（営業した日）')
      + kpi('1日あたり', yen(t.perDay), rangeLabel())
      + kpi('出数', num(t.qty).toLocaleString('ja-JP') + '<small> 点</small>', A.products.length + '商品')
      + (t.costRate != null
@@ -740,6 +740,11 @@ function viewSum(){
         : kpi('原価率', '<small>未算出</small>', '仕入単価が未入力'))
      + '</div>';
 
+  if(p.closed){
+    h += '<div class="muted" style="margin:-4px 0 12px">休みの '+p.closed+'日'
+       + (p.closedDows && p.closedDows.length ? '（'+p.closedDows.join('・')+'曜と、売上0円の日）' : '')
+       + ' は「1日あたり」の計算から外しています。</div>';
+  }
   A.caution.forEach(c => { h += '<div class="warn">' + esc(c) + '</div>'; });
 
   /* 在庫が少ない */
