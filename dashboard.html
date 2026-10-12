@@ -46,6 +46,17 @@
   .info{background:#f4f7ff;border:1.5px solid #d8e3ff;border-radius:14px;padding:12px 14px;font-size:14px;color:#3a4d8f;line-height:1.6;margin-bottom:10px;}
   .ok-box{background:#eafaf1;border:1.5px solid #b9ebd0;border-radius:14px;padding:12px 14px;font-size:14px;color:#0a7a44;line-height:1.6;margin-bottom:10px;}
 
+  /* 1日ごとの売上一覧 */
+  .mhead{display:flex;gap:8px;align-items:baseline;padding:13px 2px 7px;margin-top:4px;
+         border-top:2px solid #eee;}
+  .mhead .mn{font-size:15px;font-weight:800;flex:1;}
+  .mhead .ms{font-size:12px;color:#888;font-weight:700;}
+  .drow{display:flex;gap:8px;align-items:baseline;padding:10px 2px;border-bottom:1px solid #f4f4f4;}
+  .drow .dd{font-size:13px;font-weight:700;color:#666;min-width:72px;}
+  .drow .dg{flex:1;font-size:17px;font-weight:800;text-align:right;}
+  .drow .dp{font-size:12px;color:#999;min-width:46px;text-align:right;}
+  .drow.off .dg{font-size:14px;font-weight:600;color:#bbb;}
+
   /* 数字カード */
   .kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;}
   .kpi{border:1.5px solid #ededed;border-radius:16px;padding:13px 14px;}
@@ -127,7 +138,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261008a"></script>
+<script src="site-notice.js?v=20261012b"></script>
 </head>
 <body>
 <div id="app">
@@ -143,10 +154,10 @@
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js?v=20261008a"></script>
-<script src="kemuri-backup.js?v=20261008a"></script>
-<script src="pos-source.js?v=20261008a"></script>
-<script src="kemuri-data.js?v=20261008a"></script>
+<script src="kemuri-core.js?v=20261012b"></script>
+<script src="kemuri-backup.js?v=20261012b"></script>
+<script src="pos-source.js?v=20261012b"></script>
+<script src="kemuri-data.js?v=20261012b"></script>
 
 <script>
 "use strict";
@@ -167,7 +178,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-const HTML_BUILD = '2026-10-08a';   /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-12b';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -277,7 +288,7 @@ async function runAnalyze(force){
    ① サマリ
    ============================================================ */
 /* 日別売上CSV（日付・天気・総売上・客数）の取り込み状態 */
-let DIMP = { open:false, text:'', res:null, err:'' };
+let DIMP = { open:false, text:'', res:null, err:'', list:false, mo:{} };
 let DOW_PICK = null;            // 曜日別の目安で見ている曜日（null=明日）
 const DOW_NAME = ['日','月','火','水','木','金','土'];
 
@@ -286,13 +297,19 @@ function dailyCard(dst){
   let h = '<div class="card"><h2>日別の売上（POSの日別集計）</h2>';
   if(dst.days){
     h += '<div class="muted">' + dst.days + '日ぶん（' + esc(dst.from) + ' 〜 ' + esc(dst.to) + '）'
-       + '／1日あたり ' + yen(dst.avgGross) + '・' + dst.avgGuests + '人</div>';
+       + '<br>営業した日の1日あたり ' + yen(dst.avgGross) + '・' + dst.avgGuests + '人'
+       + '（営業 ' + dst.openDays + '日' + (dst.closedDays ? '・休み ' + dst.closedDays + '日' : '') + '）</div>';
   }else{
     h += '<div class="muted">POSの「日別」集計CSVを入れると、<b>曜日ごとの忙しさ</b>が出せます。'
        + '商品名は入っていなくて大丈夫です。在庫は動きません。</div>';
   }
   h += '<button class="btn btn-out gap" onclick="DIMP.open=!DIMP.open;render()">'
      + (DIMP.open ? '閉じる' : (dst.days ? '追加で取り込む' : '日別売上CSVを取り込む')) + '</button>';
+  if(dst.days){
+    h += '<button class="btn btn-out gap" onclick="DIMP.list=!DIMP.list;render()">'
+       + (DIMP.list ? '一覧を閉じる' : '📖 1日ごとに見る') + '</button>';
+    if(DIMP.list) h += dayListHtml();
+  }
 
   if(DIMP.open){
     h += '<label class="file-btn gap" for="dailyfile">📄 CSVファイルから取り込む</label>'
@@ -362,10 +379,34 @@ function saveDailyCsv(){
   const r = DIMP.res;
   if(!r || !r.rows || !r.rows.length) return;
   const res = KemuriData.daily.importRows(r.rows);
-  DIMP = { open:false, text:'', res:null, err:'' };
+  DIMP.open=false; DIMP.text=''; DIMP.res=null; DIMP.err='';
   refresh(); render();
   toast(res.added + '日ぶんを登録しました' + (res.updated ? '（' + res.updated + '日ぶんは上書き）' : ''));
 }
+
+/* ---- 1日ごとの売上（月ごとにたたむ） ---- */
+function dayListHtml(){
+  const ms = KemuriData.daily.months();
+  if(!ms.length) return '';
+  let h = '<div class="gap">';
+  ms.forEach((m,i)=>{
+    const op = (DIMP.mo[m.ym] != null) ? DIMP.mo[m.ym] : (i === 0);
+    h += '<div class="mhead" onclick="dayMo(\''+m.ym+'\','+(op?0:1)+')">'
+       +   '<span class="mn">'+(op?'▾':'▸')+' '+esc(m.label)+'</span>'
+       +   '<span class="ms">'+m.days+'日　'+yen(m.gross)+'</span></div>';
+    if(!op) return;
+    h += m.rows.map(r=>
+        '<div class="drow'+(r.closed?' off':'')+'">'
+      + '<span class="dd">'+esc(r.md)+'('+esc(r.dowName)+')</span>'
+      + (r.closed ? '<span class="dg">休み</span><span class="dp"></span>'
+                  : '<span class="dg">'+yen(r.gross)+'</span>'
+                    + '<span class="dp">'+(r.guests?r.guests+'人':'')+'</span>')
+      + '</div>').join('');
+    if(m.missing) h += '<div class="muted" style="padding:8px 2px">この月はあと '+m.missing+'日ぶんが入っていません。</div>';
+  });
+  return h + '</div>';
+}
+function dayMo(ym, v){ DIMP.mo[ym] = !!+v; render(); }
 
 /* ---- 曜日ごとの忙しさ ---- */
 function dowCard(dst){
@@ -529,7 +570,7 @@ function viewTomorrow(){
        + '<h2>いまは<b>大まかな</b>出し方です</h2>'
        + '<div class="muted">商品ごとの売上が<b>期間まとめ</b>で入っているので、'
        + '«その商品が、その曜日に何個» までは分かりません。いまは<br><br>'
-       + '　<b>商品のふだんの1日平均</b>（' + f.covDays + '日ぶん）<br>'
+       + '　<b>商品のふだんの1日平均</b>（営業した ' + f.covDays + '日ぶん）<br>'
        + '　<b>×</b> ' + f.dowName + '曜の忙しさ <b>' + (f.dowIndex||0).toFixed(2) + ' 倍</b>'
        + '（日別売上 ' + f.dowDays + '日ぶんから）<br><br>'
        + 'で出しています。<b>「土曜だけ出る商品」と「平日に出る商品」の差は出ません。</b>'
@@ -691,7 +732,7 @@ function viewSum(){
   }
 
   h += '<div class="kpis">'
-     + kpi('売上', yen(t.amount), p.days + '日ぶん')
+     + kpi('売上', yen(t.amount), p.days + '日ぶん（営業した日）')
      + kpi('1日あたり', yen(t.perDay), rangeLabel())
      + kpi('出数', num(t.qty).toLocaleString('ja-JP') + '<small> 点</small>', A.products.length + '商品')
      + (t.costRate != null
@@ -699,6 +740,11 @@ function viewSum(){
         : kpi('原価率', '<small>未算出</small>', '仕入単価が未入力'))
      + '</div>';
 
+  if(p.closed){
+    h += '<div class="muted" style="margin:-4px 0 12px">休みの '+p.closed+'日'
+       + (p.closedDows && p.closedDows.length ? '（'+p.closedDows.join('・')+'曜と、売上0円の日）' : '')
+       + ' は「1日あたり」の計算から外しています。</div>';
+  }
   A.caution.forEach(c => { h += '<div class="warn">' + esc(c) + '</div>'; });
 
   /* 在庫が少ない */
