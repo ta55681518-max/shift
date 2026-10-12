@@ -128,6 +128,17 @@
   .hist .d{font-weight:800;}
   .hist .r{font-size:11px;color:#999;}
 
+  /* 1日ごとの売上一覧 */
+  .mhead{display:flex;gap:8px;align-items:baseline;padding:13px 2px 7px;margin-top:4px;
+         border-top:2px solid #eee;}
+  .mhead .mn{font-size:15px;font-weight:800;flex:1;}
+  .mhead .ms{font-size:12px;color:#888;font-weight:700;}
+  .drow{display:flex;gap:8px;align-items:baseline;padding:10px 2px;border-bottom:1px solid #f4f4f4;}
+  .drow .dd{font-size:13px;font-weight:700;color:#666;min-width:72px;}
+  .drow .dg{flex:1;font-size:17px;font-weight:800;text-align:right;}
+  .drow .dp{font-size:12px;color:#999;min-width:46px;text-align:right;}
+  .drow.off .dg{font-size:14px;font-weight:600;color:#bbb;}
+
   /* タブバー */
   .tabbar{position:fixed;left:0;right:0;bottom:0;z-index:30;background:rgba(255,255,255,.97);
           border-top:1px solid #ececec;display:flex;max-width:560px;margin:0 auto;
@@ -191,7 +202,7 @@
   .toast.show{opacity:.96;}
 </style>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261008a"></script>
+<script src="site-notice.js?v=20261012a"></script>
 </head>
 <body>
 <div id="app">
@@ -217,11 +228,11 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261008a"></script>
-<script src="kemuri-backup.js?v=20261008a"></script>
-<script src="pos-source.js?v=20261008a"></script>
+<script src="kemuri-core.js?v=20261012a"></script>
+<script src="kemuri-backup.js?v=20261012a"></script>
+<script src="pos-source.js?v=20261012a"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
-<script src="kemuri-data.js?v=20261008a"></script>
+<script src="kemuri-data.js?v=20261012a"></script>
 
 <script>
 /* ============================================================
@@ -272,7 +283,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-10-08a';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-10-12a';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -1167,7 +1178,36 @@ function dailyWarnBox(){
    期間ぶんが1枚に入っているCSVも、1日1枚のCSVを何枚もまとめても
    取り込めるようにする（POSによってどちらで出るか違うため）。
    ============================================================ */
-let DAY = { open:false, text:'', res:null, err:'', files:[] };
+let DAY = { open:false, text:'', res:null, err:'', files:[], list:false, mo:{} };
+const yen = n => Math.round(num(n)).toLocaleString('ja-JP') + '円';
+
+/* 1日ごとの売上。月ごとにたたんで出し、いちばん新しい月だけ先にあける。
+   「入れたはずなのに数字が見えない」が一番困るので、
+   入っていない日数も月ごとに出す。 */
+function dayListHtml(){
+  const ms = KemuriData.daily.months();
+  if(!ms.length) return '';
+  let h = '<div class="gap">';
+  ms.forEach((m,i)=>{
+    const op = (DAY.mo[m.ym] != null) ? DAY.mo[m.ym] : (i === 0);
+    h += '<div class="mhead" onclick="dayMo(\''+m.ym+'\','+(op?0:1)+')">'
+       +   '<span class="mn">'+(op?'▾':'▸')+' '+esc(m.label)+'</span>'
+       +   '<span class="ms">'+m.days+'日　'+yen(m.gross)+'</span></div>';
+    if(!op) return;
+    h += m.rows.map(r=>
+        '<div class="drow'+(r.closed?' off':'')+'">'
+      + '<span class="dd">'+esc(r.md)+'('+esc(r.dowName)+')</span>'
+      + (r.closed ? '<span class="dg">休み</span><span class="dp"></span>'
+                  : '<span class="dg">'+yen(r.gross)+'</span>'
+                    + '<span class="dp">'+(r.guests?r.guests+'人':'')+'</span>')
+      + '</div>').join('');
+    if(m.missing) h += '<div class="muted" style="padding:8px 2px">この月はあと '+m.missing+'日ぶんが入っていません。</div>';
+  });
+  return h + '</div>';
+}
+function dayMo(ym, v){ DAY.mo[ym] = !!+v; render(); }
+/* 取り込みをやめても、どの月をあけていたかは残す */
+function dayCancel(){ DAY.open=false; DAY.text=''; DAY.res=null; DAY.err=''; DAY.files=[]; render(); }
 
 function viewDaily(){
   const st = (window.KemuriData ? KemuriData.daily.stats() : { days:0 });
@@ -1176,8 +1216,18 @@ function viewDaily(){
         + '<b>曜日ごとの忙しさ</b>を出すのに使います。在庫は動きません。</div>'
         + '<div class="hist gap"><span class="n">たまっているぶん</span>'
         +   '<span class="r">'+(st.days ? st.days+'日ぶん（'+esc(st.from)+'〜'+esc(st.to)+'）' : 'まだありません')+'</span></div>';
+  if(st.days){
+    h += '<div class="hist"><span class="n">1日の平均</span>'
+       +   '<span class="r">'+yen(st.avgOpenGross)+'　'+st.avgOpenGuests+'人'
+       +   '<br>営業 '+st.openDays+'日'+(st.closedDays?'・休み '+st.closedDays+'日':'')+'</span></div>';
+  }
 
   if(!DAY.open){
+    if(st.days){
+      h += '<button class="btn btn-gray gap" onclick="DAY.list=!DAY.list;render()">'
+         + (DAY.list ? '閉じる' : '📖 1日ごとに見る') + '</button>';
+      if(DAY.list) h += dayListHtml();
+    }
     h += '<button class="btn btn-dark gap" onclick="DAY.open=true;render()">'
        + (st.days ? '追加で取り込む' : '日別売上CSVを取り込む') + '</button></div>';
     return h;
@@ -1212,7 +1262,7 @@ function viewDaily(){
        + '</div>'
        + '<button class="btn btn-primary gap" onclick="saveDailyCsv()">'+r.rows.length+'日ぶんを登録する</button>';
   }
-  h += '<button class="btn btn-gray gap" onclick="DAY={open:false,text:\'\',res:null,err:\'\',files:[]};render()">やめる</button>';
+  h += '<button class="btn btn-gray gap" onclick="dayCancel()">やめる</button>';
   h += '</div>';
   return h;
 }
@@ -1278,7 +1328,7 @@ function saveDailyCsv(){
   const r = DAY.res;
   if(!r || !r.rows.length) return;
   const res = KemuriData.daily.importRows(r.rows);
-  DAY = { open:false, text:'', res:null, err:'', files:[] };
+  DAY.open=false; DAY.text=''; DAY.res=null; DAY.err=''; DAY.files=[];
   render();
   toast(res.added + '日ぶんを登録しました' + (res.updated ? '（' + res.updated + '日ぶんは上書き）' : ''));
 }

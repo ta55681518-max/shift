@@ -630,14 +630,59 @@
 
     stats: function () {
       var ds = this.dayList(), db = this.load();
-      var g = 0, gu = 0;
-      ds.forEach(function (d) { g += num(db.days[d].gross); gu += num(db.days[d].guests); });
+      var g = 0, gu = 0, og = 0, ogu = 0, open = 0;
+      ds.forEach(function (d) {
+        var r = db.days[d];
+        g += num(r.gross); gu += num(r.guests);
+        /* 売上0の日は休んだ日。「1日あたり」に混ぜると
+           定休日のぶんだけ平均が下がるので、別に数える。 */
+        if (num(r.gross) > 0) { open++; og += num(r.gross); ogu += num(r.guests); }
+      });
       return {
         days: ds.length, from: ds[0] || '', to: ds[ds.length - 1] || '',
         gross: g, guests: gu,
         avgGross: ds.length ? Math.round(g / ds.length) : 0,
         avgGuests: ds.length ? Math.round(gu / ds.length * 10) / 10 : 0,
+        /* 営業した日だけの平均。画面に出すのはこちら */
+        openDays: open, closedDays: ds.length - open,
+        avgOpenGross: open ? Math.round(og / open) : 0,
+        avgOpenGuests: open ? Math.round(ogu / open * 10) / 10 : 0,
       };
+    },
+
+    /* 月ごとにまとめた «1日ごとの売上»。新しい月・新しい日が先。
+       «入れたはずなのに出てこない» を目で確かめられるようにするため、
+       その月に何日ぶん入っているか・抜けているかも一緒に返す。
+       売上0の日は «休み» として並べる（消さない。休みも実績なので）。 */
+    months: function () {
+      var db = this.load(), by = {};
+      Object.keys(db.days).sort().forEach(function (d) {
+        var ym = d.slice(0, 7);
+        if (!by[ym]) by[ym] = { ym: ym, rows: [], days: 0, closed: 0, gross: 0, guests: 0 };
+        var r = db.days[d], g = num(r.gross), i = C.dowOf(d);
+        by[ym].rows.push({
+          day: d, dow: i, dowName: (i >= 0 && i <= 6) ? DOW_NAME[i] : '',
+          md: (+d.slice(5, 7)) + '/' + (+d.slice(8, 10)),
+          gross: g, net: num(r.net), guests: num(r.guests), groups: num(r.groups),
+          per: (g > 0 && num(r.guests) > 0) ? Math.round(g / num(r.guests)) : 0,
+          weather: r.weather || '', closed: !(g > 0),
+        });
+        if (g > 0) { by[ym].days++; by[ym].gross += g; by[ym].guests += num(r.guests); }
+        else by[ym].closed++;
+      });
+      var now = new Date();
+      var thisYm = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2);
+      return Object.keys(by).sort().reverse().map(function (ym) {
+        var m = by[ym], y = +ym.slice(0, 4), mo = +ym.slice(5, 7);
+        m.label = y + '年' + mo + '月';
+        /* 今月はまだ終わっていないので、きょうまでを «その月の日数» とする */
+        m.inMonth = (ym === thisYm) ? now.getDate() : new Date(y, mo, 0).getDate();
+        m.missing = Math.max(0, m.inMonth - m.rows.length);
+        m.avgGross = m.days ? Math.round(m.gross / m.days) : 0;
+        m.avgGuests = m.days ? Math.round(m.guests / m.days * 10) / 10 : 0;
+        m.rows.reverse();
+        return m;
+      });
     },
 
     /* 曜日ごとの平均。売上0の日は «休んだ日» とみなして平均から外す
@@ -1148,7 +1193,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-10-08a',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-10-12a',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     forecast: forecast,
     backtest: backtest,
