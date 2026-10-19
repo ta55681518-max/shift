@@ -225,6 +225,7 @@
 
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
+<input type="file" id="nhfile" accept="image/*" onchange="nhOnFile(this)">
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
@@ -233,6 +234,8 @@
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
 <script src="kemuri-data.js?v=20261012b"></script>
+<!-- 納品書から入荷（テスト版）。画面の関数は本体の中で呼ぶ -->
+<script src="reitou-nouhin.js?v=20261019a"></script>
 
 <script>
 /* ============================================================
@@ -528,6 +531,7 @@ const TABS = [
 ];
 
 function go(t){ if(t==='arrive' && TAB!=='arrive') ARR = { mode:'in', qty:{} };
+              if(t!==TAB) NH.open = false;          /* 別のタブへ行ったら納品書の画面は閉じる */
               TAB = t; window.scrollTo(0,0); render(); }
 
 function render(){
@@ -545,7 +549,7 @@ function render(){
   const v = document.getElementById('view');
   if(TAB==='stock')  v.innerHTML = viewStock();
   if(TAB==='order')  v.innerHTML = viewOrder();
-  if(TAB==='arrive') v.innerHTML = viewArrive();
+  if(TAB==='arrive') v.innerHTML = NH.open ? viewNouhin() : viewArrive();
   if(TAB==='pos')    v.innerHTML = viewPos();
   if(TAB==='set')    v.innerHTML = viewSet();
 }
@@ -1029,6 +1033,10 @@ function viewArrive(){
      +  '<div class="'+(ARR.mode==='in'?'on':'')+'" onclick="arrMode(\'in\')">🚚 入荷（増やす）</div>'
      +  '<div class="'+(ARR.mode==='count'?'on':'')+'" onclick="arrMode(\'count\')">🔢 棚卸（実在庫）</div>'
      + '</div>';
+  if(ARR.mode==='in'){
+    h += '<button class="btn btn-dark" style="margin-bottom:14px" onclick="nhOpen()">📷 納品書を撮って入荷'
+       + (NOUHIN_TEST ? '<span style="font-size:12px;opacity:.7">（テスト版）</span>' : '') + '</button>';
+  }
   h += '<div class="muted" style="margin-bottom:12px">'
      + (ARR.mode==='in' ? '届いた数を入れて、最後に「まとめて入荷」。複数商品を一度に登録できます。'
                         : (usedCats().length>1?'数えた':'冷凍庫を数えた')+'実際の数を入れて「まとめて反映」。差は履歴に残ります。')
