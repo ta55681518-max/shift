@@ -36,3 +36,10 @@
   （必要なら串在庫の「引いた記録」で取消）。
 - テスト：ヘッドレス Chromium（`/opt/pw-browsers/chromium` ＋ `/opt/node22/lib/node_modules/playwright` を `require`）。
   リポジトリを `python3 -m http.server` で配信し、同じオリジンで dashboard と kushiyaki を開いて試すと本番に近い。
+
+## 納品書から入荷（テスト版・2026-10-19）
+- 冷凍在庫の「🚚入荷」→「📷 納品書を撮って入荷」。写真は `/api/nouhin`（`netlify/functions/nouhin.js`）が Claude で読み取る
+  - 環境変数：`ANTHROPIC_API_KEY`（必須）、`KEMURI_PASS`（/api/ai と共通）、`ANTHROPIC_MODEL`（任意・既定 claude-sonnet-5-5）
+- 画面は `reitou-nouhin.js`。読んだ行ごとに在庫商品を検索して選ぶ／「在庫に入れない」。
+  選んだ組み合わせ（仕入先＋納品書の商品名 → 在庫・倍率）を覚えて次から自動で当てる
+- `NOUHIN_TEST = true` の間は `kmtest_nouhin_v1` にだけ保存し、本物の在庫は動かさない。本番化は false にするだけ
