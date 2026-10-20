@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<script src="test-env.js?v=test1"></script><!-- テスト環境専用（test-envブランチのみ） -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KEMURI バックアップ確認（読むだけ）</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f6f5f2;color:#222}
+  main{padding:14px;max-width:760px;margin:auto}
+  .note{background:#fff;border:1px solid #ddd;border-radius:10px;padding:10px 12px}
+  table{border-collapse:collapse;width:100%;background:#fff;margin:10px 0;font-size:13px}
+  th,td{border:1px solid #ddd;padding:6px;text-align:left;vertical-align:top}
+  code{font-size:11px;word-break:break-all}
+  .ng{color:#b3261e;font-weight:700}
+</style>
+</head>
+<body>
+<main>
+<h1 style="font-size:18px">バックアップの中身を確かめる（読むだけ）</h1>
+<p class="note">ファイルを選ぶと、中の件数と検査値を表示します。<b>どこにも保存しません。</b>2つ選ぶと並べて比べます（例：本番で書き出したもの／テスト環境で復元後に書き出したもの）。</p>
+<p><input type="file" id="f" accept=".json,application/json" multiple></p>
+<div id="out"></div>
+</main>
+<script>
+'use strict';
+async function sha256(text){ var b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return Array.from(new Uint8Array(b)).map(function(x){ return x.toString(16).padStart(2,'0'); }).join(''); }
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function q1(x){ return Math.round((Number(x)||0)*10)/10; }
+
+function summarize(key, v){
+  if (v == null || typeof v !== 'object') return { 'あり': String(v == null ? 'なし' : typeof v) };
+  if (key === 'kemuri_reitou_v1') {
+    var items = Array.isArray(v.items) ? v.items : [];
+    var ids = {}, dup = 0, bad = 0, total = 0;
+    items.forEach(function(it){ if (ids[it.id]) dup++; ids[it.id] = 1; if (typeof it.stock !== 'number' || !isFinite(it.stock)) bad++; else total += it.stock; });
+    var orders = Array.isArray(v.orders) ? v.orders : [];
+    var pending = 0; orders.forEach(function(o){ (o.lines||[]).forEach(function(l){ pending += Math.max(0, (Number(l.qty)||0) - (Number(l.got)||0)); }); });
+    var hist = Array.isArray(v.history) ? v.history : [];
+    var imports = Array.isArray(v.imports) ? v.imports : [];
+    return {
+      '品目数': items.length, '在庫の合計': q1(total), '品目IDの重複': dup, '在庫が数字でない品目': bad,
+      '発注件数': orders.length, '未入荷の合計': q1(pending), '履歴件数': hist.length,
+      '最新の履歴': hist[0] ? hist[0].at : '—', 'POS取込記録': imports.length + '（取消済 ' + imports.filter(function(r){ return r.undone; }).length + '）',
+      'POS対応表': Object.keys(v.map||{}).length, '取込済みの印': Object.keys(v.seen||{}).length, '連番 seq': v.seq,
+      '管理情報 meta': v.meta ? 'あり' : 'なし', '納品書台帳 nh': v.nh ? 'あり' : 'なし'
+    };
+  }
+  if (key === 'kemuri_sales_v1') {
+    var d = Object.keys(v.days||{}).sort();
+    return { '日数': d.length, '期間': d.length ? d[0] + '〜' + d[d.length-1] : '—', '取消用の控え': Object.keys(v.logs||{}).length };
+  }
+  var o = {}; Object.keys(v).slice(0, 8).forEach(function(k){ var x = v[k]; o[k] = Array.isArray(x) ? x.length + '件' : (x && typeof x === 'object') ? Object.keys(x).length + '項目' : String(x).slice(0, 40); });
+  return o;
+}
+
+async function inspect(name, text){
+  var r = { name: name, size: text.length, sha: await sha256(text), keys: {}, err: '' };
+  var box; try { box = JSON.parse(text.replace(/^﻿/, '')); } catch (e) { r.err = 'JSONとして読めません'; return r; }
+  if (box && !box.tag && Array.isArray(box.items)) { r.format = '在庫アプリだけの古い書き出し'; box = { data: { kemuri_reitou_v1: { j: box } } }; }
+  else if (box && box.tag === 'kemuri-backup') r.format = '第1形式（tag=kemuri-backup, v=' + box.v + '）　作成 ' + (box.at || '不明');
+  else if (box && box.tag === 'kemuri-backup-TEST') r.format = 'テスト環境で作成（tag=kemuri-backup-TEST, v=' + box.v + '）　作成 ' + (box.at || '不明') + '　※本番では復元できません';
+  else { r.format = '不明（tag=' + (box && box.tag) + '）'; r.err = 'KEMURIのバックアップではない可能性'; }
+  var data = (box && box.data) || {};
+  for (var k of Object.keys(data)) {
+    var v = data[k], raw = v && ('j' in v) ? JSON.stringify(v.j) : (v && v.s) || '';
+    r.keys[k] = { len: raw.length, sha: (await sha256(raw)).slice(0, 16), sum: summarize(k, v && ('j' in v) ? v.j : null) };
+  }
+  return r;
+}
+
+document.getElementById('f').addEventListener('change', async function(){
+  var files = Array.from(this.files || []), res = [];
+  for (var f of files) res.push(await inspect(f.name, await f.text()));
+  var h = '';
+  res.forEach(function(r){
+    h += '<h2 style="font-size:15px">' + esc(r.name) + '</h2><div>形式：' + esc(r.format || '—') + '　大きさ：' + r.size + '文字<br>ファイル全体の検査値：<code>' + r.sha + '</code></div>';
+    if (r.err) h += '<div class="ng">' + esc(r.err) + '</div>';
+    Object.keys(r.keys).forEach(function(k){
+      var x = r.keys[k];
+      h += '<table><tr><th colspan="2">' + esc(k) + '　' + x.len + '文字　検査値 <code>' + x.sha + '</code></th></tr>';
+      Object.keys(x.sum).forEach(function(n){ h += '<tr><td>' + esc(n) + '</td><td>' + esc(x.sum[n]) + '</td></tr>'; });
+      h += '</table>';
+    });
+  });
+  if (res.length === 2) {
+    var a = res[0], b = res[1], keys = Array.from(new Set(Object.keys(a.keys).concat(Object.keys(b.keys))));
+    h += '<h2 style="font-size:15px">2つの比較</h2><table><tr><th>キー</th><th>1つ目</th><th>2つ目</th><th>同じか</th></tr>';
+    keys.forEach(function(k){
+      var x = a.keys[k], y = b.keys[k];
+      var same = x && y && x.sha === y.sha;
+      h += '<tr><td>' + esc(k) + '</td><td><code>' + (x ? x.sha : 'なし') + '</code></td><td><code>' + (y ? y.sha : 'なし') + '</code></td><td' + (same ? '>同じ' : ' class="ng">違う') + '</td></tr>';
+    });
+    h += '</table>';
+  }
+  document.getElementById('out').innerHTML = h;
+});
+</script>
+</body>
+</html>

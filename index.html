@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<script src="test-env.js?v=test1"></script><!-- テスト環境専用（test-envブランチのみ） -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>串焼KEMURI屋 シフト希望</title>
 <style>
@@ -203,7 +204,7 @@
 
 <script>
   // ▼▼▼ GASをデプロイしたときに出る「ウェブアプリのURL」をここに貼る ▼▼▼
-  const GAS_URL = "https://script.google.com/macros/s/AKfycbyuFEe7RZOq0Mi6xptI-g84ZDWjk-e2SMXRh7v5k7dv6Ocmhe4co7IH9IUKpKX8OCYp/exec";
+  const GAS_URL = ""; // テスト環境：本番のGAS（シフト提出・予約）には送らない
   // ▲▲▲ https://script.google.com/macros/s/～/exec の形 ▲▲▲
 
   // 時間の選択肢（30分きざみ・10:00〜26:00）。26:00＝深夜2時。1時間きざみにしたいなら STEP を 1 に

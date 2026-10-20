@@ -27,3 +27,9 @@
   for = "/*.js"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
+
+# テスト環境（test-envブランチ）だけ：検索エンジンに載せない
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"

@@ -34,7 +34,13 @@
     kemuri_costs_v1:'仕入原価',   kemuri_recipes_v1:'レシピ',  kemuri_zaiko_v1:'串打ち前の在庫',
     kemuri_kushiyaki_v1:'串焼き', kemuri_hacchu_v1:'発注'
   };
-  var TAG = 'kemuri-backup';
+  /* テスト環境（test-envブランチ）だけの設定：
+     書き出すバックアップの印を本番と変える。本番の復元処理は印が
+     'kemuri-backup' のファイルしか受け付けないので、テストで作った
+     バックアップを本番で読み込むことはできない。
+     読み込みは、本番で書き出したもの（'kemuri-backup'）も受け付ける。 */
+  var TAG = 'kemuri-backup-TEST';
+  var ACCEPT = ['kemuri-backup-TEST', 'kemuri-backup'];
 
   function ls() { try { return global.localStorage; } catch (e) { return null; } }
   function n(o) { return o && typeof o === 'object' ? Object.keys(o).length : 0; }
@@ -99,7 +105,7 @@
       if (!box.tag && Array.isArray(box.items)) {
         return { tag: TAG, v: 1, at: '', old: true, data: { kemuri_reitou_v1: { j: box } } };
       }
-      if (box.tag !== TAG || !box.data || typeof box.data !== 'object') return null;
+      if (ACCEPT.indexOf(box.tag) < 0 || !box.data || typeof box.data !== 'object') return null;
       var any = KEYS.some(function (k) { return box.data[k] !== undefined; });
       return any ? box : null;
     },
@@ -135,7 +141,7 @@
     /* 保存するときのファイル名。日時が入っていれば、あとで見分けられる */
     filename: function () {
       var d = new Date(), p = function (x) { return ('0' + x).slice(-2); };
-      return 'kemuri-backup-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
+      return 'TEST_kemuri-backup-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
            + '-' + p(d.getHours()) + p(d.getMinutes()) + '.json';
     },
     label: function (k) { return LABEL[k] || k; }

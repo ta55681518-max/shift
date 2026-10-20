@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<script src="test-env.js?v=test1"></script><!-- テスト環境専用（test-envブランチのみ） -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KEMURI 実機チェック（テスト環境専用）</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f6f5f2;color:#222}
+  .band{background:#b3261e;color:#fff;padding:10px 14px;font-weight:700}
+  main{padding:14px;max-width:720px;margin:auto}
+  section{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px;margin:12px 0}
+  h2{font-size:16px;margin:0 0 8px}
+  button{font-size:15px;padding:10px 12px;margin:4px 6px 4px 0;border-radius:8px;border:1px solid #888;background:#fff}
+  pre{white-space:pre-wrap;word-break:break-all;background:#f0efec;padding:8px;border-radius:6px;font-size:12px}
+  .ok{color:#1b7a32;font-weight:700}.ng{color:#b3261e;font-weight:700}
+</style>
+</head>
+<body>
+<div class="band" id="band">テスト環境専用の確認ページです（本番のデータには触れません）</div>
+<main>
+<p>このページは <code>kmtest_</code> で始まる名前のデータだけを書き、確認が終わると消します。本番サイト（comfy-khapse-8a3cae.netlify.app）では動きません。</p>
+
+<section><h2>1. 基本情報</h2><pre id="info">確認中…</pre></section>
+
+<section><h2>2. Web Locks</h2><button onclick="testLocks()">確かめる</button><pre id="locks"></pre></section>
+
+<section><h2>3. 保存場所の共有（ホーム画面アプリとブラウザのタブ）</h2>
+<p>① ホーム画面アプリで「印を書く」→ ② Chromeのタブ（またはSafari）で同じページを開いて「印を読む」。同じ印が見えれば同じ保存場所です。</p>
+<button onclick="writeMark()">印を書く</button><button onclick="readMark()">印を読む</button><button onclick="clearMark()">印を消す</button>
+<pre id="mark"></pre></section>
+
+<section><h2>4. 複数の画面の間の通知</h2>
+<p>このページを2つの画面で開き、片方で「送る」を押します。もう片方に表示されれば通知が届いています。</p>
+<button onclick="sendPing()">送る</button><pre id="ping">受信：まだありません</pre></section>
+
+<section><h2>5. 保存容量</h2>
+<button onclick="testEstimate()">見積もり</button><button onclick="testLocalQuota()">localStorageの上限を測る</button><button onclick="testIdb()">IndexedDBに書けるか測る（最大50MB）</button>
+<pre id="quota"></pre></section>
+
+<section><h2>6. バックアップの保存と読み込み</h2>
+<button onclick="saveFile()">テスト用ファイルを保存</button>
+<input type="file" id="pick" accept=".json,application/json" onchange="readFile(this)">
+<pre id="file"></pre></section>
+
+<section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
+</main>
+<script>
+'use strict';
+var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
+if (location.hostname === PROD_HOST) {
+  document.body.innerHTML = '<div class="band">本番サイトではこのページを使いません</div>';
+  throw new Error('production host');
+}
+var LOG = {};
+function put(id, text){ document.getElementById(id).textContent = text; LOG[id] = text; }
+function now(){ return new Date().toISOString(); }
+
+(function info(){
+  var standalone = (window.navigator.standalone === true) ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  put('info', [
+    '日時: ' + now(),
+    'URL: ' + location.origin,
+    'ホーム画面アプリとして起動: ' + (standalone ? 'はい' : 'いいえ'),
+    'UserAgent: ' + navigator.userAgent,
+    'Web Locks: ' + (('locks' in navigator) ? 'あり' : 'なし'),
+    'BroadcastChannel: ' + (('BroadcastChannel' in window) ? 'あり' : 'なし'),
+    'IndexedDB: ' + (('indexedDB' in window) ? 'あり' : 'なし'),
+    'storage.estimate: ' + ((navigator.storage && navigator.storage.estimate) ? 'あり' : 'なし'),
+    'storage.persist: ' + ((navigator.storage && navigator.storage.persist) ? 'あり' : 'なし')
+  ].join('\n'));
+})();
+
+async function testLocks(){
+  if (!('locks' in navigator)) { put('locks', 'なし（この端末では共通保存処理が使えません）'); return; }
+  var t0 = performance.now(), order = [];
+  try {
+    await Promise.all([
+      navigator.locks.request('kmtest_lock', async function(){ order.push('A開始'); await new Promise(function(r){ setTimeout(r, 300); }); order.push('A終了'); }),
+      navigator.locks.request('kmtest_lock', async function(){ order.push('B開始'); order.push('B終了'); })
+    ]);
+    var exclusive = order.join(',') === 'A開始,A終了,B開始,B終了';
+    put('locks', (exclusive ? '動作OK（順番に実行された）' : '要確認: ' + order.join(',')) + '\n所要 ' + Math.round(performance.now() - t0) + 'ms');
+  } catch (e) { put('locks', 'エラー: ' + e); }
+}
+
+function writeMark(){ try { localStorage.setItem('kmtest_mark', now()); readMark(); } catch (e) { put('mark', 'エラー: ' + e); } }
+function readMark(){ var v = null; try { v = localStorage.getItem('kmtest_mark'); } catch (e) {} put('mark', '印: ' + (v || 'なし') + '\n（読んだ時刻 ' + now() + '）'); }
+function clearMark(){ try { localStorage.removeItem('kmtest_mark'); } catch (e) {} readMark(); }
+
+var bc = ('BroadcastChannel' in window) ? new BroadcastChannel('kmtest_ch') : null;
+var got = [];
+function show(kind, v){ got.push(kind + ': ' + v); put('ping', '受信：\n' + got.join('\n')); }
+if (bc) bc.onmessage = function(ev){ show('BroadcastChannel', ev.data); };
+window.addEventListener('storage', function(ev){ if (ev.key === 'kmtest_ping') show('storageイベント', ev.newValue); });
+function sendPing(){
+  var v = now();
+  if (bc) bc.postMessage(v);
+  try { localStorage.setItem('kmtest_ping', v); } catch (e) {}
+  put('ping', (LOG.ping || '') + '\n送信: ' + v);
+}
+
+async function testEstimate(){
+  var lines = [];
+  if (navigator.storage && navigator.storage.estimate) {
+    var e = await navigator.storage.estimate();
+    lines.push('使用量: ' + Math.round((e.usage || 0) / 1024) + 'KB / 上限の見積もり: ' + Math.round((e.quota || 0) / 1048576) + 'MB');
+  } else lines.push('見積もり機能なし');
+  if (navigator.storage && navigator.storage.persisted) lines.push('消されにくい設定（persisted）: ' + await navigator.storage.persisted());
+  put('quota', lines.join('\n'));
+}
+function testLocalQuota(){
+  var key = 'kmtest_quota', size = 0, chunk = 'x'.repeat(256 * 1024), s = '';
+  try { localStorage.removeItem(key); } catch (e) {}
+  try {
+    while (size < 64 * 1024 * 1024) { s += chunk; localStorage.setItem(key, s); size = s.length; }
+  } catch (e) { /* 上限 */ }
+  var used = 0; try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k !== key) used += k.length + (localStorage.getItem(k) || '').length; } } catch (e) {}
+  try { localStorage.removeItem(key); } catch (e) {}
+  put('quota', (LOG.quota ? LOG.quota + '\n' : '') + 'localStorage: テスト用に書けた量 約' + Math.round(size / 1024) + 'K文字（他のデータ ' + Math.round(used / 1024) + 'K文字）。テスト用データは消しました');
+}
+function testIdb(){
+  var req = indexedDB.open('kmtest_idb', 1);
+  req.onupgradeneeded = function(){ req.result.createObjectStore('b'); };
+  req.onerror = function(){ put('quota', (LOG.quota || '') + '\nIndexedDB: 開けない ' + req.error); };
+  req.onsuccess = async function(){
+    var db = req.result, mb = 0, blob = new Blob([new Uint8Array(1024 * 1024)]);
+    for (var i = 0; i < 50; i++) {
+      var ok = await new Promise(function(res){ var tx = db.transaction('b', 'readwrite'); tx.objectStore('b').put(blob, 'k' + i); tx.oncomplete = function(){ res(true); }; tx.onerror = tx.onabort = function(){ res(false); }; });
+      if (!ok) break; mb++;
+    }
+    db.close(); indexedDB.deleteDatabase('kmtest_idb');
+    put('quota', (LOG.quota ? LOG.quota + '\n' : '') + 'IndexedDB: ' + mb + 'MB 書けた（上限50MBまで試験）。テスト用データは消しました');
+  };
+}
+
+async function sha256(text){ var b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return Array.from(new Uint8Array(b)).map(function(x){ return x.toString(16).padStart(2, '0'); }).join(''); }
+async function saveFile(){
+  var body = JSON.stringify({ tag: 'kmtest-file', at: now(), data: 'テスト'.repeat(1000) });
+  var h = await sha256(body);
+  var name = 'TEST_kmtest_' + Date.now() + '.json';
+  var file = new File([body], name, { type: 'application/json' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); put('file', '共有シートで保存しました: ' + name + '\n検査値 ' + h); return; } catch (e) { /* 取消など */ }
+  }
+  var a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; a.click();
+  put('file', 'ダウンロードしました: ' + name + '\n検査値 ' + h);
+}
+function readFile(input){
+  var f = input.files && input.files[0]; if (!f) return;
+  var r = new FileReader();
+  r.onload = async function(){ var t = String(r.result); put('file', (LOG.file || '') + '\n読み込み: ' + f.name + ' ' + t.length + '文字\n検査値 ' + await sha256(t)); };
+  r.readAsText(f);
+}
+function copyAll(){
+  var t = Object.keys(LOG).map(function(k){ return '[' + k + ']\n' + LOG[k]; }).join('\n\n');
+  put('all', t);
+  if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function(){});
+}
+</script>
+</body>
+</html>
