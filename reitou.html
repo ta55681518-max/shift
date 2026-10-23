@@ -230,7 +230,7 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261012b"></script>
+<script src="kemuri-core.js?v=20261024e3"></script>
 <script src="kemuri-backup.js?v=20261012b"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
@@ -1602,6 +1602,13 @@ function viewPos(){
      + '</div>';
 
   if(POS.step===1){
+    /* 在庫には反映したが、売上履歴にまだ記録できていない取込（E3） */
+    const todo = salesTodo();
+    if(todo.length){
+      h += '<div class="warn" style="margin-bottom:12px">⚠️ <b>売上履歴にまだ記録できていない取込が ' + todo.length + ' 件あります。</b><br>'
+         + '在庫は反映済みです（記録し直しても二重に減りません）。端末の空きを確認してから押してください。'
+         + '<button class="btn btn-primary gap" onclick="retrySales(false)">売上履歴に記録し直す</button></div>';
+    }
     h += '<div class="info" style="margin-bottom:12px">POSの「商品別商品集計」で<b>取り込みボタン</b>を押すと、'
        + 'このアプリが開いてそのまま反映できます。'
        + '<a href="reitou-button.html" style="color:#3a4d8f;font-weight:700">入れ方 →</a></div>';
@@ -1954,8 +1961,13 @@ function posApply(){
     if(m && !DB.map[norm(s.posName)]) DB.map[norm(s.posName)] = { item:m.item, label:s.posName };
   });
   rec.rows = rec.keys.length + rec.applied.length;
+  /* 売上履歴に記録する中身を、在庫と «同じ1回の保存» で控えておく（E3）。
+     在庫を保存したあと売上履歴だけ残せなかった（容量不足・途中でアプリを
+     閉じた等）ときも、この控えから後で記録し直せる。記録できたら消す。
+     ※ 在庫の側はもう反映済みなので、記録し直しても在庫は二度減らない。 */
+  rec.salesPending = { sales: POS.sales, period: Object.assign({}, POS.period || {}) };
   DB.imports.unshift(rec);
-  if(DB.imports.length>30) DB.imports.length = 30;
+  trimImports();
   pruneSeen();
   /* 先に在庫を保存し、保存できたことを確かめてから先へ進む（E2）。
      保存できなかったら、在庫も取込履歴も «取り込む前» に戻っている
@@ -1965,22 +1977,79 @@ function posApply(){
   if(!save()) return;
   /* 売上そのものを履歴にためる（翌日の予測・売れ筋・原価率の土台になる）。
      在庫に関係ない商品（ドリンク・コースなど）も、売上分析に要るので全部ためる。
-     ためる側で二重防止をやっているので、同じCSVを入れ直しても増えない。 */
+     ためる側で二重防止をやっているので、同じ売上を記録し直しても増えない。 */
   let salesWarn = '';
-  try{
-    const sres = KemuriCore.sales.record(POS.sales, rec.id, POS.period);
-    /* 端末の保存容量がいっぱいだと、売上履歴だけ残せないことがある。
-       在庫は反映できているので止めはしないが、黙って消えると
-       「取り込んだのに売上に出ない」になるので必ず知らせる。 */
-    if(sres && sres.saved === false) salesWarn = '在庫は反映しましたが、端末の空きが足りず売上履歴を残せませんでした。設定から古い売上を減らしてください。';
+  if(!syncSales(rec)){
+    /* 売上履歴だけ残せなかった。在庫は反映済み、控えは残っている。
+       黙って消えると「取り込んだのに売上に出ない」になるので必ず知らせる。 */
+    salesWarn = SALES_LATER_MSG;
   }
-  catch(e){ /* 履歴に失敗しても在庫の反映は止めない */ }
   const n = noStock ? POS.sales.length : rec.lines.length;
   POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false, noStock:false };
   render(); toast(salesWarn || (noStock ? ('売上 '+n+'行を記録しました（在庫は動かしていません）')
                                            : (n+'商品の在庫に反映しました')));
   if(salesWarn) alert(salesWarn);
   go(noStock ? 'pos' : 'stock');
+}
+/* ============================================================
+   売上履歴の «後で記録» （E3）
+   ------------------------------------------------------------
+   取込の記録（DB.imports の1件）に、次の印を付けて在庫と一緒に保存する。
+     salesPending      … 売上履歴にまだ記録できていない（中身の控えつき）
+     salesUndoPending  … 取消したのに、売上履歴からまだ戻せていない
+   syncSales(rec) で記録／取消を試し、できたら印を消す。
+   ・売上履歴の側で二重防止をしているので、何度試しても二重に足されない
+     （記録できたのに印を消す前にアプリが閉じた、という場合も安全）
+   ・在庫は印を付ける前に反映済みなので、試し直しても在庫は動かない
+   ============================================================ */
+const SALES_LATER_MSG = '在庫は反映しました。\n\nただし、売上履歴にはまだ記録できていません'
+  + '（端末の空き容量が足りない、または売上履歴のデータに異常があります）。\n\n'
+  + '取り込んだ売上は控えてあるので、空きを作ってから「POS」タブの'
+  + '「売上履歴に記録し直す」を押してください。在庫が二重に減ることはありません。';
+function syncSales(rec){
+  const S = KemuriCore.sales;
+  let done = false;
+  if(rec.salesUndoPending){
+    let r = false;
+    try{ r = S.hasLog(rec.id) ? S.undo(rec.id) === true : true; }catch(e){ r = false; }
+    if(r){ delete rec.salesUndoPending; done = true; }
+  }else if(rec.salesPending && !rec.undone){
+    let res = null;
+    try{ res = S.record(rec.salesPending.sales, rec.id, rec.salesPending.period); }catch(e){ res = null; }
+    if(res && res.saved === true){ delete rec.salesPending; done = true; }
+  }else return true;
+  if(done){
+    /* 印を消したことを残す。残せなくても、次に試したときに二重にはならない */
+    save({ silent:true });
+    return true;
+  }
+  return false;
+}
+/* 記録し直しが必要な取込 */
+function salesTodo(){ return DB.imports.filter(r=>(r.salesPending && !r.undone) || r.salesUndoPending); }
+/* まとめて試す。silent のときは知らせない（起動時の自動の試し直し） */
+function retrySales(silent){
+  if(DATA_LOCK) return;
+  const list = salesTodo();
+  if(!list.length){ if(!silent) toast('記録し直すものはありません'); return; }
+  let ok = 0;
+  list.slice().reverse().forEach(r=>{ if(syncSales(r)) ok++; });   /* 古い順に */
+  const left = salesTodo().length;
+  if(!silent){
+    render();
+    if(left) alert('売上履歴に記録できなかった取込が ' + left + ' 件残っています。\n\n'
+                 + (KemuriCore.sales.broken ? '売上履歴のデータに異常があります（' + KemuriCore.sales.broken + '）。バックアップを確認してください。'
+                                            : '端末の空き容量を確認して、もう一度押してください。')
+                 + '\n\n在庫は反映済みです。二重に減ることはありません。');
+    else toast(ok + '件を売上履歴に記録しました');
+  }
+}
+/* 取込の記録は30件まで。ただし «まだ売上履歴に記録できていないもの» は消さない */
+function trimImports(){
+  if(DB.imports.length <= 30) return;
+  const keep = DB.imports.slice(0, 30);
+  DB.imports.slice(30).forEach(r=>{ if((r.salesPending && !r.undone) || r.salesUndoPending) keep.push(r); });
+  DB.imports = keep;
 }
 /* seenが増えすぎないように、古い取込のキーから捨てる */
 function pruneSeen(){
@@ -2003,17 +2072,28 @@ function undoImport(id){
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
   (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
   rec.undone = true;
+  /* 売上履歴に記録済みか（控えがあるか）で、戻し方を決める（E3）
+     ・記録済み    … 売上履歴からも戻す。戻せなかったら印を残して後で戻す
+     ・未記録のまま … 売上履歴には何も入っていないので、控えを捨てるだけ
+     ・控えが古くて無い … 以前と同じく知らせる */
+  let hasLog = false;
+  try{ hasLog = KemuriCore.sales.hasLog(rec.id); }catch(e){}
+  const wasPending = !!rec.salesPending;
+  delete rec.salesPending;
+  if(hasLog) rec.salesUndoPending = true;
   /* 在庫を戻したことが保存できてから、売上履歴を戻す（E2）。
      保存できなかったら在庫は取消前のままなので、売上履歴も触らない。 */
   if(!save()) return;
-  /* 売上履歴からも同じぶんを戻す。ここが失敗すると在庫だけ戻って
-     ダッシュボードには売上が残る＝「取り消したのに消えない」になるので、
-     黙って飲み込まずに知らせる。 */
-  let salesLeft = false;
-  try{ if(KemuriCore.sales.undo(rec.id) !== true) salesLeft = true; }
-  catch(e){ salesLeft = true; }
+  let salesLeft = false, undoLater = false;
+  if(hasLog){ if(!syncSales(rec)) undoLater = true; }
+  else if(!wasPending) salesLeft = true;      /* 控えが無い（古い取込） */
   render();
-  if(salesLeft){
+  if(undoLater){
+    toast('在庫は戻しました（売上履歴はまだ戻せていません）');
+    alert('在庫は戻しました。\n\nただし、売上履歴からはまだ戻せていません（端末の空き容量不足など）。\n'
+        + '空きを作ってから「POS」タブの「売上履歴に記録し直す」を押すと、売上履歴からも戻します。\n'
+        + '在庫の数はこれ以上変わりません。');
+  }else if(salesLeft){
     toast('在庫は戻しましたが、売上の記録は残っています');
     alert('在庫は戻しました。\n\nただし、この取込ぶんの売上の記録は戻せませんでした'
         + '（取消の控えが古くなって残っていないときに起きます）。\n\n'
@@ -2079,7 +2159,8 @@ function viewSet(){
   DB.imports.slice(0,10).forEach(r=>{
     h += '<div class="hist"><span class="t">'+fmtDT(r.at)+'</span>'
        + '<span class="n" style="font-size:13px">'+esc(r.file)+'</span>'
-       + '<span class="r">'+r.rows+'行'+(r.noStock?'・在庫そのまま':'')+'</span>'
+       + '<span class="r">'+r.rows+'行'+(r.noStock?'・在庫そのまま':'')
+       +   (((r.salesPending && !r.undone) || r.salesUndoPending) ? '・<b style="color:#b3261e">売上履歴 未反映</b>' : '')+'</span>'
        + (r.undone? '<span class="r">取消済</span>'
                   : '<button class="btn btn-gray btn-sm" style="padding:6px 10px;font-size:12px" onclick="undoImport('+r.id+')">取消</button>')
        + '</div>';
@@ -2792,6 +2873,9 @@ function prepareDB(){
     /* 開いたときの手入れを残すだけ。書けなければ次に開いたときにまたやる。
        容量不足などは、実際に在庫を変える操作のときに知らせる */
     save({ silent:true });
+    /* 前回、在庫は反映したのに売上履歴に記録できなかった取込があれば、
+       黙って記録し直す（二重にはならない）。できなければPOSタブに出す */
+    retrySales(true);
   }
   render();
   importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ（停止中は何もしない）
