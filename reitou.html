@@ -338,6 +338,24 @@ function blank(){
    ※ DB = load() より前に置く（load の中で値を入れるため） */
 var SAVED_RAW = null;
 /* ============================================================
+   E1：古い画面からの上書きを防ぐ
+   ------------------------------------------------------------
+   同じアプリを2つの画面（タブ）で開いていると、localStorage は共有だが、
+   画面の中のデータ（DB）は開いた時点のまま。古い画面が保存すると、
+   もう一方の画面で入れた変更を丸ごと上書きして消してしまう（E1）。
+
+   ・保存の直前に端末の中身を読み、«この画面が最後に読んだ／保存した中身»
+     （SAVED_RAW）と同じときだけ書く。違っていたら «別の画面で変更された»
+     として書かずに止め、最新の中身を読み込んで知らせる（やり直せる）。
+   ・保存のたびに版（rev）と書いた画面の印（wid）を付ける。
+   ・別の画面が書いたら storage イベント（＋画面に戻ったとき）で気づき、
+     最新を読み込む。«ほぼ同時の保存» で自分の保存が上書きされたことにも
+     気づけるようにして、知らせる（保存直前の確認だけでは防げない隙間）。
+   ※ ホーム画面アプリ・Safari・Chrome は保存場所そのものが別なので、
+     ここでは同期できない（別の問題）。
+   ============================================================ */
+var TAB_ID = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+/* ============================================================
    データ保護（保存データが壊れていたら、初期データで上書きしない）
    ------------------------------------------------------------
    DATA_LOCK … null＝ふつう。値があるときは «保存データに異常» で、
@@ -401,7 +419,8 @@ function lockData(r){
 function load(){
   const r = readStored();
   if(r.state === 'empty') return seedDB();                      /* はじめて使う */
-  if(r.state === 'ok'){ const d = migrate(Object.assign(blank(), r.data)); SAVED_RAW = r.raw; return d; }
+  /* ここでは書かない（端末の中身＝SAVED_RAW のままにしておく）。埋めた項目は起動時の保存で残る */
+  if(r.state === 'ok'){ const d = migrate(Object.assign(blank(), r.data), true); SAVED_RAW = r.raw; return d; }
   /* 壊れている・読めない … 見本のデータで始めない（保存されると元データが消えるため）。
      中身の無い器だけ用意して、保存は止める。 */
   lockData(r);
@@ -466,9 +485,16 @@ function save(opts){
     if(!(opts && opts.silent)) alert(LOCK_MSG + '\n\n（' + DATA_LOCK.detail + '）');
     return false;
   }
+  /* 版を1つ進め、書いた画面の印を付ける（E1） */
+  const prevRev = DB.rev, prevWid = DB.wid;
+  DB.rev = (Number(DB.rev) || 0) + 1; DB.wid = TAB_ID;
   let s;
   try{ s = JSON.stringify(DB); }
-  catch(e){ return saveFailed('データを保存できる形にできませんでした', opts); }
+  catch(e){ DB.rev = prevRev; DB.wid = prevWid; return saveFailed('データを保存できる形にできませんでした', opts); }
+  /* 書く直前に、端末の中身が «この画面が知っている中身» のままか確かめる（E1） */
+  let cur = null, curOk = true;
+  try{ cur = localStorage.getItem(LS_KEY); }catch(e){ curOk = false; }
+  if(curOk && cur !== SAVED_RAW) return saveConflict(opts);
   try{ localStorage.setItem(LS_KEY, s); }
   catch(e){ return saveFailed(isQuotaErr(e) ? '端末の保存容量がいっぱいです' : '端末に書き込めませんでした', opts); }
   let back = null;
@@ -477,6 +503,48 @@ function save(opts){
   SAVED_RAW = s;
   return true;
 }
+/* 別の画面で変更されていた：書かずに、最新の中身を読み込んで知らせる */
+function saveConflict(opts){
+  restoreSaved();                /* 端末の最新の中身を読む（壊れていれば停止） */
+  CONFLICTS++;
+  try{ closeSheet(); }catch(e){}
+  try{ render(); }catch(e){}
+  if(!(opts && opts.silent)){
+    alert('⚠️ 別の画面（タブ）で在庫が変更されていました\n\n'
+        + '古い内容で上書きしないよう、いまの操作は保存していません。\n'
+        + '最新の内容を読み込んだので、確認してから、必要ならもう一度操作してください。');
+  }
+  return false;
+}
+var CONFLICTS = 0;               /* 競合で止めた回数（テスト・確認用） */
+/* 別の画面での変更に気づいたら、最新を読み込む（E1）。
+   自分の直前の保存が «ほぼ同時の保存» で上書きされていたら、それも知らせる。 */
+function checkFresh(){
+  if(DATA_LOCK) return;
+  let raw = null;
+  try{ raw = localStorage.getItem(LS_KEY); }catch(e){ return; }
+  if(raw === SAVED_RAW) return;
+  let lost = false;
+  try{
+    const o = JSON.parse(raw);
+    const mine = DB.wid === TAB_ID ? (Number(DB.rev) || 0) : null;   /* 最後に書いたのが自分か */
+    if(o && mine != null && o.wid !== TAB_ID && (Number(o.rev) || 0) <= mine) lost = true;
+  }catch(e){}
+  const hadSheet = document.getElementById('ov').classList.contains('show');
+  restoreSaved();
+  if(hadSheet) closeSheet();
+  render();
+  if(lost){
+    alert('⚠️ 直前に保存した内容が、ほぼ同時に保存した別の画面（タブ）の内容で上書きされました。\n\n'
+        + '最新の内容を読み込みました。直前の操作が残っているか確認し、必要ならもう一度操作してください。');
+  }else{
+    toast('別の画面での変更を読み込みました');
+  }
+}
+window.addEventListener('storage', e=>{ if(e.key === LS_KEY || e.key === null) checkFresh(); });
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') checkFresh(); });
+window.addEventListener('pageshow', e=>{ if(e.persisted) checkFresh(); });
+window.addEventListener('focus', ()=>checkFresh());
 function isQuotaErr(e){
   return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED'
                  || e.code === 22 || e.code === 1014);
@@ -615,7 +683,7 @@ function lockRecover(text, from){
   const r = readStored();
   if(r.state !== 'ok'){ lockData(r); render(); alert('⚠️ 復旧後のデータを確かめられませんでした。停止したままにします。'); return; }
   DATA_LOCK = null;
-  DB = migrate(Object.assign(blank(), r.data)); SAVED_RAW = r.raw;
+  DB = migrate(Object.assign(blank(), r.data), true); SAVED_RAW = r.raw;
   prepareDB();
   save({ silent:true });
   TAB = 'stock'; render();
@@ -2754,8 +2822,8 @@ function bkApply(){
   /* 在庫アプリぶんを読み直す。後から足した項目はここで埋まる */
   const rs = readStored();
   if(rs.state !== 'ok' && rs.state !== 'empty'){ lockData(rs); render(); return; }
-  DB = rs.state === 'ok' ? migrate(Object.assign(blank(), rs.data)) : seedDB();
-  if(rs.state === 'ok') SAVED_RAW = rs.raw;
+  DB = rs.state === 'ok' ? migrate(Object.assign(blank(), rs.data), true) : seedDB();
+  SAVED_RAW = rs.state === 'ok' ? rs.raw : null;
   /* 読み込んだ中身はもう端末に入っている。ここで書けなくても、
      後から足した項目が次に開いたときに埋まるだけなので、知らせない */
   save({ silent:true });
@@ -2864,7 +2932,7 @@ function prepareDB(){
     applySeedPos(DB);
     DB.mig3 = 1;
   }
-  migrate(DB);               // 上の追加ぶんにも、後から足した項目を埋める
+  migrate(DB, true);         // 上の追加ぶんにも、後から足した項目を埋める（書くのは起動時の save で）
 }
 (function init(){
   /* 保存データに異常があるときは、手入れも保存もしない（元のデータを残す） */
