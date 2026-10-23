@@ -225,6 +225,7 @@
 <div class="toast" id="toast"></div>
 
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
+<input type="file" id="lockfile" accept=".json,application/json,text/plain" onchange="lockPick(this)">
 <input type="file" id="csvfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickFile(this)">
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
@@ -333,19 +334,78 @@ function blank(){
               ドリンクを10品続けて入れるのに毎回選び直さずに済むように覚えておく。 */
            last:{ cat:CAT0, sup:'', unit:'個' } };
 }
-/* 最後に «保存されていると確かめた» 中身（文字のまま）。
-   保存に失敗したとき、端末から読み直せなかった場合の戻り先に使う（E2）。
+/* 最後に «保存されていると確かめた» 中身（文字のまま）（E2）。
    ※ DB = load() より前に置く（load の中で値を入れるため） */
 var SAVED_RAW = null;
+/* ============================================================
+   データ保護（保存データが壊れていたら、初期データで上書きしない）
+   ------------------------------------------------------------
+   DATA_LOCK … null＝ふつう。値があるときは «保存データに異常» で、
+               保存・取込・編集をすべて止めている状態。
+               { kind, detail, at, len }
+   ここが入っている間は save() が必ず断るので、端末の中身は
+   一切書き換わらない（元のデータが残る）。止める場所はここ1か所。
+   ※ DB = load() より前に置く（load の中で値を入れるため）
+   ============================================================ */
+var DATA_LOCK = null;
+var DATA_V = 1;                 /* このアプリが読める保存データの版 */
+var RAW_EXPORTED = false;       /* 異常のあった元データを書き出したか（復旧の確認に使う） */
 let DB = load();
 let TAB = 'stock';
 
+/* 保存データとして使える形かを確かめる。問題があれば理由を返す（無ければ ''） */
+function checkData(o){
+  if(!o || typeof o !== 'object' || Array.isArray(o)) return '在庫データの形になっていません';
+  if(!Array.isArray(o.items)) return '品目の一覧（items）がありません';
+  for(let i = 0; i < o.items.length; i++){
+    const it = o.items[i];
+    if(!it || typeof it !== 'object' || Array.isArray(it)) return (i+1) + '番目の品目が品目の形になっていません';
+    if(typeof it.id !== 'number' || !isFinite(it.id)) return (i+1) + '番目の品目の番号（id）が不正です';
+    if(typeof it.name !== 'string') return (i+1) + '番目の品目の名前（name）が不正です';
+    if(it.stock != null && (typeof it.stock !== 'number' || !isFinite(it.stock))) return '「' + it.name + '」の在庫数が数字ではありません';
+  }
+  const isObj = x => x == null || (typeof x === 'object' && !Array.isArray(x));
+  for(const k of ['map','seen','applied','ordered','supCfg']) if(!isObj(o[k])) return k + ' の形が不正です';
+  for(const k of ['history','imports','orders','sups']) if(o[k] != null && !Array.isArray(o[k])) return k + ' の形が不正です';
+  if(o.seq != null && (typeof o.seq !== 'number' || !isFinite(o.seq))) return '連番（seq）が不正です';
+  return '';
+}
+/* 端末の保存データを読んで、状態を見分ける
+   empty   … 保存データが無い（はじめて使う）
+   ok      … ふつうに読める
+   corrupt … JSONとして読めない（壊れている）
+   invalid … JSONだが、必要な項目や形がおかしい
+   version … このアプリが知らない版
+   error   … 読み出しそのものが失敗した */
+function readStored(){
+  let raw;
+  try{ raw = localStorage.getItem(LS_KEY); }
+  catch(e){ return { state:'error', detail:'端末から読み出せませんでした（' + ((e && e.name) || 'エラー') + '）' }; }
+  if(raw === null) return { state:'empty' };
+  let o;
+  try{ o = JSON.parse(raw); }
+  catch(e){ return { state:'corrupt', raw, detail:'データが壊れていて読めません（JSONの形式エラー）' }; }
+  if(o && typeof o === 'object' && !Array.isArray(o) && o.v !== undefined && o.v !== DATA_V)
+    return { state:'version', raw, detail:'このアプリが対応していない版のデータです（v=' + String(o.v).slice(0,20) + '）' };
+  const why = checkData(o);
+  if(why) return { state:'invalid', raw, detail:'必要な項目や形がおかしいデータです（' + why + '）' };
+  return { state:'ok', raw, data:o };
+}
+/* 異常を記録して、保存・取込・編集を止める */
+function lockData(r){
+  DATA_LOCK = { kind:r.state, detail:r.detail || '', at:new Date().toISOString(),
+                len:(typeof r.raw === 'string' ? r.raw.length : null) };
+  try{ console.warn('[冷凍在庫] 保存データに異常のため停止:', DATA_LOCK.kind, DATA_LOCK.detail); }catch(e){}
+}
+
 function load(){
-  try{
-    const r = localStorage.getItem(LS_KEY);
-    if(r){ const d = migrate(Object.assign(blank(), JSON.parse(r))); SAVED_RAW = r; return d; }
-  }catch(e){}
-  return seedDB();
+  const r = readStored();
+  if(r.state === 'empty') return seedDB();                      /* はじめて使う */
+  if(r.state === 'ok'){ const d = migrate(Object.assign(blank(), r.data)); SAVED_RAW = r.raw; return d; }
+  /* 壊れている・読めない … 見本のデータで始めない（保存されると元データが消えるため）。
+     中身の無い器だけ用意して、保存は止める。 */
+  lockData(r);
+  return blank();
 }
 /* はじめて使うときの中身（見本の商品つき） */
 function seedDB(){
@@ -401,6 +461,11 @@ function applySeedPos(d){
    ・呼ぶ側は、false のときは「保存しました」などの成功表示を出さずに止める
    ============================================================ */
 function save(opts){
+  /* 保存データに異常があるときは、何があっても書かない（元のデータを守る） */
+  if(DATA_LOCK){
+    if(!(opts && opts.silent)) alert(LOCK_MSG + '\n\n（' + DATA_LOCK.detail + '）');
+    return false;
+  }
   let s;
   try{ s = JSON.stringify(DB); }
   catch(e){ return saveFailed('データを保存できる形にできませんでした', opts); }
@@ -417,16 +482,16 @@ function isQuotaErr(e){
                  || e.code === 22 || e.code === 1014);
 }
 /* 画面の中のデータを、端末に保存されている中身に戻す。
-   端末から読めないときは、最後に保存を確かめた中身に戻す。
-   どちらも無い（まだ一度も保存できていない）ときは、そのままにする。 */
+   端末の中身が読めない・壊れている・（保存したはずなのに）無いときは、
+   推測で何かに戻したりせず、データ保護の停止状態にする。
+   まだ一度も保存していない（はじめて使う）ときだけ、そのままにする。 */
 function restoreSaved(){
-  let raw = null;
-  try{ raw = localStorage.getItem(LS_KEY); }catch(e){}
-  for(const src of [raw, SAVED_RAW]){
-    if(!src) continue;
-    try{ DB = migrate(Object.assign(blank(), JSON.parse(src)), true); SAVED_RAW = src; return true; }
-    catch(e){ /* 読めない。次の候補へ */ }
-  }
+  const r = readStored();
+  if(r.state === 'ok'){ DB = migrate(Object.assign(blank(), r.data), true); SAVED_RAW = r.raw; return true; }
+  if(r.state === 'empty' && SAVED_RAW == null) return false;
+  if(r.state === 'empty') r.detail = '保存したはずのデータが端末に見つかりません';
+  lockData(r);
+  DB = blank();
   return false;
 }
 function saveFailed(why, opts){
@@ -438,6 +503,123 @@ function saveFailed(why, opts){
         + '端末の空き容量を確認してから、もう一度やり直してください。');
   }
   return false;
+}
+
+const LOCK_MSG = '保存データに異常が見つかりました。データ保護のため編集・取込を停止しています。初期化せず、バックアップを確認してください。';
+const LOCK_KIND = { corrupt:'データが壊れている', invalid:'項目・形が不正', version:'未対応の版',
+                    error:'読み出しの失敗', empty:'データが見つからない' };
+
+/* 停止中の画面。編集・取込のボタンは出さない */
+function viewLock(){
+  const L = DATA_LOCK;
+  return '<div class="pad">'
+    + '<div class="warn" style="margin-bottom:12px"><b>⚠️ ' + esc(LOCK_MSG) + '</b></div>'
+    + '<div class="card"><h2>見つかった異常</h2>'
+    +   '<div class="muted">データの種類：在庫アプリ（冷凍在庫・取込履歴・POS対応表）</div>'
+    +   '<div class="muted">見つけた日時：' + esc(fmtDT(L.at)) + '</div>'
+    +   '<div class="muted">異常の種類：' + esc(LOCK_KIND[L.kind] || L.kind) + '</div>'
+    +   '<div class="muted">内容：' + esc(L.detail) + '</div>'
+    +   (L.len != null ? '<div class="muted">保存データの大きさ：' + L.len.toLocaleString() + ' 文字（消していません）</div>' : '')
+    + '</div>'
+    + '<div class="card"><h2>次にやること（安全な順）</h2>'
+    +   '<div class="muted">このまま閉じても、元の保存データはそのまま残ります。<b>「最初の状態に戻す」はしないでください。</b></div>'
+    +   '<div class="gap"><b>① 異常のあったデータを、そのまま書き出す</b>'
+    +     '<div class="muted">中身を一切変えずにファイルにします。あとで調べたり戻したりするのに使います。</div>'
+    +     '<button class="btn btn-primary gap" onclick="lockExportRaw()">📤 そのまま書き出す</button>'
+    +     (RAW_EXPORTED ? '<div class="muted">書き出しました。</div>' : '') + '</div>'
+    +   '<div class="gap"><b>② ほかのデータもまとめて書き出す</b>'
+    +     '<div class="muted">売上履歴・日別売上・原価・レシピもまとめたバックアップです（在庫データは読めた形のまま入ります）。</div>'
+    +     '<button class="btn btn-gray gap" onclick="bkShare()">📤 まるごとバックアップを送る</button></div>'
+    +   '<div class="gap"><b>③ 正常なバックアップから在庫アプリを復旧する</b>'
+    +     '<div class="muted">ファイルを選ぶと、まず中身を確かめます。問題が無ければ内容を見せて、上書きしてよいか確認します。</div>'
+    +     '<button class="btn btn-gray gap" onclick="document.getElementById(\'lockfile\').click()">📥 バックアップを選んで確かめる</button></div>'
+    + '</div>'
+    + '<div class="muted">分からないときは何も押さずに閉じて、相談してください。</div>'
+    + '</div>';
+}
+function renderLock(){
+  const tb = document.getElementById('tabbar'); tb.innerHTML = ''; tb.style.display = 'none';
+  document.getElementById('h-title').textContent = 'データ保護のため停止中';
+  document.getElementById('h-sub').textContent = '串焼KEMURI屋';
+  const act = document.getElementById('h-act'); act.style.display='none'; act.onclick=null;
+  closeSheet();
+  document.getElementById('view').innerHTML = viewLock();
+}
+function stampName(){
+  const d = new Date(), p = x=>('0'+x).slice(-2);
+  return d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+}
+/* 異常のあった元データを、1文字も変えずにファイルにする */
+async function lockExportRaw(){
+  let raw = null;
+  try{ raw = localStorage.getItem(LS_KEY); }catch(e){}
+  if(raw == null){ alert('端末から元のデータを読み出せませんでした。'); return; }
+  const name = (window.KEMURI_ENV === 'test' ? 'TEST_' : '') + 'kemuri-reitou-raw-' + stampName() + '.txt';
+  const file = new File([raw], name, { type:'text/plain' });
+  try{
+    if(navigator.canShare && navigator.canShare({ files:[file] })){
+      await navigator.share({ files:[file], title:'在庫アプリの元データ' });
+    }else{
+      const url = URL.createObjectURL(file), a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }
+    RAW_EXPORTED = true; render(); toast('書き出しました（' + name + '）');
+  }catch(e){
+    if(e && e.name === 'AbortError') return;
+    alert('書き出せませんでした。もう一度試すか、「まるごとバックアップを送る」を使ってください。');
+  }
+}
+function lockPick(el){
+  const f = el.files && el.files[0];
+  el.value = '';
+  if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=> lockRecover(String(r.result||''), f.name);
+  r.onerror = ()=> alert('ファイルを読めませんでした');
+  r.readAsText(f);
+}
+/* バックアップの在庫データを確かめる。使えるなら { data }、だめなら { why } */
+function checkBackupReitou(box){
+  if(!box || !box.data || box.data[LS_KEY] === undefined) return { why:'このファイルには在庫アプリのデータが入っていません' };
+  const v = box.data[LS_KEY];
+  if(!v || !('j' in v)) return { why:'バックアップの中の在庫データも壊れています' };
+  const o = v.j;
+  if(o && typeof o === 'object' && !Array.isArray(o) && o.v !== undefined && o.v !== DATA_V)
+    return { why:'このアプリが対応していない版のデータです（v=' + String(o.v).slice(0,20) + '）' };
+  const why = checkData(o);
+  return why ? { why:'バックアップの在庫データに異常があります（' + why + '）' } : { data:o };
+}
+/* 停止中の復旧：在庫アプリのデータだけを、確かめたバックアップで置きかえる。
+   ほかのデータ（売上履歴など）には触らない。 */
+function lockRecover(text, from){
+  if(!DATA_LOCK) return;
+  const box = KemuriBackup.parse(text);
+  if(!box){ alert('バックアップとして読めませんでした（' + from + '）。'); return; }
+  const c = checkBackupReitou(box);
+  if(!c.data){ alert(c.why + '\n\n端末のデータは何も変えていません。'); return; }
+  const d = c.data, imp = (d.imports||[]).filter(r=>!r.undone).length;
+  const total = Math.round((d.items||[]).reduce((a,i)=>a + (Number(i.stock)||0), 0) * 10) / 10;
+  const summary = 'バックアップ：' + from + '\n作成：' + (box.at ? fmtDT(box.at) : '日時不明')
+                + '\n品目 ' + d.items.length + ' 件／在庫の合計 ' + total + '／POS取込 ' + imp + ' 件／履歴 ' + (d.history||[]).length + ' 件';
+  if(!RAW_EXPORTED && !confirm('まだ異常のあった元データを書き出していません。\n書き出さずに上書きすると、元のデータは戻せなくなります。\n\nそれでも続けますか？')) return;
+  if(!confirm('在庫アプリのデータを、このバックアップで上書きします。\n\n' + summary
+            + '\n\nいま端末にある（異常のある）在庫データは置きかわります。\n売上履歴などほかのデータは変えません。\n\n上書きしてよいですか？')) return;
+  const s = JSON.stringify(d);
+  let okWrite = false;
+  try{ localStorage.setItem(LS_KEY, s); okWrite = localStorage.getItem(LS_KEY) === s; }catch(e){}
+  if(!okWrite){
+    alert('⚠️ 復旧できませんでした（端末に保存できませんでした）。\n\n停止したままにします。');
+    const r2 = readStored(); if(r2.state !== 'ok'){ lockData(r2); render(); return; }
+  }
+  const r = readStored();
+  if(r.state !== 'ok'){ lockData(r); render(); alert('⚠️ 復旧後のデータを確かめられませんでした。停止したままにします。'); return; }
+  DATA_LOCK = null;
+  DB = migrate(Object.assign(blank(), r.data)); SAVED_RAW = r.raw;
+  prepareDB();
+  save({ silent:true });
+  TAB = 'stock'; render();
+  toast('復旧しました（' + d.items.length + '品目）');
 }
 
 /* ---------- 小道具 ---------- */
@@ -590,6 +772,8 @@ function go(t){ if(t==='arrive' && TAB!=='arrive') ARR = { mode:'in', qty:{} };
               TAB = t; window.scrollTo(0,0); render(); }
 
 function render(){
+  if(DATA_LOCK){ renderLock(); return; }      /* 保存データに異常：止めた画面だけ出す */
+  document.getElementById('tabbar').style.display = '';
   const need = needList().length;
   document.getElementById('tabbar').innerHTML = TABS.map(([k,l,ic])=>
     '<button class="'+(TAB===k?'on':'')+'" onclick="go(\''+k+'\')"><span class="ic">'+ic+'</span>'+l+
@@ -1610,6 +1794,7 @@ function pasteImport(){
 }
 /* 読み取れたら、列が分かっている限り確認画面を飛ばしてプレビューまで一気に進む */
 function startImport(parsed){
+  if(DATA_LOCK){ alert(LOCK_MSG); render(); return; }
   POS.parsed = parsed;
   POS.period = periodFromRows(parsed.rows, parsed.headIdx) || defaultPeriod();
   POS.showAll = false;
@@ -2476,11 +2661,20 @@ function bkApply(){
   const box = BK.box; if(!box) return;
   const keys = Object.keys(BK.pick).filter(k=>BK.pick[k]);
   if(!keys.length) return;
+  if(DATA_LOCK){ closeSheet(); render(); return; }   /* 停止中は «復旧» の手順だけを使う */
+  /* 在庫アプリぶんを入れるなら、先に中身を確かめる（異常なデータで上書きしない） */
+  if(keys.indexOf(LS_KEY) >= 0){
+    const c = checkBackupReitou(box);
+    if(!c.data){ alert(c.why + '\n\n何も読み込んでいません。'); return; }
+  }
   const res = KemuriBackup.apply(box, keys);
   closeSheet();
   if(!res.ok.length){ toast('読み込めませんでした'); return; }
   /* 在庫アプリぶんを読み直す。後から足した項目はここで埋まる */
-  DB = migrate(Object.assign(blank(), JSON.parse(localStorage.getItem(LS_KEY) || '{}')));
+  const rs = readStored();
+  if(rs.state !== 'ok' && rs.state !== 'empty'){ lockData(rs); render(); return; }
+  DB = rs.state === 'ok' ? migrate(Object.assign(blank(), rs.data)) : seedDB();
+  if(rs.state === 'ok') SAVED_RAW = rs.raw;
   /* 読み込んだ中身はもう端末に入っている。ここで書けなくても、
      後から足した項目が次に開いたときに埋まるだけなので、知らせない */
   save({ silent:true });
@@ -2494,6 +2688,7 @@ function bkApply(){
   }
 }
 function resetAll(){
+  if(DATA_LOCK){ alert(LOCK_MSG + '\n\n停止中は初期化できません。'); return; }
   if(!confirm('在庫・履歴・対応表をすべて消して、最初の状態に戻しますか？')) return;
   /* 先に消さずに、初期状態で «上書き» する（E2）。
      上書きできなかったときは、端末の中身は消す前のまま残る。 */
@@ -2517,7 +2712,8 @@ function closeSheet(){ document.getElementById('ov').classList.remove('show'); }
    ブックマークレットが reitou.html#pos=<売上データ> を開くので、
    起動時にそれを読み取ってそのままプレビューまで進める。 */
 function importFromHash(){
-  if(window.__kemuriMoving) return false;   // 古いURLから新しいURLへ移る途中。ここでは読まない
+  if(window.__kemuriMoving) return false;
+  if(DATA_LOCK) return false;               /* 停止中は取り込まない（URLの売上もそのまま残す） */   // 古いURLから新しいURLへ移る途中。ここでは読まない
   const m = String(location.hash||'').match(/[#&]pos=([^&]*)/);
   if(!m || !m[1]) return false;
   let text = '';
@@ -2552,7 +2748,8 @@ document.addEventListener('focusout', ()=>{
 });
 
 /* ---------- 起動 ---------- */
-(function init(){
+/* 読めたデータに、後から足した項目などを埋める（起動時と、停止からの復旧後） */
+function prepareDB(){
   DB.items.forEach(it=>{
     if(it.per==null) it.per = 1;
     if(it.min==null) it.min = 0;
@@ -2587,11 +2784,17 @@ document.addEventListener('focusout', ()=>{
     DB.mig3 = 1;
   }
   migrate(DB);               // 上の追加ぶんにも、後から足した項目を埋める
-  /* 開いたときの手入れを残すだけ。書けなければ次に開いたときにまたやる。
-     容量不足などは、実際に在庫を変える操作のときに知らせる */
-  save({ silent:true });
+}
+(function init(){
+  /* 保存データに異常があるときは、手入れも保存もしない（元のデータを残す） */
+  if(!DATA_LOCK){
+    prepareDB();
+    /* 開いたときの手入れを残すだけ。書けなければ次に開いたときにまたやる。
+       容量不足などは、実際に在庫を変える操作のときに知らせる */
+    save({ silent:true });
+  }
   render();
-  importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ
+  importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ（停止中は何もしない）
 })();
 </script>
 </body>
