@@ -233,7 +233,7 @@
 <script src="kemuri-backup.js?v=20261012b"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
-<script src="kemuri-data.js?v=20261012b"></script>
+<script src="kemuri-data.js?v=20261024e2"></script>
 
 <script>
 /* ============================================================
@@ -333,14 +333,22 @@ function blank(){
               ドリンクを10品続けて入れるのに毎回選び直さずに済むように覚えておく。 */
            last:{ cat:CAT0, sup:'', unit:'個' } };
 }
+/* 最後に «保存されていると確かめた» 中身（文字のまま）。
+   保存に失敗したとき、端末から読み直せなかった場合の戻り先に使う（E2）。
+   ※ DB = load() より前に置く（load の中で値を入れるため） */
+var SAVED_RAW = null;
 let DB = load();
 let TAB = 'stock';
 
 function load(){
   try{
     const r = localStorage.getItem(LS_KEY);
-    if(r) return migrate(Object.assign(blank(), JSON.parse(r)));
+    if(r){ const d = migrate(Object.assign(blank(), JSON.parse(r))); SAVED_RAW = r; return d; }
   }catch(e){}
+  return seedDB();
+}
+/* はじめて使うときの中身（見本の商品つき） */
+function seedDB(){
   const d = blank();
   SEED.forEach(([name,min])=>{
     const id = d.seq++;
@@ -351,8 +359,9 @@ function load(){
   d.posSeeded = 1;
   return d;
 }
-/* 後から足した項目を、既存のデータに埋める（入っている値はそのまま） */
-function migrate(d){
+/* 後から足した項目を、既存のデータに埋める（入っている値はそのまま）
+   noWrite … 埋めるだけで端末には書かない（保存に失敗した直後の読み直しで使う） */
+function migrate(d, noWrite){
   let changed = false;
   (d.items||[]).forEach(it=>{
     /* cost … 1個あたりの仕入原価（円）。0＝未入力。原価率と発注金額の計算に使う */
@@ -367,7 +376,7 @@ function migrate(d){
   if(!d.supCfg || typeof d.supCfg !== 'object'){ d.supCfg = {}; changed = true; }
   if(!Array.isArray(d.orders)){ d.orders = []; changed = true; }
   if(!d.last || !d.last.cat){ d.last = { cat:CAT0, sup:'', unit:'個' }; changed = true; }
-  if(changed){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} }
+  if(changed && !noWrite){ try{ localStorage.setItem(LS_KEY, JSON.stringify(d)); }catch(e){} }
   return d;
 }
 /* POS名の初期対応を入れる（すでに設定済みのものは触らない） */
@@ -380,7 +389,56 @@ function applySeedPos(d){
   });
   return changed;
 }
-function save(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); }catch(e){ toast('保存できんかった…'); } }
+/* ============================================================
+   保存（E2：保存に失敗しても成功と表示される問題の修正）
+   ------------------------------------------------------------
+   ・端末に書いたあと読み直し、書いた文字と一致したときだけ成功（true）
+   ・書けなかった／読み直して一致しなかったときは失敗（false）
+       → 画面の中のデータ（DB）を «端末に実際に保存されている中身» に戻す。
+         こうしておくと、画面だけ更新済みで保存データと食い違うことがなく、
+         同じ操作をやり直しても在庫が二重に減らない。
+       → 失敗したことを必ず知らせる（opts.silent のときは知らせない）
+   ・呼ぶ側は、false のときは「保存しました」などの成功表示を出さずに止める
+   ============================================================ */
+function save(opts){
+  let s;
+  try{ s = JSON.stringify(DB); }
+  catch(e){ return saveFailed('データを保存できる形にできませんでした', opts); }
+  try{ localStorage.setItem(LS_KEY, s); }
+  catch(e){ return saveFailed(isQuotaErr(e) ? '端末の保存容量がいっぱいです' : '端末に書き込めませんでした', opts); }
+  let back = null;
+  try{ back = localStorage.getItem(LS_KEY); }catch(e){}
+  if(back !== s) return saveFailed('保存したあと読み直したら、中身が一致しませんでした', opts);
+  SAVED_RAW = s;
+  return true;
+}
+function isQuotaErr(e){
+  return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+                 || e.code === 22 || e.code === 1014);
+}
+/* 画面の中のデータを、端末に保存されている中身に戻す。
+   端末から読めないときは、最後に保存を確かめた中身に戻す。
+   どちらも無い（まだ一度も保存できていない）ときは、そのままにする。 */
+function restoreSaved(){
+  let raw = null;
+  try{ raw = localStorage.getItem(LS_KEY); }catch(e){}
+  for(const src of [raw, SAVED_RAW]){
+    if(!src) continue;
+    try{ DB = migrate(Object.assign(blank(), JSON.parse(src)), true); SAVED_RAW = src; return true; }
+    catch(e){ /* 読めない。次の候補へ */ }
+  }
+  return false;
+}
+function saveFailed(why, opts){
+  restoreSaved();
+  try{ render(); }catch(e){}
+  if(!(opts && opts.silent)){
+    alert('⚠️ 保存できませんでした\n（' + why + '）\n\n'
+        + 'いまの操作は反映されていません。画面は、保存されている内容に戻しました。\n\n'
+        + '端末の空き容量を確認してから、もう一度やり直してください。');
+  }
+  return false;
+}
 
 /* ---------- 小道具 ---------- */
 /* num / norm の中身は kemuri-core.js にまとめた（他のアプリでも同じものを使うため）。
@@ -661,7 +719,8 @@ function adjSave(){
   const it = item(ADJ.id);
   if(it.stock === ADJ.val){ closeSheet(); return; }
   move(it, ADJ.val, ADJ.reason);
-  save(); closeSheet(); render(); toast(it.name+' → '+it.stock);
+  if(!save()) return;
+  closeSheet(); render(); toast(it.name+' → '+it.stock);
 }
 
 /* ---------- ② 発注リスト ---------- */
@@ -694,7 +753,7 @@ function supCfg(key){
 function setSupHow(key, how){
   DB.supCfg = DB.supCfg || {};
   const c = DB.supCfg[key] = DB.supCfg[key] || { how:'', url:'' };
-  c.how = how; save(); render();
+  c.how = how; if(!save()) return; render();
 }
 function askSupUrl(key){
   const c = supCfg(key);
@@ -702,7 +761,8 @@ function askSupUrl(key){
   if(v === null) return;                      /* やめた */
   DB.supCfg[key] = DB.supCfg[key] || { how:'app', url:'' };
   DB.supCfg[key].url = String(v).trim();
-  save(); render();
+  if(!save()) return;
+  render();
   toast(DB.supCfg[key].url ? 'URLを保存しました' : 'URLを消しました');
 }
 
@@ -1001,8 +1061,10 @@ function ordDone(key){
                                        qty:q1(l.qty), unit:unitOf(l.it), got:0 })) };
   DB.orders.unshift(rec);
   if(DB.orders.length > 200) DB.orders.length = 200;
-  lines.forEach(l=>{ DB.ordered[l.it.id] = rec.at; delete ORD.qty[l.it.id]; });
-  save(); closeSheet(); render();
+  lines.forEach(l=>{ DB.ordered[l.it.id] = rec.at; });
+  if(!save()) return;
+  lines.forEach(l=>{ delete ORD.qty[l.it.id]; });
+  closeSheet(); render();
   toast(lines.length + '商品を発注済みにしました');
 }
 
@@ -1018,7 +1080,11 @@ function openArriveOne(id){
 function arrStep(d){ ADJ.val = Math.max(0, ADJ.val + d); document.getElementById('arr-v').textContent = ADJ.val; }
 function arrSave(){
   const it = item(ADJ.id);
-  if(ADJ.val>0){ move(it, it.stock + ADJ.val, '入荷'); fillPending(it.id, ADJ.val); save(); toast(it.name+' +'+fmtQ(ADJ.val)); }
+  if(ADJ.val>0){
+    move(it, it.stock + ADJ.val, '入荷'); fillPending(it.id, ADJ.val);
+    if(!save()) return;
+    toast(it.name+' +'+fmtQ(ADJ.val));
+  }
   closeSheet(); render();
 }
 
@@ -1083,12 +1149,14 @@ function arrQset(id,v){ ARR.qty[id] = Math.max(0, q1(num(v))); paintArr(id); }
 function arrCommit(){
   let n=0;
   DB.items.forEach(it=>{ const q = ARR.qty[it.id]||0; if(q>0){ move(it, it.stock+q, '入荷'); fillPending(it.id, q); n++; } });
-  ARR.qty = {}; save(); render(); toast(n+'商品を入荷しました');
+  if(!save()) return;                 /* 失敗したら入力した数は残す（やり直せるように） */
+  ARR.qty = {}; render(); toast(n+'商品を入荷しました');
 }
 function countCommit(){
   let n=0;
   DB.items.forEach(it=>{ const q = ARR.qty[it.id]; if(q!=null && q!==it.stock){ move(it, q, '棚卸（数え直し）'); n++; } });
-  ARR.qty = {}; save(); render(); toast(n? n+'商品を修正しました' : '変更はありません');
+  if(!save()) return;
+  ARR.qty = {}; render(); toast(n? n+'商品を修正しました' : '変更はありません');
 }
 
 /* ============================================================
@@ -1329,6 +1397,14 @@ function saveDailyCsv(){
   const r = DAY.res;
   if(!r || !r.rows.length) return;
   const res = KemuriData.daily.importRows(r.rows);
+  /* 保存できなかったら、成功の表示を出さずに知らせる（E2）。
+     読み込んだ内容は画面に残すので、空きを作ってからもう一度押せる */
+  if(res && res.saved === false){
+    render();
+    alert('⚠️ 日別の売上を保存できませんでした\n（端末の保存容量がいっぱいの可能性があります）\n\n'
+        + 'いまの取込は反映されていません。空き容量を確認してから、もう一度やり直してください。');
+    return;
+  }
   DAY.open=false; DAY.text=''; DAY.res=null; DAY.err=''; DAY.files=[];
   render();
   toast(res.added + '日ぶんを登録しました' + (res.updated ? '（' + res.updated + '日ぶんは上書き）' : ''));
@@ -1561,7 +1637,8 @@ function posPreview(){
   if(needPeriod() && !POS.period.from){ toast('集計の期間（開始日）を入れてください'); return; }
   if(p.headIdx >= 0)   /* 見出しがあるCSVだけ、列の対応を次回のために覚えておく */
     DB.csvMap = { sig: p.rows[p.headIdx].map(c=>norm(c)).join('|'), cols: Object.assign({},p.cols) };
-  save();
+  /* 列の対応を覚えるだけ。残せなくても取込の確認には進める（知らせは反映のときに出る） */
+  save({ silent:true });
   POS.sales = CsvPosSource.toSales(p, POS.period);
   if(!POS.sales.length){ toast('売上の行が見つかりませんでした'); return; }
   /* 長い期間をまとめて取り込むのは、たいてい «過去ぶんを分析用に入れる» ので、
@@ -1645,12 +1722,14 @@ function skipAllUnknown(){
   if(!un.length) return;
   if(!confirm(un.length+'件を「使わない」に設定します。\n（設定タブでやり直せます）')) return;
   un.forEach(u=>{ DB.map[norm(u.name)] = { item:'__skip__', label:u.name }; });
-  save(); render(); toast(un.length+'件を「使わない」にしました');
+  if(!save()) return;
+  render(); toast(un.length+'件を「使わない」にしました');
 }
 function setMap(v, name){
   if(!v) return;
   DB.map[norm(name)] = { item: v==='__skip__' ? '__skip__' : parseInt(v,10), label:name };
-  save(); setTimeout(render, 0);
+  if(!save()) return;
+  setTimeout(render, 0);
 }
 function posApply(){
   const pv = buildPreview(POS.sales);
@@ -1690,6 +1769,15 @@ function posApply(){
     if(m && !DB.map[norm(s.posName)]) DB.map[norm(s.posName)] = { item:m.item, label:s.posName };
   });
   rec.rows = rec.keys.length + rec.applied.length;
+  DB.imports.unshift(rec);
+  if(DB.imports.length>30) DB.imports.length = 30;
+  pruneSeen();
+  /* 先に在庫を保存し、保存できたことを確かめてから先へ進む（E2）。
+     保存できなかったら、在庫も取込履歴も «取り込む前» に戻っている
+     （save が戻す）。確認画面のまま止めるので、空きを作ってから
+     もう一度「反映」を押せば、二重にならずにやり直せる。
+     売上履歴にも、このときは何も記録しない。 */
+  if(!save()) return;
   /* 売上そのものを履歴にためる（翌日の予測・売れ筋・原価率の土台になる）。
      在庫に関係ない商品（ドリンク・コースなど）も、売上分析に要るので全部ためる。
      ためる側で二重防止をやっているので、同じCSVを入れ直しても増えない。 */
@@ -1702,10 +1790,6 @@ function posApply(){
     if(sres && sres.saved === false) salesWarn = '在庫は反映しましたが、端末の空きが足りず売上履歴を残せませんでした。設定から古い売上を減らしてください。';
   }
   catch(e){ /* 履歴に失敗しても在庫の反映は止めない */ }
-  DB.imports.unshift(rec);
-  if(DB.imports.length>30) DB.imports.length = 30;
-  pruneSeen();
-  save();
   const n = noStock ? POS.sales.length : rec.lines.length;
   POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false, noStock:false };
   render(); toast(salesWarn || (noStock ? ('売上 '+n+'行を記録しました（在庫は動かしていません）')
@@ -1733,14 +1817,17 @@ function undoImport(id){
   rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
   (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
+  rec.undone = true;
+  /* 在庫を戻したことが保存できてから、売上履歴を戻す（E2）。
+     保存できなかったら在庫は取消前のままなので、売上履歴も触らない。 */
+  if(!save()) return;
   /* 売上履歴からも同じぶんを戻す。ここが失敗すると在庫だけ戻って
      ダッシュボードには売上が残る＝「取り消したのに消えない」になるので、
      黙って飲み込まずに知らせる。 */
   let salesLeft = false;
   try{ if(KemuriCore.sales.undo(rec.id) !== true) salesLeft = true; }
   catch(e){ salesLeft = true; }
-  rec.undone = true;
-  save(); render();
+  render();
   if(salesLeft){
     toast('在庫は戻しましたが、売上の記録は残っています');
     alert('在庫は戻しました。\n\nただし、この取込ぶんの売上の記録は戻せませんでした'
@@ -1922,7 +2009,8 @@ function mapClear(){
             + '「在庫に紐づいていない商品」としてまた出てくるので、\n'
             + 'そこで在庫商品を選びなおせます。')) return;
   rows.forEach(([k])=>{ delete DB.map[k]; });
-  save(); render(); toast(rows.length + '件を解除しました');
+  if(!save()) return;
+  render(); toast(rows.length + '件を解除しました');
 }
 function viewMap(){
   const all = Object.keys(DB.map).length;
@@ -1941,7 +2029,7 @@ function viewMap(){
         + '</div>';
   return h;
 }
-function delMap(k){ delete DB.map[k]; save(); render(); }
+function delMap(k){ delete DB.map[k]; if(!save()) return; render(); }
 
 /* 商品の編集シート */
 let EDIT = null;
@@ -2060,7 +2148,8 @@ function addPosName(){
   const v = document.getElementById('e-pos').value.trim();
   if(!v) return;
   DB.map[norm(v)] = { item:EDIT.id, label:v };
-  save(); openItem(EDIT.id);
+  if(!save()) return;
+  openItem(EDIT.id);
 }
 /* シートに打ってある文字を EDIT に取り込む */
 function readItemFields(){
@@ -2094,7 +2183,8 @@ function saveItem(again){
   /* 次に追加するときの初期値にする（新しく足したときだけ） */
   if(!EDIT.id) DB.last = { cat:EDIT.cat, sup:EDIT.sup, unit:EDIT.unit };
   const added = EDIT.name;
-  save(); render();
+  if(!save()) return;                 /* 失敗したらシートは開いたまま（もう一度押せる） */
+  render();
   if(again){
     openItem(0);                                  /* 続けて入れる */
     const el = document.getElementById('e-name'); if(el) el.focus();
@@ -2249,7 +2339,8 @@ function bulkApply(){
   });
   const last = add[add.length-1];
   DB.last = { cat:last.cat, sup:last.sup, unit:last.unit };
-  save(); closeSheet(); render();
+  if(!save()) return;
+  closeSheet(); render();
   toast(add.length + ' 品を登録しました');
 }
 
@@ -2265,7 +2356,8 @@ function delItem(){
   DB.items = DB.items.filter(i=>i.id!==EDIT.id);
   Object.keys(DB.map).forEach(k=>{ if(DB.map[k].item===EDIT.id) delete DB.map[k]; });
   delete DB.ordered[EDIT.id];
-  save(); closeSheet(); render(); toast('削除しました');
+  if(!save()) return;
+  closeSheet(); render(); toast('削除しました');
 }
 
 /* ============================================================
@@ -2389,7 +2481,9 @@ function bkApply(){
   if(!res.ok.length){ toast('読み込めませんでした'); return; }
   /* 在庫アプリぶんを読み直す。後から足した項目はここで埋まる */
   DB = migrate(Object.assign(blank(), JSON.parse(localStorage.getItem(LS_KEY) || '{}')));
-  save();
+  /* 読み込んだ中身はもう端末に入っている。ここで書けなくても、
+     後から足した項目が次に開いたときに埋まるだけなので、知らせない */
+  save({ silent:true });
   try{ KemuriCore.sales.reload && KemuriCore.sales.reload(); }catch(e){}
   render();
   if(res.ng.length){
@@ -2401,7 +2495,15 @@ function bkApply(){
 }
 function resetAll(){
   if(!confirm('在庫・履歴・対応表をすべて消して、最初の状態に戻しますか？')) return;
-  localStorage.removeItem(LS_KEY); DB = load(); save(); render(); toast('最初の状態に戻しました');
+  /* 先に消さずに、初期状態で «上書き» する（E2）。
+     上書きできなかったときは、端末の中身は消す前のまま残る。 */
+  DB = seedDB();
+  if(!save({ silent:true })){
+    alert('⚠️ 最初の状態に戻せませんでした（保存できませんでした）。\n\n'
+        + 'データは消す前のまま残っています。');
+    return;
+  }
+  render(); toast('最初の状態に戻しました');
 }
 
 /* ---------- シート ---------- */
@@ -2485,7 +2587,9 @@ document.addEventListener('focusout', ()=>{
     DB.mig3 = 1;
   }
   migrate(DB);               // 上の追加ぶんにも、後から足した項目を埋める
-  save();
+  /* 開いたときの手入れを残すだけ。書けなければ次に開いたときにまたやる。
+     容量不足などは、実際に在庫を変える操作のときに知らせる */
+  save({ silent:true });
   render();
   importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ
 })();
