@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<script src="test-env.js?v=test1"></script><!-- テスト環境専用（test-envブランチのみ） -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="鍵の確認">
+<title>Web Locks 確認（テスト環境専用）</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f6f5f2;color:#222}
+  main{padding:14px;max-width:720px;margin:auto}
+  section{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px;margin:12px 0}
+  h1{font-size:18px;margin:6px 0}
+  h2{font-size:16px;margin:0 0 8px}
+  p{margin:6px 0;font-size:14px;line-height:1.6}
+  button{font-size:15px;padding:10px 12px;margin:4px 6px 4px 0;border-radius:8px;border:1px solid #888;background:#fff}
+  pre{white-space:pre-wrap;word-break:break-all;background:#f0efec;padding:8px;border-radius:6px;font-size:12px;min-height:1.4em}
+  .ok{color:#1b7a32;font-weight:700}.ng{color:#b3261e;font-weight:700}
+  #mode{font-size:15px;font-weight:700}
+</style>
+</head>
+<body>
+<main>
+<h1>Web Locks 確認（テスト環境専用）</h1>
+<p>このページは <b>Web Locks（同時に1つの画面だけが処理できるようにする鍵）</b> が、この端末・この開き方で使えるかを確かめるだけのページです。</p>
+<p><b>在庫アプリのデータには一切触れません。</b>端末の保存場所（localStorage など）の読み書きもしません。使う鍵の名前は <code>kmtest-</code> で始まるものだけで、閉じれば消えます。</p>
+<p id="mode">確認中…</p>
+
+<section><h2>1. 基本情報</h2><pre id="info">確認中…</pre></section>
+
+<section><h2>2. 自動テスト（この画面だけで確かめる）</h2>
+<p>押すと、次の4つを順に確かめます：①順番に実行されるか ②持っている間は、ほかの処理が鍵を取れないか（ページ内の2つの小窓・裏方の処理） ③「引き取り（steal）」の動き ④鍵の一覧を見られるか。</p>
+<button onclick="runAuto()">自動テストを始める</button>
+<pre id="auto"></pre></section>
+
+<section><h2>3. 2つの画面で確かめる</h2>
+<p>同じページを<b>もう1つの画面</b>で開きます（Safariなら新しいタブ）。<br>
+① 片方で「鍵を30秒持つ」を押す → ② もう片方で「鍵を取れるか試す」を押す。<br>
+<b>「取れませんでした（ほかの画面が持っています）」</b>と出れば、2つの画面で同時に鍵を取れないことが確認できます。30秒たつか「鍵を手放す」を押したあとに、もう一度試すと「取れました」になります。</p>
+<button onclick="hold(30)">鍵を30秒持つ</button><button onclick="release()">鍵を手放す</button><button onclick="tryTake()">鍵を取れるか試す</button>
+<pre id="pair"></pre>
+<p style="font-size:12px;color:#666">ほかの画面の様子（BroadcastChannel で届いた知らせ）：</p>
+<pre id="peer">まだありません</pre></section>
+
+<section><h2>4. 裏に回したとき</h2>
+<p>「鍵を30秒持つ」を押したあと、ホームに戻るか別のアプリを開いて10秒ほど待ち、この画面に戻って「鍵の一覧を見る」を押します。鍵がまだ持たれているか・手放されたかを記録します。</p>
+<button onclick="showQuery('bg')">鍵の一覧を見る</button>
+<pre id="bg"></pre></section>
+
+<section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
+</main>
+<script>
+'use strict';
+var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
+if (location.hostname === PROD_HOST) {
+  document.body.innerHTML = '<p style="padding:20px">本番サイトではこのページを使いません</p>';
+  throw new Error('production host');
+}
+var LOG = {};
+var SCREEN = Math.random().toString(36).slice(2, 6).toUpperCase();   /* この画面の名前（保存しない） */
+function now(){ return new Date().toISOString().slice(11, 23); }
+function put(id, text){ document.getElementById(id).textContent = text; LOG[id] = text; }
+function add(id, line){ put(id, (LOG[id] ? LOG[id] + '\n' : '') + line); }
+var HAS = ('locks' in navigator) && navigator.locks && typeof navigator.locks.request === 'function';
+var standalone = (window.navigator.standalone === true) ||
+  (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+(function info(){
+  document.getElementById('mode').innerHTML = 'この画面：<b>' + SCREEN + '</b>　／　開き方：' +
+    (standalone ? '<span class="ok">ホーム画面アプリとして起動</span>' : 'ブラウザのタブ') +
+    '　／　Web Locks：' + (HAS ? '<span class="ok">あり</span>' : '<span class="ng">なし</span>');
+  put('info', [
+    '日時: ' + new Date().toISOString(),
+    'URL: ' + location.origin + location.pathname,
+    'この画面の名前: ' + SCREEN,
+    'ホーム画面アプリとして起動: ' + (standalone ? 'はい' : 'いいえ'),
+    '安全な接続（https）: ' + (window.isSecureContext ? 'はい' : 'いいえ（Web Locksは使えません）'),
+    'Web Locks（navigator.locks）: ' + (HAS ? 'あり' : 'なし'),
+    'locks.query: ' + (HAS && typeof navigator.locks.query === 'function' ? 'あり' : 'なし'),
+    'BroadcastChannel: ' + (('BroadcastChannel' in window) ? 'あり' : 'なし'),
+    'Worker: ' + (('Worker' in window) ? 'あり' : 'なし'),
+    'UserAgent: ' + navigator.userAgent
+  ].join('\n'));
+})();
+
+/* ---------- 2. 自動テスト ---------- */
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+async function runAuto(){
+  put('auto', '');
+  if (!HAS) { add('auto', '<なし> この開き方では Web Locks が使えません。' + (window.isSecureContext ? '' : '（https で開いていないため）')); return; }
+  var pass = 0, total = 0;
+  function res(name, ok, detail){ total++; if (ok) pass++; add('auto', (ok ? '○ ' : '× ') + name + (detail ? '　' + detail : '')); }
+  /* ① 順番 */
+  try {
+    var order = [];
+    await Promise.all([
+      navigator.locks.request('kmtest-auto-1', async function(){ order.push('A開始'); await sleep(300); order.push('A終了'); }),
+      navigator.locks.request('kmtest-auto-1', async function(){ order.push('B開始'); order.push('B終了'); })
+    ]);
+    res('①順番に実行される', order.join(',') === 'A開始,A終了,B開始,B終了', order.join(','));
+  } catch (e) { res('①順番に実行される', false, String(e)); }
+  /* ②-1 同じ画面の中：持っている間は ifAvailable で取れない */
+  try {
+    var got = 'まだ';
+    var p1 = navigator.locks.request('kmtest-auto-2', async function(){ await sleep(500); });
+    await sleep(50);
+    await navigator.locks.request('kmtest-auto-2', { ifAvailable: true }, async function(l){ got = l ? '取れた' : '取れない'; });
+    await p1;
+    res('②持っている間は、ほかの処理は取れない（同じ画面）', got === '取れない', got);
+  } catch (e) { res('②持っている間は、ほかの処理は取れない（同じ画面）', false, String(e)); }
+  /* ②-2 ページ内の小窓（同じサイトのiframe）どうし */
+  try {
+    var r = await iframePair();
+    res('②持っている間は、ほかの処理は取れない（ページ内の小窓どうし）', r === '取れない', r);
+  } catch (e) { res('②持っている間は、ほかの処理は取れない（ページ内の小窓どうし）', false, String(e)); }
+  /* ②-3 裏方の処理（Worker）が持っているとき */
+  try {
+    var w = await workerHold();
+    res('②持っている間は、ほかの処理は取れない（裏方の処理Worker）', w === '取れない', w);
+  } catch (e) { res('②持っている間は、ほかの処理は取れない（裏方の処理Worker）', false, String(e)); }
+  /* ③ steal（引き取り） */
+  try {
+    var first = 'まだ', second = 'まだ';
+    var p = navigator.locks.request('kmtest-auto-3', async function(){ first = '持っている'; await sleep(800); first = '最後まで実行（止まらない）'; });
+    var rej = p.then(function(){ return '解決'; }, function(e){ return '拒否：' + (e && e.name); });
+    await sleep(50);
+    await navigator.locks.request('kmtest-auto-3', { steal: true }, async function(l){ second = l ? '引き取れた' : '取れない'; });
+    var r3 = await rej;
+    await sleep(900);
+    res('③引き取り（steal）で鍵を取れる', second === '引き取れた', second);
+    res('③引き取られた側に知らせが届く（AbortError）', /AbortError/.test(r3), r3 + '／前の処理は「' + first + '」');
+  } catch (e) { res('③引き取り（steal）', false, String(e)); }
+  /* ④ 一覧 */
+  try {
+    var q = await navigator.locks.query();
+    res('④鍵の一覧（query）を見られる', !!q && Array.isArray(q.held), '持っている ' + q.held.length + '件・待っている ' + q.pending.length + '件');
+  } catch (e) { res('④鍵の一覧（query）を見られる', false, String(e)); }
+  add('auto', '\n結果：' + pass + ' / ' + total + ' 件　成功（' + (standalone ? 'ホーム画面アプリ' : 'ブラウザのタブ') + '）');
+}
+/* 同じサイトの小窓を2つ作り、1つ目が鍵を持っている間に、2つ目が取れるか試す */
+function iframePair(){
+  return new Promise(function(resolve, reject){
+    var doc = '<script>onmessage=function(e){var d=e.data;' +
+      'if(d==="hold"){navigator.locks.request("kmtest-auto-frame",function(){parent.postMessage("held","*");return new Promise(function(r){setTimeout(r,800);});});}' +
+      'if(d==="try"){navigator.locks.request("kmtest-auto-frame",{ifAvailable:true},function(l){parent.postMessage(l?"取れた":"取れない","*");});}};<\/script>';
+    var f1 = document.createElement('iframe'), f2 = document.createElement('iframe');
+    [f1, f2].forEach(function(f){ f.style.display = 'none'; f.srcdoc = doc; document.body.appendChild(f); });
+    var loaded = 0, done = false;
+    var t = setTimeout(function(){ if (!done) { done = true; cleanup(); reject(new Error('時間切れ')); } }, 5000);
+    function cleanup(){ window.removeEventListener('message', onMsg); f1.remove(); f2.remove(); clearTimeout(t); }
+    function onMsg(e){
+      if (e.data === 'held') { f2.contentWindow.postMessage('try', '*'); return; }
+      if (e.data === '取れた' || e.data === '取れない') { if (!done) { done = true; cleanup(); resolve(e.data); } }
+    }
+    window.addEventListener('message', onMsg);
+    [f1, f2].forEach(function(f){ f.onload = function(){ if (++loaded === 2) f1.contentWindow.postMessage('hold', '*'); }; });
+  });
+}
+/* 裏方の処理（Worker）が鍵を持っている間に、この画面が取れるか試す */
+function workerHold(){
+  return new Promise(function(resolve, reject){
+    if (!('Worker' in window)) { resolve('Workerなし'); return; }
+    var src = 'onmessage=function(){navigator.locks.request("kmtest-auto-worker",function(){postMessage("held");return new Promise(function(r){setTimeout(r,800);});});};';
+    var url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+    var w = new Worker(url);
+    var t = setTimeout(function(){ w.terminate(); reject(new Error('時間切れ')); }, 5000);
+    w.onmessage = function(){
+      navigator.locks.request('kmtest-auto-worker', { ifAvailable: true }, function(l){
+        clearTimeout(t); w.terminate(); URL.revokeObjectURL(url); resolve(l ? '取れた' : '取れない');
+      });
+    };
+    w.onerror = function(e){ clearTimeout(t); reject(new Error('Workerのエラー：' + (e && e.message))); };
+    w.postMessage('go');
+  });
+}
+
+/* ---------- 3. 2つの画面 ---------- */
+var bc = ('BroadcastChannel' in window) ? new BroadcastChannel('kmtest-locks-check') : null;
+var peers = [];
+function tell(msg){ if (bc) bc.postMessage({ from: SCREEN, at: now(), msg: msg, standalone: standalone }); }
+if (bc) bc.onmessage = function(e){ var d = e.data || {}; peers.push(d.at + ' 画面' + d.from + (d.standalone ? '（ホーム画面アプリ）' : '') + '：' + d.msg); if (peers.length > 12) peers.shift(); put('peer', peers.join('\n')); };
+var holding = null;
+function hold(sec){
+  if (!HAS) { add('pair', now() + ' この開き方では Web Locks が使えません'); return; }
+  if (holding) { add('pair', now() + ' もう持っています'); return; }
+  add('pair', now() + ' 鍵を取りにいきます…');
+  var p = navigator.locks.request('kmtest-pair', function(){
+    return new Promise(function(r){
+      holding = r;
+      add('pair', now() + ' 鍵を持ちました（' + sec + '秒）');
+      tell('鍵を持ちました');
+      setTimeout(function(){ if (holding === r) release(); }, sec * 1000);
+    });
+  });
+  p.then(function(){ add('pair', now() + ' 鍵を手放しました'); tell('鍵を手放しました'); },
+         function(e){ holding = null; add('pair', now() + ' 鍵を失いました（' + (e && e.name) + '）'); tell('鍵を失いました'); });
+}
+function release(){ if (holding) { var r = holding; holding = null; r(); } else add('pair', now() + ' 持っていません'); }
+function tryTake(){
+  if (!HAS) { add('pair', now() + ' この開き方では Web Locks が使えません'); return; }
+  navigator.locks.request('kmtest-pair', { ifAvailable: true }, function(l){
+    if (l) { add('pair', now() + ' 取れました（ほかに持っている画面はありません）'); tell('試したら取れました'); }
+    else { add('pair', now() + ' 取れませんでした（ほかの画面が持っています）'); tell('試したら取れませんでした'); }
+  });
+}
+/* ---------- 4. 一覧 ---------- */
+async function showQuery(id){
+  if (!HAS || typeof navigator.locks.query !== 'function') { add(id, now() + ' 一覧を見る機能がありません'); return; }
+  try {
+    var q = await navigator.locks.query();
+    var held = q.held.filter(function(x){ return /^kmtest-/.test(x.name); }).map(function(x){ return x.name; });
+    var pend = q.pending.filter(function(x){ return /^kmtest-/.test(x.name); }).map(function(x){ return x.name; });
+    add(id, now() + ' 持たれている鍵：' + (held.join(', ') || 'なし') + '／待っている：' + (pend.join(', ') || 'なし') + '／この画面が持っている：' + (holding ? 'はい' : 'いいえ'));
+  } catch (e) { add(id, now() + ' 一覧を見られませんでした：' + e); }
+}
+document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'visible') add('bg', now() + ' この画面に戻りました'); else add('bg', now() + ' 裏に回りました'); });
+
+function copyAll(){
+  var t = ['info', 'auto', 'pair', 'peer', 'bg'].map(function(k){ return '[' + k + ']\n' + (LOG[k] || ''); }).join('\n\n');
+  put('all', t);
+  if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function(){});
+}
+</script>
+</body>
+</html>
