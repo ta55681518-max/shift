@@ -230,7 +230,7 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261024e3"></script>
+<script src="kemuri-core.js?v=20261024r5"></script>
 <script src="kemuri-backup.js?v=20261012b"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
@@ -1671,7 +1671,21 @@ function viewPos(){
 
   if(POS.step===1){
     /* 在庫には反映したが、売上履歴にまだ記録できていない取込（E3） */
-    const todo = salesTodo();
+    const outs = salesOut();
+    if(outs.length){
+      h += '<div class="warn" style="margin-bottom:12px">⚠️ <b>保存期間外の売上（' + outs.length + ' 件）</b><br>'
+         + '売上履歴は新しいほうから' + KemuriCore.sales.keepDays + '日分までのため、次の取込の売上は記録できません。'
+         + '控えとして残してあります（在庫は反映済み・二重に減りません）。';
+      outs.forEach(r=>{
+        const p = r.salesPending, d = p.outOfRange;
+        h += '<div class="gap"><b>' + esc(d[0]) + (d.length > 1 ? '〜' + esc(d[d.length-1]) + '（' + d.length + '日）' : '') + '</b>'
+           + '　' + p.sales.length + '行' + (p.exportedAt ? '・書き出し済み' : '')
+           + '<div class="two" style="margin-top:6px"><button class="btn btn-gray btn-sm" onclick="exportPending(' + r.id + ')">📤 ファイルに書き出す</button>'
+           + '<button class="btn btn-gray btn-sm" onclick="discardPending(' + r.id + ')">控えを消す…</button></div></div>';
+      });
+      h += '</div>';
+    }
+    const todo = salesTodo().filter(r=>outs.indexOf(r) < 0);
     if(todo.length){
       h += '<div class="warn" style="margin-bottom:12px">⚠️ <b>売上履歴にまだ記録できていない取込が ' + todo.length + ' 件あります。</b><br>'
          + '在庫は反映済みです（記録し直しても二重に減りません）。端末の空きを確認してから押してください。'
@@ -2050,7 +2064,8 @@ function posApply(){
   if(!syncSales(rec)){
     /* 売上履歴だけ残せなかった。在庫は反映済み、控えは残っている。
        黙って消えると「取り込んだのに売上に出ない」になるので必ず知らせる。 */
-    salesWarn = SALES_LATER_MSG;
+    const out = rec.salesPending && rec.salesPending.outOfRange;
+    salesWarn = (out && out.length) ? SALES_OUT_MSG(out) : SALES_LATER_MSG;
   }
   const n = noStock ? POS.sales.length : rec.lines.length;
   POS = { step:1, parsed:null, sales:null, period:{ from:'', to:'' }, showAll:false, noStock:false };
@@ -2084,7 +2099,20 @@ function syncSales(rec){
   }else if(rec.salesPending && !rec.undone){
     let res = null;
     try{ res = S.record(rec.salesPending.sales, rec.id, rec.salesPending.period); }catch(e){ res = null; }
-    if(res && res.saved === true){ delete rec.salesPending; done = true; }
+    if(res && res.saved === true){
+      const out = res.outOfRange || [];
+      if(out.length){
+        /* 保存期間外の日がある：記録できた日のぶんだけ控えから外し、
+           期間外の日のぶんは控えとして残す（成功扱いにしない） */
+        const set = {}; out.forEach(d=>set[d]=1);
+        rec.salesPending.sales = rec.salesPending.sales.filter(x=>set[x.day || KemuriCore.dayOf(x.at)]);
+        rec.salesPending.outOfRange = out;
+        rec.salesPending.checkedAt = nowISO();
+        save({ silent:true });     /* 残せなくても、次に試したとき同じ結果になる（二重にならない） */
+        return false;
+      }
+      delete rec.salesPending; done = true;
+    }
   }else return true;
   if(done){
     /* 印を消したことを残す。残せなくても、次に試したときに二重にはならない */
@@ -2093,8 +2121,55 @@ function syncSales(rec){
   }
   return false;
 }
-/* 記録し直しが必要な取込 */
+/* 記録し直しが必要な取込（保存期間外のものも含む） */
 function salesTodo(){ return DB.imports.filter(r=>(r.salesPending && !r.undone) || r.salesUndoPending); }
+/* そのうち «保存期間外のため記録できない» もの */
+function salesOut(){ return DB.imports.filter(r=>r.salesPending && !r.undone && r.salesPending.outOfRange && r.salesPending.outOfRange.length); }
+const SALES_OUT_MSG = days => '⚠️ 保存期間外のため、売上履歴に記録できません\n\n'
+  + '売上履歴は新しいほうから' + KemuriCore.sales.keepDays + '日分まで残します。次の日はそれより古いため、記録すると消えてしまいます：\n'
+  + days.slice(0, 5).join('、') + (days.length > 5 ? ' ほか' + (days.length - 5) + '日' : '') + '\n\n'
+  + 'この日のぶんの売上は控えとして残してあります（消えていません）。在庫は反映済みで、二重に減ることはありません。\n'
+  + '「POS」タブの「保存期間外の売上」から、ファイルに書き出せます。';
+/* 保存期間外の控えを、そのままファイルに書き出す（中身は変えない） */
+async function exportPending(id){
+  const rec = DB.imports.find(r=>r.id===id);
+  if(!rec || !rec.salesPending){ toast('控えが見つかりません'); return; }
+  const p = rec.salesPending;
+  const body = JSON.stringify({ tag:'kemuri-sales-pending', v:1, exportedAt:nowISO(),
+    importId:rec.id, importedAt:rec.at, file:rec.file, period:p.period||{}, outOfRange:p.outOfRange||[],
+    sales:p.sales }, null, 1);
+  const name = (window.KEMURI_ENV === 'test' ? 'TEST_' : '') + 'kemuri-sales-pending-' + rec.id + '-' + stampName() + '.json';
+  const file = new File([body], name, { type:'application/json' });
+  try{
+    if(navigator.canShare && navigator.canShare({ files:[file] })){
+      await navigator.share({ files:[file], title:'保存期間外の売上の控え' });
+    }else{
+      const url = URL.createObjectURL(file), a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    }
+  }catch(e){
+    if(e && e.name === 'AbortError') return;
+    alert('書き出せませんでした。もう一度試してください。控えは残っています。'); return;
+  }
+  /* 書き出した印を残す（消すときの確認に使う）。残せなくても控えはそのまま */
+  rec.salesPending.exportedAt = nowISO();
+  save({ silent:true });
+  render(); toast('書き出しました（' + name + '）');
+}
+/* 保存期間外の控えを消す。利用者がはっきり確認したときだけ */
+function discardPending(id){
+  const rec = DB.imports.find(r=>r.id===id);
+  if(!rec || !rec.salesPending || !(rec.salesPending.outOfRange||[]).length) return;
+  const p = rec.salesPending;
+  const qty = p.sales.reduce((a,x)=>a + (Number(x.qty)||0), 0);
+  if(!p.exportedAt && !confirm('この控えはまだファイルに書き出していません。\n消すと、この売上（' + p.outOfRange.join('、') + '）はどこにも残りません。\n\nそれでも続けますか？')) return;
+  if(!confirm('保存期間外の売上の控えを消します。\n\n日：' + p.outOfRange.join('、') + '\n行数：' + p.sales.length + '／出数の合計：' + qty
+            + '\n\n在庫は変わりません。売上履歴にも入りません。\n消してよいですか？')) return;
+  delete rec.salesPending;
+  if(!save()){ return; }          /* 保存できなければ控えは残る（save が元に戻す） */
+  render(); toast('控えを消しました');
+}
 /* まとめて試す。silent のときは知らせない（起動時の自動の試し直し） */
 function retrySales(silent){
   if(DATA_LOCK) return;
@@ -2102,14 +2177,19 @@ function retrySales(silent){
   if(!list.length){ if(!silent) toast('記録し直すものはありません'); return; }
   let ok = 0;
   list.slice().reverse().forEach(r=>{ if(syncSales(r)) ok++; });   /* 古い順に */
-  const left = salesTodo().length;
+  const outs = salesOut();
+  const left = salesTodo().length - outs.length;
   if(!silent){
     render();
+    if(outs.length){
+      const days = []; outs.forEach(r=>r.salesPending.outOfRange.forEach(d=>{ if(days.indexOf(d)<0) days.push(d); }));
+      alert(SALES_OUT_MSG(days.sort()));
+    }
     if(left) alert('売上履歴に記録できなかった取込が ' + left + ' 件残っています。\n\n'
                  + (KemuriCore.sales.broken ? '売上履歴のデータに異常があります（' + KemuriCore.sales.broken + '）。バックアップを確認してください。'
                                             : '端末の空き容量を確認して、もう一度押してください。')
                  + '\n\n在庫は反映済みです。二重に減ることはありません。');
-    else toast(ok + '件を売上履歴に記録しました');
+    else if(!outs.length) toast(ok + '件を売上履歴に記録しました');
   }
 }
 /* 取込の記録は30件まで。ただし «まだ売上履歴に記録できていないもの» は消さない */
@@ -2228,7 +2308,8 @@ function viewSet(){
     h += '<div class="hist"><span class="t">'+fmtDT(r.at)+'</span>'
        + '<span class="n" style="font-size:13px">'+esc(r.file)+'</span>'
        + '<span class="r">'+r.rows+'行'+(r.noStock?'・在庫そのまま':'')
-       +   (((r.salesPending && !r.undone) || r.salesUndoPending) ? '・<b style="color:#b3261e">売上履歴 未反映</b>' : '')+'</span>'
+       +   ((r.salesPending && !r.undone && r.salesPending.outOfRange && r.salesPending.outOfRange.length) ? '・<b style="color:#b3261e">売上履歴 期間外</b>'
+            : (((r.salesPending && !r.undone) || r.salesUndoPending) ? '・<b style="color:#b3261e">売上履歴 未反映</b>' : ''))+'</span>'
        + (r.undone? '<span class="r">取消済</span>'
                   : '<button class="btn btn-gray btn-sm" style="padding:6px 10px;font-size:12px" onclick="undoImport('+r.id+')">取消</button>')
        + '</div>';

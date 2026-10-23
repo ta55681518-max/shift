@@ -150,11 +150,39 @@
     /* SaleRecord[] を履歴に足す。
        importId … 冷凍在庫アプリの取込ID。取消のときに同じIDを渡す。
        戻り値 … { days:足した日数, items:足した商品数, qty:足した数 } */
+    /* 保存期間（新しいほうから KEEP_DAYS 日分）に入らない日を返す。
+       いまある日と、これから足す日を合わせて新しい順に並べ、
+       KEEP_DAYS 日目より古い日が «足してもすぐ整理されて消える日»。 */
+    outOfRange: function (newDays) {
+      var db = this.load(), all = {};
+      Object.keys(db.days).forEach(function (d) { all[d] = 1; });
+      (newDays || []).forEach(function (d) { if (d) all[d] = 1; });
+      var ds = Object.keys(all).sort();
+      if (ds.length <= KEEP_DAYS) return [];
+      var cut = ds[ds.length - KEEP_DAYS];          /* 残る日のうち一番古い日 */
+      var out = {};
+      (newDays || []).forEach(function (d) { if (d && d < cut) out[d] = 1; });
+      return Object.keys(out).sort();
+    },
+    keepDays: KEEP_DAYS,
+
+    /* 戻り値に outOfRange（保存期間外で記録しなかった日）を足した。
+       保存期間外の日の行は «足してから整理して消す» のではなく、最初から足さない。
+       呼ぶ側は outOfRange が空でなければ、その日のぶんの控えを消さずに残す。 */
     record: function (sales, importId, period) {
       /* 必ず端末から読み直してから足す（古い手元の内容で上書きしないため） */
       this._db = null;
       var db = this.load();
-      if (this.broken) return { days: 0, items: 0, qty: 0, saved: false, broken: this.broken };
+      if (this.broken) return { days: 0, items: 0, qty: 0, saved: false, broken: this.broken, outOfRange: [] };
+      /* 保存期間外の日は、記録する前に見つけて外す */
+      var dayOfSale = function (s) { return s.day || dayOf(s.at); };
+      var want = {};
+      (sales || []).forEach(function (s) { var d = dayOfSale(s); if (d) want[d] = 1; });
+      var outDays = this.outOfRange(Object.keys(want));
+      if (outDays.length) {
+        var outSet = {}; outDays.forEach(function (d) { outSet[d] = 1; });
+        sales = (sales || []).filter(function (s) { return !outSet[dayOfSale(s)]; });
+      }
       var log = { at: new Date().toISOString(), lines: [], seenKeys: [], totalsPrev: {}, spanDays: [] };
       var groups = {};
       var added = { days: {}, items: {}, qty: 0 };
@@ -203,12 +231,16 @@
         this._trimLogs(db);
       }
       this.prune(KEEP_DAYS);
+      /* 念のため：足した日が整理で消えていないか確かめる（消えていたら期間外として返す） */
+      Object.keys(added.days).forEach(function (d) { if (!db.days[d] && outDays.indexOf(d) < 0) outDays.push(d); });
+      outDays.sort();
       var saved = this.save();
       return {
         days: Object.keys(added.days).length,
         items: Object.keys(added.items).length,
         qty: added.qty,
-        saved: saved            // false … 端末の保存容量がいっぱいで残せなかった
+        saved: saved,           // false … 端末の保存容量がいっぱいで残せなかった
+        outOfRange: outDays     // 保存期間外で記録しなかった日（空なら全部記録した）
       };
     },
 
