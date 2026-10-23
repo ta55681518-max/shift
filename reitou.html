@@ -356,6 +356,23 @@ var SAVED_RAW = null;
    ============================================================ */
 var TAB_ID = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 /* ============================================================
+   方式B 第1段階：編集できる画面を1つにする（Web Locks）
+   ------------------------------------------------------------
+   EDITOR.mode
+     pending     … 起動直後、編集権を確かめているところ（保存しない）
+     editor      … 編集権を持っている（この画面だけが保存できる）
+     viewer      … 別の画面が編集権を持っている → 表示専用
+     unsupported … Web Locks が使えない → 安全のため表示専用
+     error       … 編集権を確かめられなかった → 表示専用
+   ・編集権は鍵「kemuri-reitou-editor」を持つことで表す。最初に開いた画面が
+     取り、画面を閉じるまで持ち続ける（閉じればブラウザが自動で手放す）。
+   ・後から開いた画面は表示専用。自動で奪ったり（steal）引き取ったりはしない。
+     「編集を始める」を押したときだけ、空いていれば取る（第1段階）。
+   ・保存の入口 save() で必ず確かめる。ボタンを隠すだけにはしない。
+   ============================================================ */
+var EDIT_LOCK = 'kemuri-reitou-editor';
+var EDITOR = { mode:'pending', at:null };
+/* ============================================================
    データ保護（保存データが壊れていたら、初期データで上書きしない）
    ------------------------------------------------------------
    DATA_LOCK … null＝ふつう。値があるときは «保存データに異常» で、
@@ -485,6 +502,13 @@ function save(opts){
     if(!(opts && opts.silent)) alert(LOCK_MSG + '\n\n（' + DATA_LOCK.detail + '）');
     return false;
   }
+  /* 編集権の無い画面は保存しない（方式B）。画面の中は保存されている中身に戻す */
+  if(EDITOR.mode !== 'editor'){
+    restoreSaved();
+    try{ render(); }catch(e){}
+    if(!(opts && opts.silent)) alert(viewOnlyMsg());
+    return false;
+  }
   /* 版を1つ進め、書いた画面の印を付ける（E1） */
   const prevRev = DB.rev, prevWid = DB.wid;
   DB.rev = (Number(DB.rev) || 0) + 1; DB.wid = TAB_ID;
@@ -517,6 +541,75 @@ function saveConflict(opts){
   return false;
 }
 var CONFLICTS = 0;               /* 競合で止めた回数（テスト・確認用） */
+/* 表示専用のときの知らせ */
+function viewOnlyMsg(){
+  if(EDITOR.mode === 'viewer') return '別の画面で在庫アプリを使用しています。この画面は表示専用です。\n\n'
+    + 'この画面で編集したいときは、もう一方の画面を閉じてから「この画面で編集を始める」を押してください。\n（いまの操作は保存していません）';
+  if(EDITOR.mode === 'unsupported') return 'この端末・開き方では、編集できる画面を1つに限る仕組み（Web Locks）が使えないため、表示専用にしています。\n（いまの操作は保存していません）';
+  if(EDITOR.mode === 'pending') return '編集できるかを確かめているところです。少し待ってから、もう一度やってください。\n（いまの操作は保存していません）';
+  return '編集できるかを確かめられなかったため、表示専用にしています。画面を開き直してください。\n（いまの操作は保存していません）';
+}
+function canEdit(){ return EDITOR.mode === 'editor' && !DATA_LOCK; }
+/* 編集権を取りにいく。ifAvailable なので、空いていなければ待たずに諦める（奪わない） */
+function acquireEditor(byUser, tries){
+  if(EDITOR.mode === 'editor') return;
+  tries = tries || 0;
+  if(!('locks' in navigator) || !navigator.locks || typeof navigator.locks.request !== 'function'){
+    EDITOR.mode = 'unsupported'; render();
+    if(byUser) alert(viewOnlyMsg());
+    return;
+  }
+  let settled = false;
+  const fail = ()=>{ if(settled) return; settled = true; EDITOR.mode = 'error'; render(); };
+  const timer = setTimeout(fail, 5000);
+  try{
+    navigator.locks.request(EDIT_LOCK, { ifAvailable:true }, lock=>{
+      clearTimeout(timer);
+      if(settled) return;                                  /* 時間切れのあとに来たら使わない */
+      settled = true;
+      if(!lock){
+        /* 開き直した直後は、前の画面の鍵がまだ手放されていないことがある。
+           起動時だけ、少し待って数回だけ試し直す（奪いはしない） */
+        if(!byUser && tries < 4){ setTimeout(()=>acquireEditor(false, tries + 1), 400); return; }
+        EDITOR.mode = 'viewer'; render();
+        if(byUser) alert('まだ別の画面が在庫アプリを使っています。\nもう一方の画面を閉じてから、もう一度押してください。');
+        return;
+      }
+      EDITOR.mode = 'editor'; EDITOR.at = nowISO();
+      becomeEditor();
+      return new Promise(()=>{});                          /* 画面を閉じるまで持ち続ける */
+    }).catch(()=>{ clearTimeout(timer); if(EDITOR.mode === 'editor'){ EDITOR.mode = 'error'; render(); } else fail(); });
+  }catch(e){ clearTimeout(timer); fail(); }
+}
+/* 編集権を取った直後：最新の保存データを読み直してから、編集と自動の処理を始める */
+function becomeEditor(){
+  const r = readStored();
+  if(r.state === 'ok'){ DB = migrate(Object.assign(blank(), r.data), true); SAVED_RAW = r.raw; DATA_LOCK = null; }
+  else if(r.state === 'empty'){ if(SAVED_RAW != null){ r.detail = '保存したはずのデータが端末に見つかりません'; lockData(r); } else DB = seedDB(); }
+  else lockData(r);
+  if(!DATA_LOCK){
+    prepareDB();
+    /* 開いたときの手入れを残す（編集権のある画面だけ） */
+    save({ silent:true });
+    /* 売上履歴への自動の記録し直しも、編集権のある画面だけ */
+    retrySales(true);
+  }
+  render();
+  importFromHash();          // 取り込みボタンから開かれていたら、ここで確認画面へ
+}
+/* 表示専用の帯 */
+function editBar(){
+  if(EDITOR.mode === 'editor') return '';
+  const m = EDITOR.mode;
+  const text = m === 'viewer' ? '別の画面で在庫アプリを使用しています。この画面は表示専用です。'
+             : m === 'unsupported' ? 'この開き方では編集の管理ができないため、表示専用です（バックアップの書き出しはできます）。'
+             : m === 'pending' ? '編集できるか確かめています…'
+             : '編集できるか確かめられませんでした。この画面は表示専用です。';
+  const btn = m === 'viewer' ? '<button class="btn btn-gray btn-sm gap" onclick="acquireEditor(true)">この画面で編集を始める</button>'
+            : m === 'error' ? '<button class="btn btn-gray btn-sm gap" onclick="location.reload()">開き直す</button>' : '';
+  return '<div class="warn" id="editbar" style="margin:12px 12px 0">🔒 ' + text
+       + (m === 'viewer' ? '<div class="muted" style="margin-top:4px">もう一方の画面を閉じてから押してください。</div>' : '') + btn + '</div>';
+}
 /* 別の画面での変更に気づいたら、最新を読み込む（E1）。
    自分の直前の保存が «ほぼ同時の保存» で上書きされていたら、それも知らせる。 */
 function checkFresh(){
@@ -662,6 +755,7 @@ function checkBackupReitou(box){
    ほかのデータ（売上履歴など）には触らない。 */
 function lockRecover(text, from){
   if(!DATA_LOCK) return;
+  if(EDITOR.mode !== 'editor'){ alert(viewOnlyMsg()); return; }
   const box = KemuriBackup.parse(text);
   if(!box){ alert('バックアップとして読めませんでした（' + from + '）。'); return; }
   const c = checkBackupReitou(box);
@@ -859,6 +953,7 @@ function render(){
   if(TAB==='arrive') v.innerHTML = viewArrive();
   if(TAB==='pos')    v.innerHTML = viewPos();
   if(TAB==='set')    v.innerHTML = viewSet();
+  if(EDITOR.mode !== 'editor') v.insertAdjacentHTML('afterbegin', editBar());
 }
 
 /* ---------- ① 在庫一覧（トップ） ---------- */
@@ -1648,6 +1743,7 @@ function readDailyCsv(){
 function saveDailyCsv(){
   const r = DAY.res;
   if(!r || !r.rows.length) return;
+  if(EDITOR.mode !== 'editor'){ alert(viewOnlyMsg()); return; }
   const res = KemuriData.daily.importRows(r.rows);
   /* 保存できなかったら、成功の表示を出さずに知らせる（E2）。
      読み込んだ内容は画面に残すので、空きを作ってからもう一度押せる */
@@ -1884,6 +1980,7 @@ function pasteImport(){
 /* 読み取れたら、列が分かっている限り確認画面を飛ばしてプレビューまで一気に進む */
 function startImport(parsed){
   if(DATA_LOCK){ alert(LOCK_MSG); render(); return; }
+  if(EDITOR.mode !== 'editor'){ alert(viewOnlyMsg()); render(); return; }
   POS.parsed = parsed;
   POS.period = periodFromRows(parsed.rows, parsed.headIdx) || defaultPeriod();
   POS.showAll = false;
@@ -2006,6 +2103,7 @@ function setMap(v, name){
   setTimeout(render, 0);
 }
 function posApply(){
+  if(!canEdit()){ alert(DATA_LOCK ? LOCK_MSG : viewOnlyMsg()); render(); return; }
   const pv = buildPreview(POS.sales);
   const pr = POS.period || { from:'', to:'' };
   const rec = { id:DB.seq++, at:nowISO(), file:POS.parsed.file, period:{ from:pr.from, to:pr.to },
@@ -2173,6 +2271,7 @@ function discardPending(id){
 /* まとめて試す。silent のときは知らせない（起動時の自動の試し直し） */
 function retrySales(silent){
   if(DATA_LOCK) return;
+  if(EDITOR.mode !== 'editor'){ if(!silent) alert(viewOnlyMsg()); return; }
   const list = salesTodo();
   if(!list.length){ if(!silent) toast('記録し直すものはありません'); return; }
   let ok = 0;
@@ -2215,6 +2314,7 @@ function pruneSeen(){
 function undoImport(id){
   const rec = DB.imports.find(r=>r.id===id);
   if(!rec || rec.undone) return;
+  if(!canEdit()){ alert(DATA_LOCK ? LOCK_MSG : viewOnlyMsg()); return; }
   if(!confirm('この取込を取り消して、引いた在庫を戻しますか？')) return;
   rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
@@ -2892,6 +2992,7 @@ function bkApply(){
   const keys = Object.keys(BK.pick).filter(k=>BK.pick[k]);
   if(!keys.length) return;
   if(DATA_LOCK){ closeSheet(); render(); return; }   /* 停止中は «復旧» の手順だけを使う */
+  if(EDITOR.mode !== 'editor'){ closeSheet(); alert(viewOnlyMsg()); render(); return; }   /* 表示専用の画面では復元しない */
   /* 在庫アプリぶんを入れるなら、先に中身を確かめる（異常なデータで上書きしない） */
   if(keys.indexOf(LS_KEY) >= 0){
     const c = checkBackupReitou(box);
@@ -2919,6 +3020,7 @@ function bkApply(){
 }
 function resetAll(){
   if(DATA_LOCK){ alert(LOCK_MSG + '\n\n停止中は初期化できません。'); return; }
+  if(EDITOR.mode !== 'editor'){ alert(viewOnlyMsg()); return; }
   if(!confirm('在庫・履歴・対応表をすべて消して、最初の状態に戻しますか？')) return;
   /* 先に消さずに、初期状態で «上書き» する（E2）。
      上書きできなかったときは、端末の中身は消す前のまま残る。 */
@@ -2943,7 +3045,8 @@ function closeSheet(){ document.getElementById('ov').classList.remove('show'); }
    起動時にそれを読み取ってそのままプレビューまで進める。 */
 function importFromHash(){
   if(window.__kemuriMoving) return false;
-  if(DATA_LOCK) return false;               /* 停止中は取り込まない（URLの売上もそのまま残す） */   // 古いURLから新しいURLへ移る途中。ここでは読まない
+  if(DATA_LOCK) return false;               /* 停止中は取り込まない（URLの売上もそのまま残す） */
+  if(EDITOR.mode !== 'editor') return false;  /* 表示専用の画面では取り込まない（URLの売上は残し、編集を始めたら取り込む） */   // 古いURLから新しいURLへ移る途中。ここでは読まない
   const m = String(location.hash||'').match(/[#&]pos=([^&]*)/);
   if(!m || !m[1]) return false;
   let text = '';
@@ -3016,18 +3119,13 @@ function prepareDB(){
   migrate(DB, true);         // 上の追加ぶんにも、後から足した項目を埋める（書くのは起動時の save で）
 }
 (function init(){
-  /* 保存データに異常があるときは、手入れも保存もしない（元のデータを残す） */
-  if(!DATA_LOCK){
-    prepareDB();
-    /* 開いたときの手入れを残すだけ。書けなければ次に開いたときにまたやる。
-       容量不足などは、実際に在庫を変える操作のときに知らせる */
-    save({ silent:true });
-    /* 前回、在庫は反映したのに売上履歴に記録できなかった取込があれば、
-       黙って記録し直す（二重にはならない）。できなければPOSタブに出す */
-    retrySales(true);
-  }
+  /* 表示のための手入れだけ（書かない）。保存と自動の処理は、編集権を取ってから */
+  if(!DATA_LOCK) prepareDB();
   render();
-  importFromHash();          // 取り込みボタンから開かれたときは、そのままプレビューへ（停止中は何もしない）
+  /* 編集権を取りにいく。取れたら最新を読み直して、開いたときの保存・
+     売上履歴の自動の記録し直し・取り込みボタンからの取込を行う（becomeEditor）。
+     取れなければ表示専用。 */
+  acquireEditor(false);
 })();
 </script>
 </body>
