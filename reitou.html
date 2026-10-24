@@ -364,6 +364,8 @@ var TAB_ID = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
      viewer      … 別の画面が編集権を持っている → 表示専用
      unsupported … Web Locks が使えない → 安全のため表示専用
      error       … 編集権を確かめられなかった → 表示専用
+     dormant     … 画面が裏に回ったので編集権を手放した（保存しない。入力中の内容は残す）
+                   表に戻ったら、空いていれば取り直す（第2-A追加：iPhoneの画面切り替え）
    ・編集権は鍵「kemuri-reitou-editor」を持つことで表す。最初に開いた画面が
      取り、画面を閉じるまで持ち続ける（閉じればブラウザが自動で手放す）。
    ・後から開いた画面は表示専用。自動で奪ったり（steal）引き取ったりはしない。
@@ -502,6 +504,8 @@ function save(opts){
     if(!(opts && opts.silent)) alert(LOCK_MSG + '\n\n（' + DATA_LOCK.detail + '）');
     return false;
   }
+  /* 画面が裏に回っているのに手放せていなかった（iPhoneで知らせが来なかった等）→ ここで手放して書かない */
+  if(EDITOR.mode === 'editor' && isHidden()) goDormant('save-hidden');
   /* 編集権の無い画面は保存しない（方式B）。画面の中は保存されている中身に戻す */
   if(EDITOR.mode !== 'editor'){
     restoreSaved();
@@ -544,7 +548,8 @@ var CONFLICTS = 0;               /* 競合で止めた回数（テスト・確�
 /* 表示専用のときの知らせ */
 function viewOnlyMsg(){
   if(EDITOR.mode === 'viewer') return '別の画面で在庫アプリを使用しています。この画面は表示専用です。\n\n'
-    + 'この画面で編集したいときは、もう一方の画面を閉じてから「この画面で編集を始める」を押してください。\n（いまの操作は保存していません）';
+    + 'もう一方の画面を裏に回す（タブを切り替える・ホームに戻る）か閉じると、この画面で編集できるようになります。\n（いまの操作は保存していません）';
+  if(EDITOR.mode === 'dormant') return '画面を切り替えた直後のため、編集できるかを確かめています。少し待ってから、もう一度やってください。\n（いまの操作は保存していません）';
   if(EDITOR.mode === 'unsupported') return 'この端末・開き方では、編集できる画面を1つに限る仕組み（Web Locks）が使えないため、表示専用にしています。\n（いまの操作は保存していません）';
   if(['requesting','verifying','releasing'].indexOf(EDITOR.mode) >= 0) return '編集の引き継ぎ中です。終わるまで待ってください。\n（いまの操作は保存していません）';
   if(EDITOR.mode === 'unresponsive' || EDITOR.mode === 'handover-failed') return '編集を引き継げていないため、この画面は表示専用です。\n（いまの操作は保存していません）';
@@ -569,10 +574,12 @@ function acquireEditor(byUser, tries){
       clearTimeout(timer);
       if(settled) return;                                  /* 時間切れのあとに来たら使わない */
       settled = true;
+      /* 裏で開かれた画面は持たない（表に出たときに取りにいく）。取った鍵はここで手放す */
+      if(lock && isHidden()){ EDITOR.mode = 'dormant'; AUTO.dormantRaw = SAVED_RAW; return; }
       if(!lock){
         /* 開き直した直後は、前の画面の鍵がまだ手放されていないことがある。
            起動時だけ、少し待って数回だけ試し直す（奪いはしない） */
-        if(!byUser && tries < 4){ setTimeout(()=>acquireEditor(false, tries + 1), 400); return; }
+        if(!byUser && tries < 4 && !isHidden()){ setTimeout(()=>acquireEditor(false, tries + 1), 400); return; }
         EDITOR.mode = 'viewer'; render();
         if(byUser) alert('まだ別の画面が在庫アプリを使っています。\nもう一方の画面を閉じてから、もう一度押してください。');
         return;
@@ -587,6 +594,9 @@ function acquireEditor(byUser, tries){
 }
 /* 編集権を取った直後：最新の保存データを読み直してから、編集と自動の処理を始める */
 function becomeEditor(){
+  EDITOR.inited = true;
+  AUTO.lastFree = null;          /* 最新を読み直すので、前の画面の控えは使い終わり */
+  AUTO.dormantRaw = null;
   const r = readStored();
   if(r.state === 'ok'){ DB = migrate(Object.assign(blank(), r.data), true); SAVED_RAW = r.raw; DATA_LOCK = null; }
   else if(r.state === 'empty'){ if(SAVED_RAW != null){ r.detail = '保存したはずのデータが端末に見つかりません'; lockData(r); } else DB = seedDB(); }
@@ -640,7 +650,8 @@ function storedSummary(){
   return { rev:(o && Number(o.rev)) || 0, wid:(o && o.wid) || '', hash:quickHash(raw), pend, marks };
 }
 function postEdit(msg){ if(EDIT_CH){ try{ EDIT_CH.postMessage(Object.assign({ from:TAB_ID, at:nowISO() }, msg)); }catch(e){} } }
-function announceEditor(){ postEdit({ t:'editor' }); }
+/* since … この画面が編集権を取った時刻。«それより前に出された依頼» には応じない／頼んだ側は取り下げる、の判定に使う */
+function announceEditor(){ postEdit({ t:'editor', since:EDITOR.at }); }
 if(EDIT_CH) EDIT_CH.onmessage = function(e){
   const m = e.data || {};
   if(m.from === TAB_ID) return;
@@ -649,12 +660,23 @@ if(EDIT_CH) EDIT_CH.onmessage = function(e){
   if(m.t === 'req' && EDITOR.mode === 'editor'){
     const age = Date.now() - Date.parse(m.at || '');
     if(!(age >= -2000 && age < HANDOVER_WAIT - 500)) return;
+    /* 自分が編集権を取る前に出された依頼には応じない（頼んだ側は、自分の «editor» の知らせを見て取り下げる）。
+       応じると、頼んだ側も取り下げていて誰も編集できなくなることがある */
+    if(EDITOR.at && Date.parse(m.at || '') < Date.parse(EDITOR.at)) return;
     releaseForHandover(m.id, m.from);
   }
   /* 頼んでいる間に、別の画面が先に引き継いだ → 自分の依頼は取り下げる */
-  else if(m.t === 'editor' && HANDOVER && EDITOR.mode === 'requesting'){ if(HANDOVER.cancel) HANDOVER.cancel(); }
+  /* ただし、その画面が編集権を取ったのが自分の依頼より前なら、その画面が依頼に応じてくれるので取り下げない */
+  else if(m.t === 'editor' && HANDOVER && EDITOR.mode === 'requesting'){
+    if(Date.parse(m.since || m.at || '') < HANDOVER.at) return;
+    if(HANDOVER.cancel) HANDOVER.cancel();
+  }
   else if(m.t === 'ack' && HANDOVER && m.id === HANDOVER.id) HANDOVER.ack = m;
+  /* 別の画面が裏に回って手放した（第2-A追加）。最後の保存の版を控え、表示中なら取りにいく */
+  else if(m.t === 'free') onFree(m);
   else if(m.t === 'editor' && EDITOR.mode === 'editor' && !HANDOVER){
+    /* 自分が編集権を取る前に出された知らせ（裏で止まっていて遅れて届いた等）は古いので見ない */
+    if(EDITOR.at && Date.parse(m.at || '') <= Date.parse(EDITOR.at)) return;
     /* 鍵は1つなので本来起きない。念のため、自分を表示専用にして守る */
     EDITOR.mode = 'error'; if(EDITOR.release){ const r = EDITOR.release; EDITOR.release = null; r(); } render();
   }
@@ -676,16 +698,18 @@ function releaseForHandover(id, to){
 function requestHandover(){
   if(EDITOR.mode === 'editor') return Promise.resolve('editor');
   if(HANDOVER) return HANDOVER.done;
+  if(AUTO.busy) return AUTO.done || Promise.resolve(EDITOR.mode);   /* 自動の取り直しの最中 → その結果を待つ */
   if(!('locks' in navigator) || !navigator.locks || typeof navigator.locks.request !== 'function'){
     EDITOR.mode = 'unsupported'; render(); return Promise.resolve('unsupported');
   }
   const id = TAB_ID + '-' + Date.now().toString(36);
   const ac = ('AbortController' in window) ? new AbortController() : null;
   let finish;
-  HANDOVER = { id, ack:null, done:new Promise(r=>finish = r) };
+  const reqAt = nowISO();
+  HANDOVER = { id, at:Date.parse(reqAt), ack:null, done:new Promise(r=>finish = r) };
   const H = HANDOVER;
   EDITOR.mode = 'requesting'; render();
-  postEdit({ t:'req', id });
+  postEdit({ t:'req', id, at:reqAt });
   const timer = setTimeout(()=>{ if(ac) ac.abort(); }, HANDOVER_WAIT);
   H.cancel = ()=>{ H.cancelled = true; if(ac) ac.abort(); };
   const end = (mode, msg)=>{
@@ -698,17 +722,20 @@ function requestHandover(){
     navigator.locks.request(EDIT_LOCK, ac ? { signal:ac.signal } : {}, async lock=>{
       clearTimeout(timer);
       EDITOR.mode = 'verifying'; render();
-      const ok = await verifyAfterAcquire(H.ack);
+      /* 前の画面の返事（ack）が無いとき＝裏に回って先に手放していたときは、そのとき届いた控え（free）で照合 */
+      const ok = await verifyAfterAcquire(H.ack || AUTO.lastFree);
       if(!ok.ok){ end('handover-failed', ok.why); return; }   /* 鍵は手放す（ここで終わる） */
       EDITOR.mode = 'editor'; EDITOR.at = nowISO(); EDITOR.handedTo = null; EDITOR.note = '';
       if(HANDOVER === H) HANDOVER = null;
       becomeEditor();
       announceEditor();
       finish('editor');
+      /* 確かめている間に裏に回っていたら、すぐ手放す */
+      if(isHidden()) setTimeout(()=>goDormant('hidden-after-handover'), 0);
       return new Promise(res=>{ EDITOR.release = res; });     /* 閉じるか頼まれるまで持つ */
     }).catch(err=>{
       /* 時間切れで待つのをやめた */
-      if(EDITOR.mode === 'editor') return;
+      if(EDITOR.mode === 'editor'){ clearTimeout(timer); if(HANDOVER === H) HANDOVER = null; finish('editor'); return; }
       if(H.cancelled){ end('viewer', '別の画面が先に編集を引き継ぎました。'); return; }
       if(H.ack) end('handover-failed', '前の画面は手放すと返事をしましたが、時間内に編集権が届きませんでした。');
       else end('unresponsive', '');
@@ -731,6 +758,137 @@ async function verifyAfterAcquire(ack){
     await new Promise(r=>setTimeout(r, 200));
   }
 }
+/* ============================================================
+   方式B 第2-A追加：iPhoneの画面切り替え対応
+   ------------------------------------------------------------
+   iPhone（Safari・Chrome・ホーム画面アプリ）では、裏に回った画面の
+   JavaScriptが止まり、引き継ぎの依頼に返事ができない。そこで
+   «裏に回ったら自分から手放す» ようにする。
+   ・裏に回った（visibilitychange→hidden / pagehide / freeze）
+       → goDormant()：まず保存を止め（mode=dormant）、鍵を手放し、
+         最後の保存の版などを free で知らせる。入力中の内容は確定しない・消さない
+   ・表に戻った（visibilitychange→visible / pageshow / focus / resume）、
+     または表示中に free が届いた、または表示中の定期確認（POLL_MS ごと）
+       → tryAutoEdit()：鍵が空いているときだけ取る（ifAvailable。奪わない）
+         取れたら free の控えと保存データを照合（verifyAfterAcquire）してから
+         resumeEditor()：
+           保存データが手放したときのまま → 入力を続けられる（画面はそのまま）
+           別の画面で変わっていた        → 最新を読み込み、開いていた入力シートは閉じる。
+                                            入荷・棚卸の入力中の数は残し、確かめてから押すよう案内
+           壊れていた                    → データ保護の停止（DATA_LOCK）
+   ・iPhoneでは裏に回るときのイベントが来ないこともある。そのときは鍵を持ったまま
+     止まるので、他の画面は «空いていない» と見て表示専用のまま（上書きは起きない）。
+     止まった画面が表に戻るか、iPhoneが画面を破棄して鍵が空いたら、
+     定期確認で自動的に編集できるようになる。保存の直前にも «裏に回っていないか» を確かめる。
+   ============================================================ */
+var POLL_MS = 2000;
+var AUTO = { busy:false, done:null, lastFree:null, dormantRaw:null, log:[] };
+function isHidden(){ return document.visibilityState === 'hidden'; }
+function autoLog(s){ AUTO.log.push(nowISO().slice(11, 23) + ' ' + s); if(AUTO.log.length > 40) AUTO.log.shift(); }
+/* 裏に回った：保存を止めてから鍵を手放す（何度呼ばれても1回だけ効く） */
+function goDormant(why){
+  if(EDITOR.mode !== 'editor') return;
+  EDITOR.mode = 'dormant';                     /* ここから先の保存は断る（save は editor 以外を断る） */
+  AUTO.dormantRaw = SAVED_RAW;                 /* 手放したときの保存データ（戻ったときの比較に使う） */
+  EDITOR.dormantAt = nowISO();
+  const sum = storedSummary();
+  const r = EDITOR.release; EDITOR.release = null;
+  if(r) r();                                   /* 鍵を手放す */
+  postEdit(Object.assign({ t:'free' }, sum || { rev:-1 }));
+  autoLog('dormant ' + why);
+}
+/* 別の画面が手放した知らせ */
+function onFree(m){
+  AUTO.lastFree = m;
+  if(EDITOR.mode === 'editor'){ catchUp(m); return; }
+  if(!isHidden()) setTimeout(()=>tryAutoEdit('free'), 60);
+}
+/* 編集権を取ったあとに、取る前の free が遅れて届いた。端末の保存データがまだ追いついて
+   いなければ、追いつくまで保存を止め、最新を読み込んでから再開する（古い中身で上書きしない） */
+async function catchUp(m){
+  const now = storedSummary();
+  if(!now || m.rev < 0 || now.rev >= m.rev){ AUTO.lastFree = null; return; }
+  EDITOR.mode = 'verifying'; render();
+  const ok = await verifyAfterAcquire(m);
+  if(EDITOR.mode !== 'verifying') return;
+  if(!ok.ok){
+    EDITOR.mode = 'handover-failed'; EDITOR.note = ok.why;
+    const r = EDITOR.release; EDITOR.release = null; if(r) r();
+    render(); return;
+  }
+  AUTO.lastFree = null;
+  restoreSaved(); closeSheet();
+  EDITOR.mode = 'editor'; render();
+  toast('別の画面での変更を読み込みました');
+}
+/* 表に戻った・空いたかもしれない：空いていれば取る（奪わない） */
+var AUTO_MODES = ['dormant', 'viewer', 'unresponsive', 'handover-failed'];
+function tryAutoEdit(why){
+  if(AUTO.busy || HANDOVER || isHidden()) return AUTO.done || Promise.resolve(EDITOR.mode);
+  const m0 = EDITOR.mode;
+  if(AUTO_MODES.indexOf(m0) < 0) return Promise.resolve(m0);
+  if(!('locks' in navigator) || !navigator.locks || typeof navigator.locks.request !== 'function') return Promise.resolve(m0);
+  /* 裏に回って手放したあと（そのあと表示専用になっていても）に取り直すのか */
+  const wasDormant = AUTO.dormantRaw !== null && !!EDITOR.inited;
+  let finish;
+  AUTO.busy = true; AUTO.done = new Promise(r=>finish = r);
+  const fin = ()=>{ AUTO.busy = false; const f = finish; AUTO.done = null; f(EDITOR.mode); };
+  try{
+    navigator.locks.request(EDIT_LOCK, { ifAvailable:true }, async lock=>{
+      if(!lock){
+        /* 別の画面が使っている → 表示専用（手放した画面も、ここで表示専用になる） */
+        if(EDITOR.mode === 'dormant'){ EDITOR.mode = 'viewer'; EDITOR.handedTo = null; EDITOR.note = ''; render(); }
+        fin(); return;
+      }
+      /* 取った直後に裏に回った・別の経路で状態が変わった → 何もせずに手放す */
+      if(isHidden() || HANDOVER || EDITOR.mode !== m0){ fin(); return; }
+      EDITOR.mode = 'verifying';
+      if(!wasDormant) render();
+      const ok = await verifyAfterAcquire(AUTO.lastFree);
+      if(EDITOR.mode !== 'verifying'){ fin(); return; }
+      if(isHidden()){ EDITOR.mode = m0; fin(); return; }          /* 確かめている間に裏へ → 元の状態で手放す */
+      if(!ok.ok){ EDITOR.mode = 'handover-failed'; EDITOR.note = ok.why; render(); fin(); return; }
+      EDITOR.mode = 'editor'; EDITOR.at = nowISO(); EDITOR.handedTo = null; EDITOR.note = '';
+      resumeEditor(wasDormant);
+      announceEditor();
+      autoLog('editor by ' + why + (wasDormant ? ' (resume)' : ''));
+      fin();
+      return new Promise(res=>{ EDITOR.release = res; });
+    }).catch(()=>{ if(EDITOR.mode === 'verifying') EDITOR.mode = m0; fin(); });
+  }catch(e){ fin(); }
+  return AUTO.done;
+}
+/* 取り直した直後：保存データが手放したときのままか確かめ、入力を続けるか最新を読み込むかを決める */
+function resumeEditor(wasDormant){
+  const r = readStored();
+  const same = wasDormant && r.state === 'ok' && r.raw === AUTO.dormantRaw && r.raw === SAVED_RAW;
+  AUTO.dormantRaw = null;
+  if(same){
+    /* 変わっていない → 画面も入力もそのまま。帯だけ消す */
+    AUTO.lastFree = null;
+    const b = document.getElementById('editbar'); if(b) b.remove();
+    retrySales(true);
+    return;
+  }
+  const hadSheet = document.getElementById('ov').classList.contains('show');
+  const hadInput = TAB === 'arrive' && ARR && ARR.qty && Object.keys(ARR.qty).length > 0;
+  const changed = wasDormant && r.state === 'ok';
+  if(changed && hadSheet) closeSheet();        /* 古い在庫をもとにした入力シートは閉じる（自動で反映しない） */
+  becomeEditor();                              /* 最新を読み込む（壊れていれば停止） */
+  if(changed && !DATA_LOCK){
+    alert('⚠️ この画面を裏に回している間に、別の画面で在庫が変更されていました。\n\n'
+        + '最新の内容を読み込みました。古い入力は保存していません。\n'
+        + (hadSheet ? '開いていた入力画面は閉じました。必要ならもう一度入力してください。\n' : '')
+        + (hadInput ? '入荷・棚卸で入力中の数は残しています。最新の在庫を確かめてから押してください。\n' : ''));
+  }
+}
+document.addEventListener('visibilitychange', ()=>{ if(isHidden()) goDormant('hidden'); else tryAutoEdit('visible'); });
+window.addEventListener('pagehide', ()=>goDormant('pagehide'));
+document.addEventListener('freeze', ()=>goDormant('freeze'));
+window.addEventListener('pageshow', ()=>{ if(!isHidden()) tryAutoEdit('pageshow'); });
+window.addEventListener('focus', ()=>{ if(!isHidden()) tryAutoEdit('focus'); });
+document.addEventListener('resume', ()=>{ if(!isHidden()) tryAutoEdit('resume'); });
+setInterval(()=>{ if(!isHidden()) tryAutoEdit('poll'); }, POLL_MS);
 
 /* 表示専用の帯 */
 function editBar(){
@@ -742,7 +900,8 @@ function editBar(){
             + (EDITOR.note ? '<br>' + esc(EDITOR.note) : ''),
     requesting: '⏳ 前の画面に、編集を終えて引き継ぐよう頼んでいます…',
     verifying: '⏳ 引き継いだ保存データを確かめています…',
-    unresponsive: '⚠️ 前の画面が応答していません（裏で止まっている可能性があります）。何も保存していません。<br>前の画面（タブ・アプリ）を開いて閉じてから、もう一度押してください。',
+    unresponsive: '⚠️ 前の画面が応答していません（裏で止まったまま編集権を持っている可能性があります）。何も保存していません。<br>前の画面（タブ・アプリ）を一度表に出してからこの画面に戻るか、前の画面を閉じてください。空き次第、この画面で自動的に編集できるようになります。',
+    dormant: '画面を切り替えたため、編集できるかを確かめています…',
     'handover-failed': '⚠️ 編集を引き継げませんでした。何も保存していません。' + (EDITOR.note ? '<br>' + esc(EDITOR.note) : '') + '<br>少し待ってから、もう一度押してください。',
     releasing: '別の画面に編集を引き継いでいます…',
     unsupported: 'この開き方では編集の管理ができないため、表示専用です（バックアップの書き出しはできます）。',
