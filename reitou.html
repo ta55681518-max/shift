@@ -230,7 +230,7 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261024r5"></script>
+<script src="kemuri-core.js?v=20261024b2a"></script>
 <script src="kemuri-backup.js?v=20261012b"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
@@ -546,6 +546,8 @@ function viewOnlyMsg(){
   if(EDITOR.mode === 'viewer') return '別の画面で在庫アプリを使用しています。この画面は表示専用です。\n\n'
     + 'この画面で編集したいときは、もう一方の画面を閉じてから「この画面で編集を始める」を押してください。\n（いまの操作は保存していません）';
   if(EDITOR.mode === 'unsupported') return 'この端末・開き方では、編集できる画面を1つに限る仕組み（Web Locks）が使えないため、表示専用にしています。\n（いまの操作は保存していません）';
+  if(['requesting','verifying','releasing'].indexOf(EDITOR.mode) >= 0) return '編集の引き継ぎ中です。終わるまで待ってください。\n（いまの操作は保存していません）';
+  if(EDITOR.mode === 'unresponsive' || EDITOR.mode === 'handover-failed') return '編集を引き継げていないため、この画面は表示専用です。\n（いまの操作は保存していません）';
   if(EDITOR.mode === 'pending') return '編集できるかを確かめているところです。少し待ってから、もう一度やってください。\n（いまの操作は保存していません）';
   return '編集できるかを確かめられなかったため、表示専用にしています。画面を開き直してください。\n（いまの操作は保存していません）';
 }
@@ -577,7 +579,9 @@ function acquireEditor(byUser, tries){
       }
       EDITOR.mode = 'editor'; EDITOR.at = nowISO();
       becomeEditor();
-      return new Promise(()=>{});                          /* 画面を閉じるまで持ち続ける */
+      announceEditor();
+      /* 画面を閉じるまで、または «手放して» と頼まれるまで持ち続ける（第2-A） */
+      return new Promise(res=>{ EDITOR.release = res; });
     }).catch(()=>{ clearTimeout(timer); if(EDITOR.mode === 'editor'){ EDITOR.mode = 'error'; render(); } else fail(); });
   }catch(e){ clearTimeout(timer); fail(); }
 }
@@ -597,18 +601,160 @@ function becomeEditor(){
   render();
   importFromHash();          // 取り込みボタンから開かれていたら、ここで確認画面へ
 }
+/* ============================================================
+   方式B 第2-A：編集権の安全な受け渡し（強制的な引き取りはしない）
+   ------------------------------------------------------------
+   画面B「この画面で編集する」 → requestHandover()
+     ① BroadcastChannel で «手放してください»（req）を送る
+     ② 同時に鍵を «待って取る» 要求を出す（HANDOVER_WAIT ミリ秒で打ち切り）
+   画面A（編集権あり）が req を受けたら → releaseForHandover()
+     ・releasing にして以後の保存を断る。保存は同期処理なので、
+       req を処理するのは «進行中の保存が終わった後»（途中で割り込まれない）
+     ・端末の保存データの版・書いた画面・検査値・控えの数を ack で知らせる
+     ・鍵を手放して表示専用になる
+   画面B が鍵を取れたら → verifyAfterAcquire()
+     ・保存データを読み直す（壊れていないか／版が ack 以上か／検査値・控えの数が一致か）
+       版が届いていなければ少し待って読み直す（最長 VERIFY_WAIT）
+     ・全部満たしたときだけ編集を許す。満たさなければ鍵を手放して編集させない
+   返事も鍵も来ないとき（前の画面が裏で止まっている等）は «応答なし» として止め、
+   前の画面を閉じるよう案内する。steal（強制的に奪う）は使わない。
+   ============================================================ */
+var HANDOVER_WAIT = 6000;     /* 鍵を待つ最長時間 */
+var VERIFY_WAIT = 3000;       /* 版が追いつくのを待つ最長時間 */
+var EDIT_CH = ('BroadcastChannel' in window) ? new BroadcastChannel('kemuri-editor') : null;
+var HANDOVER = null;          /* 引き取り中の情報（画面B） */
+/* 文字列の検査値（同期で速いもの。照合用） */
+function quickHash(str){
+  let h = 2166136261 >>> 0;
+  for(let i = 0; i < str.length; i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h.toString(16) + ':' + str.length;
+}
+/* 保存データの «いまの姿» の要約（引き渡しの照合に使う） */
+function storedSummary(){
+  let raw = null;
+  try{ raw = localStorage.getItem(LS_KEY); }catch(e){ return null; }
+  if(raw == null) return { rev:0, wid:'', hash:'', pend:0, marks:0, empty:true };
+  let o = null; try{ o = JSON.parse(raw); }catch(e){}
+  const pend = o && Array.isArray(o.imports) ? o.imports.filter(r=>r && r.salesPending && !r.undone).length : 0;
+  const marks = o ? Object.keys(o.applied || {}).length + Object.keys(o.seen || {}).length : 0;
+  return { rev:(o && Number(o.rev)) || 0, wid:(o && o.wid) || '', hash:quickHash(raw), pend, marks };
+}
+function postEdit(msg){ if(EDIT_CH){ try{ EDIT_CH.postMessage(Object.assign({ from:TAB_ID, at:nowISO() }, msg)); }catch(e){} } }
+function announceEditor(){ postEdit({ t:'editor' }); }
+if(EDIT_CH) EDIT_CH.onmessage = function(e){
+  const m = e.data || {};
+  if(m.from === TAB_ID) return;
+  /* 裏で止まっていた画面が、動き出してから古い依頼を受け取ることがある。
+     待ち時間を過ぎた依頼は、頼んだ側がもう諦めているので応じない（応じると誰も編集できなくなる） */
+  if(m.t === 'req' && EDITOR.mode === 'editor'){
+    const age = Date.now() - Date.parse(m.at || '');
+    if(!(age >= -2000 && age < HANDOVER_WAIT - 500)) return;
+    releaseForHandover(m.id, m.from);
+  }
+  /* 頼んでいる間に、別の画面が先に引き継いだ → 自分の依頼は取り下げる */
+  else if(m.t === 'editor' && HANDOVER && EDITOR.mode === 'requesting'){ if(HANDOVER.cancel) HANDOVER.cancel(); }
+  else if(m.t === 'ack' && HANDOVER && m.id === HANDOVER.id) HANDOVER.ack = m;
+  else if(m.t === 'editor' && EDITOR.mode === 'editor' && !HANDOVER){
+    /* 鍵は1つなので本来起きない。念のため、自分を表示専用にして守る */
+    EDITOR.mode = 'error'; if(EDITOR.release){ const r = EDITOR.release; EDITOR.release = null; r(); } render();
+  }
+};
+/* 画面A：頼まれたので、保存を止めて、版を知らせてから手放す */
+function releaseForHandover(id, to){
+  if(EDITOR.mode !== 'editor') return;
+  EDITOR.mode = 'releasing';                  /* ここから先の保存は断る（save は editor 以外を断る） */
+  try{ closeSheet(); }catch(e){}
+  const sum = storedSummary();
+  postEdit(Object.assign({ t:'ack', id, to }, sum || { rev:-1 }));
+  const r = EDITOR.release; EDITOR.release = null;
+  EDITOR.mode = 'viewer'; EDITOR.handedTo = to; EDITOR.handedAt = nowISO();
+  if(r) r();                                   /* 鍵を手放す */
+  render();
+  toast('別の画面に編集を引き継ぎました');
+}
+/* 画面B：引き取りを頼む。結果の状態を返す（テストでも使う） */
+function requestHandover(){
+  if(EDITOR.mode === 'editor') return Promise.resolve('editor');
+  if(HANDOVER) return HANDOVER.done;
+  if(!('locks' in navigator) || !navigator.locks || typeof navigator.locks.request !== 'function'){
+    EDITOR.mode = 'unsupported'; render(); return Promise.resolve('unsupported');
+  }
+  const id = TAB_ID + '-' + Date.now().toString(36);
+  const ac = ('AbortController' in window) ? new AbortController() : null;
+  let finish;
+  HANDOVER = { id, ack:null, done:new Promise(r=>finish = r) };
+  const H = HANDOVER;
+  EDITOR.mode = 'requesting'; render();
+  postEdit({ t:'req', id });
+  const timer = setTimeout(()=>{ if(ac) ac.abort(); }, HANDOVER_WAIT);
+  H.cancel = ()=>{ H.cancelled = true; if(ac) ac.abort(); };
+  const end = (mode, msg)=>{
+    clearTimeout(timer);
+    if(HANDOVER === H) HANDOVER = null;
+    EDITOR.mode = mode; EDITOR.note = msg || ''; render();
+    finish(mode);
+  };
+  try{
+    navigator.locks.request(EDIT_LOCK, ac ? { signal:ac.signal } : {}, async lock=>{
+      clearTimeout(timer);
+      EDITOR.mode = 'verifying'; render();
+      const ok = await verifyAfterAcquire(H.ack);
+      if(!ok.ok){ end('handover-failed', ok.why); return; }   /* 鍵は手放す（ここで終わる） */
+      EDITOR.mode = 'editor'; EDITOR.at = nowISO(); EDITOR.handedTo = null; EDITOR.note = '';
+      if(HANDOVER === H) HANDOVER = null;
+      becomeEditor();
+      announceEditor();
+      finish('editor');
+      return new Promise(res=>{ EDITOR.release = res; });     /* 閉じるか頼まれるまで持つ */
+    }).catch(err=>{
+      /* 時間切れで待つのをやめた */
+      if(EDITOR.mode === 'editor') return;
+      if(H.cancelled){ end('viewer', '別の画面が先に編集を引き継ぎました。'); return; }
+      if(H.ack) end('handover-failed', '前の画面は手放すと返事をしましたが、時間内に編集権が届きませんでした。');
+      else end('unresponsive', '');
+    });
+  }catch(e){ end('error'); }
+  return H.done;
+}
+/* 画面B：鍵を取った直後の確かめ。版が追いついていて、壊れていないときだけ ok */
+async function verifyAfterAcquire(ack){
+  const t0 = Date.now();
+  for(;;){
+    const r = readStored();
+    if(r.state !== 'ok' && r.state !== 'empty'){ return { ok:false, why:'保存データに異常があります（' + (r.detail || r.state) + '）' }; }
+    if(!ack) return { ok:true };                                      /* 編集中の画面が無かった（鍵が空いていた） */
+    if(ack.rev < 0) return { ok:false, why:'前の画面が保存データを読めませんでした。' };
+    const now = storedSummary();
+    if(now && now.rev > ack.rev) return { ok:true };                  /* さらに新しい（あり得ないが安全側で可） */
+    if(now && now.rev === ack.rev && now.hash === ack.hash && now.pend === ack.pend && now.marks === ack.marks) return { ok:true };
+    if(Date.now() - t0 > VERIFY_WAIT) return { ok:false, why:'前の画面の最後の保存が、この画面にまだ届いていません（版 ' + (now ? now.rev : '?') + ' / 期待 ' + ack.rev + '）。' };
+    await new Promise(r=>setTimeout(r, 200));
+  }
+}
+
 /* 表示専用の帯 */
 function editBar(){
   if(EDITOR.mode === 'editor') return '';
   const m = EDITOR.mode;
-  const text = m === 'viewer' ? '別の画面で在庫アプリを使用しています。この画面は表示専用です。'
-             : m === 'unsupported' ? 'この開き方では編集の管理ができないため、表示専用です（バックアップの書き出しはできます）。'
-             : m === 'pending' ? '編集できるか確かめています…'
-             : '編集できるか確かめられませんでした。この画面は表示専用です。';
-  const btn = m === 'viewer' ? '<button class="btn btn-gray btn-sm gap" onclick="acquireEditor(true)">この画面で編集を始める</button>'
+  const T = {
+    viewer: (EDITOR.handedTo ? '別の画面に編集を引き継ぎました。この画面は表示専用です。'
+                             : '別の画面で在庫アプリを使用しています。この画面は表示専用です。')
+            + (EDITOR.note ? '<br>' + esc(EDITOR.note) : ''),
+    requesting: '⏳ 前の画面に、編集を終えて引き継ぐよう頼んでいます…',
+    verifying: '⏳ 引き継いだ保存データを確かめています…',
+    unresponsive: '⚠️ 前の画面が応答していません（裏で止まっている可能性があります）。何も保存していません。<br>前の画面（タブ・アプリ）を開いて閉じてから、もう一度押してください。',
+    'handover-failed': '⚠️ 編集を引き継げませんでした。何も保存していません。' + (EDITOR.note ? '<br>' + esc(EDITOR.note) : '') + '<br>少し待ってから、もう一度押してください。',
+    releasing: '別の画面に編集を引き継いでいます…',
+    unsupported: 'この開き方では編集の管理ができないため、表示専用です（バックアップの書き出しはできます）。',
+    pending: '編集できるか確かめています…',
+    error: '編集できるか確かめられませんでした。この画面は表示専用です。'
+  };
+  const text = T[m] || T.error;
+  const again = (m === 'viewer' || m === 'unresponsive' || m === 'handover-failed');
+  const btn = again ? '<button class="btn btn-gray btn-sm gap" onclick="requestHandover()">' + (m === 'viewer' ? 'この画面で編集する' : 'もう一度頼む') + '</button>'
             : m === 'error' ? '<button class="btn btn-gray btn-sm gap" onclick="location.reload()">開き直す</button>' : '';
-  return '<div class="warn" id="editbar" style="margin:12px 12px 0">🔒 ' + text
-       + (m === 'viewer' ? '<div class="muted" style="margin-top:4px">もう一方の画面を閉じてから押してください。</div>' : '') + btn + '</div>';
+  return '<div class="warn" id="editbar" style="margin:12px 12px 0">' + (m === 'viewer' ? '🔒 ' : '') + text
+       + (m === 'viewer' ? '<div class="muted" style="margin-top:4px">押すと、編集中の画面に «編集を終えて引き継ぐ» よう頼みます（無理に奪いはしません）。</div>' : '') + btn + '</div>';
 }
 /* 別の画面での変更に気づいたら、最新を読み込む（E1）。
    自分の直前の保存が «ほぼ同時の保存» で上書きされていたら、それも知らせる。 */

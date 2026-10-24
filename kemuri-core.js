@@ -110,6 +110,7 @@
       try { raw = global.localStorage.getItem(SALES_KEY); }
       catch (e) { this.broken = '売上履歴を端末から読み出せません'; this._db = blankSales(); return this._db; }
       this.broken = null;
+      this._raw = raw;              /* 読んだときの中身（書く直前の比較に使う・第2-A） */
       if (raw != null) {
         var parsed;
         try { parsed = JSON.parse(raw); } catch (e) { parsed = undefined; }
@@ -135,14 +136,20 @@
       if (this.broken) return false;
       db.updatedAt = new Date().toISOString();
       var s, ok = false;
+      this.conflict = false;
       try {
         s = JSON.stringify(db);
+        /* 書く直前に、端末の中身が «読んだときの中身» のままか確かめる（第2-A）。
+           別の画面が先に書いていたら書かない（呼ぶ側は失敗として扱い、控えを残す） */
+        if (global.localStorage.getItem(SALES_KEY) !== this._raw) { this.conflict = true; this._db = null; return false; }
         global.localStorage.setItem(SALES_KEY, s);
         ok = global.localStorage.getItem(SALES_KEY) === s;
       } catch (e) { ok = false; }
-      if (!ok) this._db = null;
+      if (ok) this._raw = s; else this._db = null;
       return ok;
     },
+    _raw: null,
+    conflict: false,
 
     /* その取込ぶんが履歴に記録済みか（取消の控えがあるか） */
     hasLog: function (importId) { return !!this.load().logs[importId]; },
@@ -415,6 +422,7 @@
     clear: function () {
       this._db = blankSales();
       this.broken = null;
+      this._raw = null;
       try { global.localStorage.removeItem(SALES_KEY); } catch (e) {}
     },
 
