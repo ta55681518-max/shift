@@ -954,6 +954,8 @@ function checkFresh(){
 var CHG_STOCK = ['items','sups','supCfg','history'];
 var CHG_POS   = ['applied','seen','map','csvMap','seq'];
 var CHG_OTHER = ['orders','ordered','last','posSeeded','mig2','mig3','v'];
+/* 取込の記録のうち、売上履歴の記録状態だけを表す項目（変わっても在庫・POSの取込状況は同じ） */
+var SALES_FIELDS = ['salesPending','salesUndoPending','salesLog','salesKept'];
 /* キーの順番に左右されない文字にする */
 function canon(x){
   if(Array.isArray(x)) return '[' + x.map(canon).join(',') + ']';
@@ -970,9 +972,10 @@ function changeParts(o){
       const core = [];
       v.forEach(r=>{
         if(!r || typeof r !== 'object'){ core.push(r); return; }
-        const c = {}; Object.keys(r).forEach(x=>{ if(x !== 'salesPending' && x !== 'salesUndoPending') c[x] = r[x]; });
+        const c = {}; Object.keys(r).forEach(x=>{ if(SALES_FIELDS.indexOf(x) < 0) c[x] = r[x]; });
         core.push(c);
-        if(r.salesPending !== undefined || r.salesUndoPending) p.sales.push({ id:r.id, p:r.salesPending === undefined ? null : r.salesPending, u:!!r.salesUndoPending });
+        if(SALES_FIELDS.some(x=>r[x] !== undefined)) p.sales.push({ id:r.id, p:r.salesPending === undefined ? null : r.salesPending, u:!!r.salesUndoPending,
+                                                                   l:r.salesLog === undefined ? null : r.salesLog, k:!!r.salesKept });
       });
       p.pos.importsCore = core; return;
     }
@@ -2658,6 +2661,9 @@ function syncSales(rec){
         return false;
       }
       delete rec.salesPending; done = true;
+      /* 取消のときに «戻すものが無い» と «取消用の記録が見つからない» を見分けるための印。
+         true＝売上履歴に足したもの（取消用の記録）がある、false＝足したものが無かった */
+      try{ rec.salesLog = !!S.hasLog(rec.id); }catch(e){}
     }
   }else return true;
   if(done){
@@ -2759,43 +2765,114 @@ function pruneSeen(){
     DB.applied = keep;
   }
 }
+/* ============================================================
+   取込の取消（売上履歴の扱いを、取り消す前に見分ける）
+   ------------------------------------------------------------
+   売上履歴の側は、次の4通り。
+     log     … 売上履歴に «取消用の記録» がある → 在庫と一緒に売上履歴からも戻す
+     pending … まだ売上履歴に記録していない（控えのまま）→ 控えを捨てるだけ
+     none    … 記録はしたが、新しく足したものが無かった（同じ売上の入れ直しなど）
+                → 売上履歴に戻すものが無い。誤った知らせは出さない
+     missing … 取消用の記録が見つからない（古い取込で整理された・売上履歴が
+                入れ替えられた・記録の印が無い古い取込）→ 何も変えずにいったん止め、
+                «在庫だけ戻し、売上履歴はそのまま» でよいかを確かめる
+   売上履歴が読めない（壊れている）ときは、何も変えずに止める。
+   売上履歴の全消去は案内しない。
+   ============================================================ */
+function undoKind(rec){
+  const S = KemuriCore.sales;
+  let hasLog = false, broken = '';
+  try{ S.reload(); broken = S.broken || ''; if(!broken) hasLog = S.hasLog(rec.id); }
+  catch(e){ broken = '売上履歴を読めませんでした'; }
+  if(broken) return { kind:'broken', why:broken };
+  if(hasLog) return { kind:'log' };
+  if(rec.salesPending) return { kind:'pending' };
+  if(rec.salesLog === false) return { kind:'none' };
+  return { kind:'missing' };
+}
+/* ============================================================
+   取消の順番（古い取込だけを先に取り消すと二重に減る問題の対策）
+   ------------------------------------------------------------
+   取込済みの印（DB.applied）は «日×POSの商品名» ごとに «そこまでに引いた出数» を持つ。
+   取消では、その取込が付けた印を «取込の前の値（prev）» に戻す。
+   同じ日・同じ商品を、後から別の取込がさらに引いていると、古いほうだけを取り消したときに
+   印が古い値に戻り、後の取込で引いたぶんが «まだ引いていない» 扱いになる
+   → 同じ売上を入れ直すと二重に減る（売上履歴も同じ）。
+   そこで、取り消そうとする取込が付けた印について
+     ① 後から同じ印を動かした取込（取消済みでないもの）があれば、取り消さない
+        （先に新しいほうを取り消してもらう）
+     ② 印の今の値が、この取込が付けた値と違えば（記録の残っていない取込などで
+        変わっている）、判断できないので取り消さない
+   どちらも、何も変えずに止める。
+   ============================================================ */
+function undoBlockers(rec){
+  const mine = {}; (rec.applied || []).forEach(a=>{ mine[a.key] = a.total; });
+  const keys = Object.keys(mine);
+  if(!keys.length) return { later:[], changed:0 };
+  const later = DB.imports.filter(r=>r !== rec && !r.undone && Number(r.id) > Number(rec.id)
+                                     && (r.applied || []).some(a=>a.key in mine));
+  const changed = later.length ? 0 : keys.filter(k=>(DB.applied[k] || 0) !== mine[k]).length;
+  return { later, changed };
+}
 function undoImport(id){
   const rec = DB.imports.find(r=>r.id===id);
   if(!rec || rec.undone) return;
   if(!canEdit()){ alert(DATA_LOCK ? LOCK_MSG : viewOnlyMsg()); return; }
-  if(!confirm('この取込を取り消して、引いた在庫を戻しますか？')) return;
+  const bl = undoBlockers(rec);
+  if(bl.later.length){
+    alert('⚠️ この取込は、まだ取り消せません。\n\n'
+        + 'この取込より後に、同じ日・同じ商品を取り込んだ取込があります：\n'
+        + bl.later.slice(0, 3).map(r=>'・' + fmtDT(r.at) + '　' + r.file).join('\n')
+        + (bl.later.length > 3 ? '\nほか ' + (bl.later.length - 3) + '件' : '') + '\n\n'
+        + '古いほうだけを取り消すと、同じ売上を入れ直したときに在庫が二重に減るためです。\n'
+        + '先に新しいほうの取込を取り消してから、この取込を取り消してください。\n\n何も変えていません。');
+    return;
+  }
+  if(bl.changed){
+    alert('⚠️ この取込は取り消せません。\n\n'
+        + 'この取込の後に、同じ日・同じ商品の取込状況が変わっています（' + bl.changed + '件。記録の残っていない取込など）。\n'
+        + '取り消すと在庫や売上履歴が合わなくなるおそれがあるため、止めました。\n\n何も変えていません。\n'
+        + '在庫が合わないときは、棚卸で実際の数に合わせてください。');
+    return;
+  }
+  const k = undoKind(rec);
+  if(k.kind === 'broken'){
+    alert('⚠️ 売上履歴のデータを確かめられないため、取り消しを止めました。\n\n'
+        + '何も変えていません（在庫も売上履歴もそのままです）。\n（' + k.why + '）');
+    return;
+  }
+  if(k.kind === 'missing'){
+    if(!confirm('⚠️ この取込は、売上履歴の «取消用の記録» が見つかりません。\n'
+              + '（古い取込で記録が整理された、または売上履歴が入れ替えられた可能性があります）\n\n'
+              + 'まだ何も変えていません。\n\n'
+              + '続けると、引いた在庫だけを戻します。売上履歴は変えずに、そのまま残します。\n'
+              + '在庫だけを戻しますか？')) return;
+  }else if(!confirm('この取込を取り消して、引いた在庫を戻しますか？')) return;
   rec.lines.forEach(l=>{ const it = item(l.itemId); if(it) move(it, it.stock + l.qty, 'POS取込の取消'); });
   rec.keys.forEach(k=>{ delete DB.seen[k]; });
   (rec.applied||[]).forEach(a=>{ if(a.prev) DB.applied[a.key] = a.prev; else delete DB.applied[a.key]; });
   rec.undone = true;
-  /* 売上履歴に記録済みか（控えがあるか）で、戻し方を決める（E3）
-     ・記録済み    … 売上履歴からも戻す。戻せなかったら印を残して後で戻す
-     ・未記録のまま … 売上履歴には何も入っていないので、控えを捨てるだけ
-     ・控えが古くて無い … 以前と同じく知らせる */
-  let hasLog = false;
-  try{ hasLog = KemuriCore.sales.hasLog(rec.id); }catch(e){}
-  const wasPending = !!rec.salesPending;
+  /* 売上履歴の戻し方（E3）
+     ・log     … 売上履歴からも戻す。戻せなかったら印を残して後で戻す
+     ・pending … 売上履歴には何も入っていないので、控えを捨てるだけ
+     ・none    … 戻すものが無い
+     ・missing … 売上履歴は変えない（利用者が確かめた） */
   delete rec.salesPending;
-  if(hasLog) rec.salesUndoPending = true;
+  if(k.kind === 'log') rec.salesUndoPending = true;
+  if(k.kind === 'missing') rec.salesKept = true;     /* 売上履歴を戻さずに取り消した印（取込の一覧で分かるように） */
   /* 在庫を戻したことが保存できてから、売上履歴を戻す（E2）。
      保存できなかったら在庫は取消前のままなので、売上履歴も触らない。 */
   if(!save()) return;
-  let salesLeft = false, undoLater = false;
-  if(hasLog){ if(!syncSales(rec)) undoLater = true; }
-  else if(!wasPending) salesLeft = true;      /* 控えが無い（古い取込） */
+  let undoLater = false;
+  if(k.kind === 'log'){ if(!syncSales(rec)) undoLater = true; }
   render();
   if(undoLater){
     toast('在庫は戻しました（売上履歴はまだ戻せていません）');
     alert('在庫は戻しました。\n\nただし、売上履歴からはまだ戻せていません（端末の空き容量不足など）。\n'
         + '空きを作ってから「POS」タブの「売上履歴に記録し直す」を押すと、売上履歴からも戻します。\n'
         + '在庫の数はこれ以上変わりません。');
-  }else if(salesLeft){
-    toast('在庫は戻しましたが、売上の記録は残っています');
-    alert('在庫は戻しました。\n\nただし、この取込ぶんの売上の記録は戻せませんでした'
-        + '（取消の控えが古くなって残っていないときに起きます）。\n\n'
-        + 'ダッシュボードの⚙️設定タブ →「入れ直したいとき」から'
-        + '「商品ごとの売上を消す」を押して、CSVを入れ直してください。\n'
-        + '在庫の数は変わりません。');
+  }else if(k.kind === 'missing'){
+    toast('在庫を戻しました（売上履歴はそのまま）');
   }else{
     toast('取込を取り消しました');
   }
@@ -2858,7 +2935,7 @@ function viewSet(){
        + '<span class="r">'+r.rows+'行'+(r.noStock?'・在庫そのまま':'')
        +   ((r.salesPending && !r.undone && r.salesPending.outOfRange && r.salesPending.outOfRange.length) ? '・<b style="color:#b3261e">売上履歴 期間外</b>'
             : (((r.salesPending && !r.undone) || r.salesUndoPending) ? '・<b style="color:#b3261e">売上履歴 未反映</b>' : ''))+'</span>'
-       + (r.undone? '<span class="r">取消済</span>'
+       + (r.undone? '<span class="r">取消済' + (r.salesKept ? '（売上履歴はそのまま）' : '') + '</span>'
                   : '<button class="btn btn-gray btn-sm" style="padding:6px 10px;font-size:12px" onclick="undoImport('+r.id+')">取消</button>')
        + '</div>';
   });
