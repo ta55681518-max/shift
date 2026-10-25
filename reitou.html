@@ -603,8 +603,12 @@ function becomeEditor(){
   else lockData(r);
   if(!DATA_LOCK){
     prepareDB();
-    /* 開いたときの手入れを残す（編集権のある画面だけ） */
-    save({ silent:true });
+    /* 開いたときの手入れを残す（編集権のある画面だけ）。
+       手入れで中身が変わったとき・はじめて使うときだけ書く。中身が同じなら書かない
+       （書くと版番号だけが上がり、他の画面が «変更あり» と誤って判断するため） */
+    let need = r.state !== 'ok';
+    if(!need){ try{ need = contentKey(DB) !== contentKey(JSON.parse(r.raw)); }catch(e){ need = true; } }
+    if(need) save({ silent:true });
     /* 売上履歴への自動の記録し直しも、編集権のある画面だけ */
     retrySales(true);
   }
@@ -727,7 +731,7 @@ function requestHandover(){
       if(!ok.ok){ end('handover-failed', ok.why); return; }   /* 鍵は手放す（ここで終わる） */
       EDITOR.mode = 'editor'; EDITOR.at = nowISO(); EDITOR.handedTo = null; EDITOR.note = '';
       if(HANDOVER === H) HANDOVER = null;
-      becomeEditor();
+      takeEditorState();
       announceEditor();
       finish('editor');
       /* 確かめている間に裏に回っていたら、すぐ手放す */
@@ -837,7 +841,7 @@ function tryAutoEdit(why){
     navigator.locks.request(EDIT_LOCK, { ifAvailable:true }, async lock=>{
       if(!lock){
         /* 別の画面が使っている → 表示専用（手放した画面も、ここで表示専用になる） */
-        if(EDITOR.mode === 'dormant'){ EDITOR.mode = 'viewer'; EDITOR.handedTo = null; EDITOR.note = ''; render(); }
+        if(EDITOR.mode === 'dormant'){ EDITOR.mode = 'viewer'; EDITOR.handedTo = null; EDITOR.note = ''; render(); checkFresh(); }
         fin(); return;
       }
       /* 取った直後に裏に回った・別の経路で状態が変わった → 何もせずに手放す */
@@ -858,29 +862,21 @@ function tryAutoEdit(why){
   }catch(e){ fin(); }
   return AUTO.done;
 }
-/* 取り直した直後：保存データが手放したときのままか確かめ、入力を続けるか最新を読み込むかを決める */
+/* 取り直した直後：手放したときの保存データと今の保存データを «中身» で比べ、
+   入力を続けるか・最新を読み込んで知らせるかを決める（classifyChange・applyChange） */
 function resumeEditor(wasDormant){
+  const base = AUTO.dormantRaw;
+  if(!wasDormant){ becomeEditor(); return; }
   const r = readStored();
-  const same = wasDormant && r.state === 'ok' && r.raw === AUTO.dormantRaw && r.raw === SAVED_RAW;
-  AUTO.dormantRaw = null;
-  if(same){
-    /* 変わっていない → 画面も入力もそのまま。帯だけ消す */
-    AUTO.lastFree = null;
-    const b = document.getElementById('editbar'); if(b) b.remove();
-    retrySales(true);
-    return;
-  }
-  const hadSheet = document.getElementById('ov').classList.contains('show');
-  const hadInput = TAB === 'arrive' && ARR && ARR.qty && Object.keys(ARR.qty).length > 0;
-  const changed = wasDormant && r.state === 'ok';
-  if(changed && hadSheet) closeSheet();        /* 古い在庫をもとにした入力シートは閉じる（自動で反映しない） */
-  becomeEditor();                              /* 最新を読み込む（壊れていれば停止） */
-  if(changed && !DATA_LOCK){
-    alert('⚠️ この画面を裏に回している間に、別の画面で在庫が変更されていました。\n\n'
-        + '最新の内容を読み込みました。古い入力は保存していません。\n'
-        + (hadSheet ? '開いていた入力画面は閉じました。必要ならもう一度入力してください。\n' : '')
-        + (hadInput ? '入荷・棚卸で入力中の数は残しています。最新の在庫を確かめてから押してください。\n' : ''));
-  }
+  if(r.state !== 'ok'){ becomeEditor(); return; }   /* 壊れている・無い → becomeEditor が停止を判断 */
+  AUTO.dormantRaw = null; AUTO.lastFree = null;
+  applyChange(classifyChange(base, r.raw), r, { resume:true });
+  retrySales(true);
+}
+/* 編集権を取ったときの読み直し：裏に回って手放した画面なら比べて続ける。そうでなければ起動時と同じ */
+function takeEditorState(){
+  if(EDITOR.inited && AUTO.dormantRaw !== null) resumeEditor(true);
+  else becomeEditor();
 }
 document.addEventListener('visibilitychange', ()=>{ if(isHidden()) goDormant('hidden'); else tryAutoEdit('visible'); });
 window.addEventListener('pagehide', ()=>goDormant('pagehide'));
@@ -916,28 +912,163 @@ function editBar(){
        + (m === 'viewer' ? '<div class="muted" style="margin-top:4px">押すと、編集中の画面に «編集を終えて引き継ぐ» よう頼みます（無理に奪いはしません）。</div>' : '') + btn + '</div>';
 }
 /* 別の画面での変更に気づいたら、最新を読み込む（E1）。
-   自分の直前の保存が «ほぼ同時の保存» で上書きされていたら、それも知らせる。 */
+   自分の直前の保存が «ほぼ同時の保存» で上書きされていたら、それも知らせる。
+   版番号・画面の印だけの違いは «変更なし» として扱う（classifyChange）。 */
 function checkFresh(){
   if(DATA_LOCK) return;
+  if(EDITOR.mode === 'dormant') return;      /* 裏に回って手放した画面は、戻ったとき resumeEditor が比べる */
   let raw = null;
   try{ raw = localStorage.getItem(LS_KEY); }catch(e){ return; }
   if(raw === SAVED_RAW) return;
+  const r = readStored();
+  if(r.state !== 'ok'){
+    /* 壊れている・読めない・無い → 今までどおり（restoreSaved が停止を判断） */
+    const hadSheet = document.getElementById('ov').classList.contains('show');
+    restoreSaved(); if(hadSheet) closeSheet(); render(); return;
+  }
   let lost = false;
   try{
-    const o = JSON.parse(raw);
+    const o = r.data;
     const mine = DB.wid === TAB_ID ? (Number(DB.rev) || 0) : null;   /* 最後に書いたのが自分か */
     if(o && mine != null && o.wid !== TAB_ID && (Number(o.rev) || 0) <= mine) lost = true;
   }catch(e){}
-  const hadSheet = document.getElementById('ov').classList.contains('show');
-  restoreSaved();
-  if(hadSheet) closeSheet();
-  render();
-  if(lost){
-    alert('⚠️ 直前に保存した内容が、ほぼ同時に保存した別の画面（タブ）の内容で上書きされました。\n\n'
-        + '最新の内容を読み込みました。直前の操作が残っているか確認し、必要ならもう一度操作してください。');
-  }else{
-    toast('別の画面での変更を読み込みました');
+  applyChange(classifyChange(SAVED_RAW, r.raw), r, { quiet: EDITOR.mode !== 'editor', lost });
+}
+/* ============================================================
+   別の画面での変更の見分け方（誤警告の修正）
+   ------------------------------------------------------------
+   保存データを «版番号（rev）・書いた画面の印（wid）を除いた中身» で比べ、
+   どこが変わったかで扱いを分ける。
+     same    … 文字が同じ
+     rev     … 版番号・画面の印だけが違う（中身は同じ）→ 知らせない・入力もそのまま
+     changed … 中身が違う。違う場所ごとに印を付ける
+       stock … 在庫・商品・仕入先・在庫の履歴（と、このアプリが知らない項目）
+                → 警告。古い在庫をもとにした入力画面は閉じ、棚卸の «変わった商品» の入力は消す
+       pos   … POS取込の記録（取込済みの印・対応表・取込の記録・取消の印）
+                → 小さく知らせる。確認画面の «反映» は、取込状況が確認時と違えば断って作り直す（posApply）
+       sales … 売上履歴にまだ記録していない控え・取消待ちの印だけ
+                → 小さく知らせる。在庫の入力はそのまま。記録し直し・取消は押した時点の最新で行う
+       other … 発注の記録など → 小さく知らせる。発注のシートは閉じる
+   判定できない（読めない・壊れている）ときは、ここに来る前に停止（DATA_LOCK）になる。
+   ============================================================ */
+var CHG_STOCK = ['items','sups','supCfg','history'];
+var CHG_POS   = ['applied','seen','map','csvMap','seq'];
+var CHG_OTHER = ['orders','ordered','last','posSeeded','mig2','mig3','v'];
+/* キーの順番に左右されない文字にする */
+function canon(x){
+  if(Array.isArray(x)) return '[' + x.map(canon).join(',') + ']';
+  if(x && typeof x === 'object') return '{' + Object.keys(x).sort().filter(k=>x[k] !== undefined).map(k=>JSON.stringify(k) + ':' + canon(x[k])).join(',') + '}';
+  return JSON.stringify(x === undefined ? null : x);
+}
+function changeParts(o){
+  const p = { stock:{}, pos:{}, sales:[], other:{}, unknown:{} };
+  Object.keys(o || {}).forEach(k=>{
+    if(k === 'rev' || k === 'wid') return;
+    const v = o[k];
+    if(k === 'imports'){
+      if(!Array.isArray(v)){ p.unknown.imports = v; return; }
+      const core = [];
+      v.forEach(r=>{
+        if(!r || typeof r !== 'object'){ core.push(r); return; }
+        const c = {}; Object.keys(r).forEach(x=>{ if(x !== 'salesPending' && x !== 'salesUndoPending') c[x] = r[x]; });
+        core.push(c);
+        if(r.salesPending !== undefined || r.salesUndoPending) p.sales.push({ id:r.id, p:r.salesPending === undefined ? null : r.salesPending, u:!!r.salesUndoPending });
+      });
+      p.pos.importsCore = core; return;
+    }
+    if(CHG_STOCK.indexOf(k) >= 0) p.stock[k] = v;
+    else if(CHG_POS.indexOf(k) >= 0) p.pos[k] = v;
+    else if(CHG_OTHER.indexOf(k) >= 0) p.other[k] = v;
+    else p.unknown[k] = v;
+  });
+  return { stock:canon(p.stock), pos:canon(p.pos), sales:canon(p.sales), other:canon(p.other), unknown:canon(p.unknown) };
+}
+/* 版番号・画面の印を除いた中身 */
+function contentKey(o){ const p = changeParts(o); return [p.stock, p.pos, p.sales, p.other, p.unknown].join('\u0001'); }
+/* POS取込の確認画面が前提にしている取込状況 */
+function posKey(){ try{ return changeParts(DB).pos; }catch(e){ return ''; } }
+function classifyChange(oldRaw, newRaw){
+  if(oldRaw === newRaw) return { kind:'same' };
+  let a = null, b = null;
+  try{ a = JSON.parse(oldRaw); b = JSON.parse(newRaw); }catch(e){}
+  /* 前の中身が分からない → 在庫が変わったものとして扱う（安全側） */
+  if(!a || !b || typeof a !== 'object' || typeof b !== 'object') return { kind:'changed', stock:true, pos:true, sales:true, other:true, lines:[], ids:[] };
+  const pa = changeParts(a), pb = changeParts(b);
+  const c = { kind:'changed', stock: pa.stock !== pb.stock || pa.unknown !== pb.unknown,
+              pos: pa.pos !== pb.pos, sales: pa.sales !== pb.sales, other: pa.other !== pb.other };
+  if(!c.stock && !c.pos && !c.sales && !c.other) return { kind:'rev' };
+  const d = itemDiff(a.items, b.items); c.lines = d.lines; c.ids = d.ids;
+  return c;
+}
+/* 商品ごとの違い（警告に書く） */
+function itemDiff(xa, xb){
+  const ma = {}, mb = {}, ids = [], lines = [];
+  (Array.isArray(xa) ? xa : []).forEach(i=>{ if(i && i.id != null) ma[i.id] = i; });
+  (Array.isArray(xb) ? xb : []).forEach(i=>{ if(i && i.id != null) mb[i.id] = i; });
+  Object.keys(Object.assign({}, ma, mb)).forEach(k=>{
+    const a = ma[k], b = mb[k];
+    if(a && b && canon(a) === canon(b)) return;
+    ids.push(Number(k));
+    if(!a) lines.push('「' + b.name + '」を追加');
+    else if(!b) lines.push('「' + a.name + '」を削除');
+    else if(a.stock !== b.stock) lines.push(b.name + '　' + a.stock + ' → ' + b.stock);
+    else lines.push(b.name + '　の商品情報');
+  });
+  const more = lines.length > 5 ? lines.length - 5 : 0;
+  return { ids, lines: lines.slice(0, 5).concat(more ? ['ほか ' + more + '件'] : []) };
+}
+/* 比べた結果に合わせて、最新を読み込み、必要なときだけ知らせる。
+   どの場合も、ここでは保存しない（古い入力を勝手に確定しない）。
+   opt.quiet … 表示専用の画面（警告は出さず小さく知らせる）
+   opt.resume … 裏から戻ったとき　opt.lost … 自分の直前の保存が上書きされていた */
+function applyChange(c, r, opt){
+  opt = opt || {};
+  const ov = document.getElementById('ov');
+  const sheetOpen = ov.classList.contains('show'), kind = SHEET_KIND;
+  DB = migrate(Object.assign(blank(), r.data), true); SAVED_RAW = r.raw;
+  if(c.kind === 'same' || c.kind === 'rev'){
+    /* 中身は同じ：画面も入力もそのまま。最新の版番号だけ取り込んだ（次の保存の照合が合うように） */
+    if(EDITOR.mode === 'editor'){ const b = document.getElementById('editbar'); if(b) b.remove(); }
+    return c.kind;
   }
+  prepareDB();
+  if(c.stock){
+    if(sheetOpen) closeSheet();
+    /* 棚卸（実在庫を入れる）の入力のうち、別の画面で在庫が変わった商品のぶんは古いので消す。
+       入荷（増やす数）の入力は、最新の在庫に足すだけなので残す */
+    const cleared = [];
+    if(ARR && ARR.mode === 'count' && ARR.qty){
+      (c.ids || []).forEach(id=>{ if(ARR.qty[id] != null){ delete ARR.qty[id]; const it = item(id); cleared.push(it ? it.name : ('#' + id)); } });
+    }
+    const keptArr = TAB === 'arrive' && ARR && ARR.qty && Object.keys(ARR.qty).length > 0;
+    render();
+    if(opt.quiet){ toast('別の画面での在庫の変更を読み込みました'); return 'stock'; }
+    if(opt.lost){
+      alert('⚠️ 直前に保存した内容が、ほぼ同時に保存した別の画面（タブ）の内容で上書きされました。\n\n'
+          + '最新の内容を読み込みました。直前の操作が残っているか確認し、必要ならもう一度操作してください。');
+      return 'stock';
+    }
+    alert('⚠️ ' + (opt.resume ? 'この画面を裏に回している間に、' : '') + '別の画面で在庫・商品が変更されていました。\n\n'
+        + (c.lines && c.lines.length ? '変わった商品：\n・' + c.lines.join('\n・') + '\n\n' : '')
+        + '最新の内容を読み込みました。古い入力は保存していません。\n'
+        + (sheetOpen ? '開いていた入力画面は閉じました。必要ならもう一度入力してください。\n' : '')
+        + (cleared.length ? '棚卸で入力していた次の商品の数は、在庫が変わったので消しました：' + cleared.join('、') + '\n' : '')
+        + (keptArr ? '入荷・棚卸で入力中の、ほかの商品の数は残しています。最新の在庫を確かめてから押してください。\n' : ''));
+    return 'stock';
+  }
+  if(c.other && sheetOpen && kind === 'ord') closeSheet();
+  render();
+  if(c.pos){
+    if(!opt.quiet && TAB === 'pos' && POS.step === 3){
+      POS.baseKey = posKey();    /* 作り直した確認画面を見せて知らせた → この状態での反映は受け付ける */
+      alert('⚠️ 別の画面でPOS売上の取込または取消がありました（在庫の数は変わっていません）。\n\n'
+          + '確認画面を最新の取込状況で作り直しました。内容を確かめてから「反映」を押してください。');
+    }else toast('POS取込の記録を最新にしました（在庫の数は変わっていません）');
+    return 'pos';
+  }
+  if(c.sales){ toast('売上履歴の記録状態を最新にしました（在庫の数は変わっていません）'); return 'sales'; }
+  toast('最新の内容を読み込みました（在庫の数は変わっていません）');
+  return 'other';
 }
 window.addEventListener('storage', e=>{ if(e.key === LS_KEY || e.key === null) checkFresh(); });
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') checkFresh(); });
@@ -1613,6 +1744,7 @@ function ordPendingCard(){
 /* ---------- 注文方法の設定 ---------- */
 function ordSetup(key){
   const cfg = supCfg(key), k = esc(key).replace(/'/g,"\\'");
+  SHEET_NEXT = 'ord';
   openSheet('<h3>'+esc(supName(key))+'</h3><div class="sh-sub">注文のしかた</div>'
     + '<div class="chips" style="justify-content:center;margin-bottom:14px">'
     +   '<button class="'+(cfg.how==='line'?'on':'')+'" onclick="setSupHow(\''+k+'\',\'line\');ordSetup(\''+k+'\')">LINEで注文</button>'
@@ -1635,6 +1767,7 @@ function ordOpenLine(key){
 }
 function drawOrdLine(){
   const key = ORD.sheet, k = esc(key).replace(/'/g,"\\'");
+  SHEET_NEXT = 'ord';
   openSheet('<h3>'+esc(supName(key))+' への注文</h3>'
     + '<div class="sh-sub">送る前に直せます</div>'
     + '<textarea id="ord-t" style="min-height:220px" onchange="ORD.text=this.value">'+esc(ORD.text)+'</textarea>'
@@ -1681,7 +1814,7 @@ function drawOrdApp(){
      + '<div class="muted gap">専用アプリへの自動入力はできません。'
      + 'コピーした一覧を見ながら打ち込んでください。</div>'
      + '<button class="btn btn-gray gap" onclick="closeSheet()">閉じる</button>';
-  openSheet(h);
+  openSheet(h, 'ord');
 }
 
 /* ---------- コピー ---------- */
@@ -1694,6 +1827,7 @@ async function ordCopy(key, listOnly){
     toast('コピーしました');
   }catch(e){
     /* コピーできない端末・場面がある。そのときは枠に出して、長押しで取れるようにする */
+    SHEET_NEXT = 'ord';
     openSheet('<h3>コピーできませんでした</h3>'
       + '<div class="sh-sub">下の枠を長押しして、すべて選択してコピーしてください</div>'
       + '<textarea style="min-height:240px">'+esc(t)+'</textarea>'
@@ -2321,6 +2455,7 @@ function posPreview(){
      はじめから在庫を動かさない側にしておく。毎日の締めは1〜数日なので影響しない。
      チェックは自分で外せる（外せば今までどおり引く）。 */
   if(spanDays() > LONG_SPAN) POS.noStock = true;
+  POS.baseKey = posKey();      /* この確認画面が前提にしている取込状況（反映のときに確かめる） */
   POS.step = 3; render();
 }
 
@@ -2409,6 +2544,14 @@ function setMap(v, name){
 }
 function posApply(){
   if(!canEdit()){ alert(DATA_LOCK ? LOCK_MSG : viewOnlyMsg()); render(); return; }
+  /* 確認画面を作った後に、別の画面でPOS取込・取消・対応表の変更があった → 古い状態では確定しない。
+     最新の取込状況で確認画面を作り直し、もう一度確かめてもらう（二重取込・取りこぼしを防ぐ） */
+  if(POS.baseKey != null && posKey() !== POS.baseKey){
+    POS.baseKey = posKey(); render();
+    alert('⚠️ 確認画面を開いた後に、別の画面でPOS売上の取込・取消がありました。\n\n'
+        + 'まだ反映していません。最新の取込状況で確認画面を作り直したので、内容を確かめてから、もう一度「反映」を押してください。');
+    return;
+  }
   const pv = buildPreview(POS.sales);
   const pr = POS.period || { from:'', to:'' };
   const rec = { id:DB.seq++, at:nowISO(), file:POS.parsed.file, period:{ from:pr.from, to:pr.to },
@@ -3339,7 +3482,11 @@ function resetAll(){
 }
 
 /* ---------- シート ---------- */
-function openSheet(html){
+/* SHEET_KIND … 開いているシートの種類（'ord'＝発注まわり、''＝在庫・商品まわりなど）。
+   別の画面での変更を読み込んだとき、どのシートを閉じるかの判断に使う */
+var SHEET_KIND = '', SHEET_NEXT = '';
+function openSheet(html, kind){
+  SHEET_KIND = kind || SHEET_NEXT || ''; SHEET_NEXT = '';
   document.getElementById('sheet').innerHTML = html;
   document.getElementById('ov').classList.add('show');
 }
