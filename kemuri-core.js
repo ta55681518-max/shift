@@ -99,49 +99,97 @@
        これをしないと、古いほうを持ったまま次の保存で上書きしてしまう。 */
     reload: function () { this._db = null; return this.load(); },
 
+    /* broken … 端末の売上履歴が壊れていて読めないときの印（E3）。
+       このときは空の履歴で始めるが、保存は一切しない（壊れた元データを
+       空の履歴で上書きして消さないため）。 */
+    broken: null,
+
     load: function () {
       if (this._db) return this._db;
-      try {
-        var raw = global.localStorage.getItem(SALES_KEY);
-        if (raw) {
-          var parsed = JSON.parse(raw);
-          this._db = Object.assign(blankSales(), parsed && typeof parsed === 'object' ? parsed : {});
+      var raw = null;
+      try { raw = global.localStorage.getItem(SALES_KEY); }
+      catch (e) { this.broken = '売上履歴を端末から読み出せません'; this._db = blankSales(); return this._db; }
+      this.broken = null;
+      this._raw = raw;              /* 読んだときの中身（書く直前の比較に使う・第2-A） */
+      if (raw != null) {
+        var parsed;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = undefined; }
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          this._db = Object.assign(blankSales(), parsed);
           return this._db;
         }
-      } catch (e) { /* 壊れていたら作り直す */ }
+        this.broken = '売上履歴のデータが壊れていて読めません';
+      }
       this._db = blankSales();
       return this._db;
     },
 
+    /* 保存（E3：失敗しても既存の履歴を消さない）
+       ・書いたあと読み直して一致したときだけ true
+       ・失敗したら false。手元の内容は捨て、次に読むときは端末に
+         残っている（元の）内容から読み直す。
+       ・以前は容量オーバーのときに古い日を自動で削って入れ直していたが、
+         失敗しても削った状態が手元に残り、次の保存で確定して履歴が
+         消えていた（E3）。いまは自動では削らない。 */
     save: function () {
       var db = this.load();
+      if (this.broken) return false;
       db.updatedAt = new Date().toISOString();
+      var s, ok = false;
+      this.conflict = false;
       try {
-        global.localStorage.setItem(SALES_KEY, JSON.stringify(db));
-        return true;
-      } catch (e) {
-        /* 容量オーバー。古い日を段階的に削って粘る。ここで諦めると
-           取り込んだぶんが丸ごと消えるので、«古い日を失う» より
-           «今日のぶんが残る» を優先する。
-           [残す日数, 残す取込（取消用）の件数]。取消の控えは1件あたりが
-           重いので、日数と一緒に減らす。 */
-        var steps = [[Math.floor(KEEP_DAYS / 2), KEEP_LOGS], [180, 20], [90, 10],
-                     [45, 5], [21, 2], [7, 1], [7, 0]];
-        for (var i = 0; i < steps.length; i++) {
-          this.prune(steps[i][0]);
-          this._trimLogs(db, steps[i][1]);
-          try { global.localStorage.setItem(SALES_KEY, JSON.stringify(db)); return true; }
-          catch (e2) { /* まだ入らない。もう一段削る */ }
-        }
-        return false;
-      }
+        s = JSON.stringify(db);
+        /* 書く直前に、端末の中身が «読んだときの中身» のままか確かめる（第2-A）。
+           別の画面が先に書いていたら書かない（呼ぶ側は失敗として扱い、控えを残す） */
+        if (global.localStorage.getItem(SALES_KEY) !== this._raw) { this.conflict = true; this._db = null; return false; }
+        global.localStorage.setItem(SALES_KEY, s);
+        ok = global.localStorage.getItem(SALES_KEY) === s;
+      } catch (e) { ok = false; }
+      if (ok) this._raw = s; else this._db = null;
+      return ok;
     },
+    _raw: null,
+    conflict: false,
+
+    /* その取込ぶんが履歴に記録済みか（取消の控えがあるか） */
+    hasLog: function (importId) { return !!this.load().logs[importId]; },
 
     /* SaleRecord[] を履歴に足す。
        importId … 冷凍在庫アプリの取込ID。取消のときに同じIDを渡す。
        戻り値 … { days:足した日数, items:足した商品数, qty:足した数 } */
+    /* 保存期間（新しいほうから KEEP_DAYS 日分）に入らない日を返す。
+       いまある日と、これから足す日を合わせて新しい順に並べ、
+       KEEP_DAYS 日目より古い日が «足してもすぐ整理されて消える日»。 */
+    outOfRange: function (newDays) {
+      var db = this.load(), all = {};
+      Object.keys(db.days).forEach(function (d) { all[d] = 1; });
+      (newDays || []).forEach(function (d) { if (d) all[d] = 1; });
+      var ds = Object.keys(all).sort();
+      if (ds.length <= KEEP_DAYS) return [];
+      var cut = ds[ds.length - KEEP_DAYS];          /* 残る日のうち一番古い日 */
+      var out = {};
+      (newDays || []).forEach(function (d) { if (d && d < cut) out[d] = 1; });
+      return Object.keys(out).sort();
+    },
+    keepDays: KEEP_DAYS,
+
+    /* 戻り値に outOfRange（保存期間外で記録しなかった日）を足した。
+       保存期間外の日の行は «足してから整理して消す» のではなく、最初から足さない。
+       呼ぶ側は outOfRange が空でなければ、その日のぶんの控えを消さずに残す。 */
     record: function (sales, importId, period) {
+      /* 必ず端末から読み直してから足す（古い手元の内容で上書きしないため） */
+      this._db = null;
       var db = this.load();
+      if (this.broken) return { days: 0, items: 0, qty: 0, saved: false, broken: this.broken, outOfRange: [] };
+      /* 保存期間外の日は、記録する前に見つけて外す */
+      var dayOfSale = function (s) { return s.day || dayOf(s.at); };
+      var want = {};
+      (sales || []).forEach(function (s) { var d = dayOfSale(s); if (d) want[d] = 1; });
+      var outDays = this.outOfRange(Object.keys(want));
+      if (outDays.length) {
+        var outSet = {}; outDays.forEach(function (d) { outSet[d] = 1; });
+        sales = (sales || []).filter(function (s) { return !outSet[dayOfSale(s)]; });
+      }
       var log = { at: new Date().toISOString(), lines: [], seenKeys: [], totalsPrev: {}, spanDays: [] };
       var groups = {};
       var added = { days: {}, items: {}, qty: 0 };
@@ -190,18 +238,24 @@
         this._trimLogs(db);
       }
       this.prune(KEEP_DAYS);
+      /* 念のため：足した日が整理で消えていないか確かめる（消えていたら期間外として返す） */
+      Object.keys(added.days).forEach(function (d) { if (!db.days[d] && outDays.indexOf(d) < 0) outDays.push(d); });
+      outDays.sort();
       var saved = this.save();
       return {
         days: Object.keys(added.days).length,
         items: Object.keys(added.items).length,
         qty: added.qty,
-        saved: saved            // false … 端末の保存容量がいっぱいで残せなかった
+        saved: saved,           // false … 端末の保存容量がいっぱいで残せなかった
+        outOfRange: outDays     // 保存期間外で記録しなかった日（空なら全部記録した）
       };
     },
 
     /* 取込の取り消し。足したぶんをそのまま引いて、台帳も元に戻す */
     undo: function (importId) {
+      this._db = null;
       var db = this.load();
+      if (this.broken) return false;
       var log = db.logs[importId];
       if (!log) return false;
 
@@ -222,8 +276,7 @@
 
       delete db.logs[importId];
       db.order = db.order.filter(function (id) { return String(id) !== String(importId); });
-      this.save();
-      return true;
+      return this.save();      /* 保存できたときだけ true（E3） */
     },
 
     /* ---- 読み取り（Phase 1 のダッシュボードで使う） ---- */
@@ -368,6 +421,8 @@
     /* 全部消す（設定画面から使う。取り返しがつかないので呼ぶ側で必ず確認する） */
     clear: function () {
       this._db = blankSales();
+      this.broken = null;
+      this._raw = null;
       try { global.localStorage.removeItem(SALES_KEY); } catch (e) {}
     },
 

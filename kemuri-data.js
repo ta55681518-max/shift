@@ -627,7 +627,12 @@
     save: function () {
       var db = this.load();
       db.updatedAt = new Date().toISOString();
-      try { global.localStorage.setItem(DAILY_KEY, JSON.stringify(db)); return true; }
+      /* 書いたあと読み直して、一致したときだけ成功（E2） */
+      try {
+        var s = JSON.stringify(db);
+        global.localStorage.setItem(DAILY_KEY, s);
+        return global.localStorage.getItem(DAILY_KEY) === s;
+      }
       catch (e) { return false; }
     },
 
@@ -644,8 +649,11 @@
           guests: num(r.guests), groups: num(r.groups),
         };
       });
-      this.save();
-      return { added: n, updated: upd, total: Object.keys(db.days).length };
+      /* 保存できたかを返す（E2）。できなかったら、手元の内容を
+         端末に保存されている中身に戻す（画面と保存データを食い違わせない） */
+      var saved = this.save();
+      if (!saved) this._db = null;
+      return { added: n, updated: upd, total: Object.keys(this.load().days).length, saved: saved };
     },
 
     all: function () { return this.load().days; },
