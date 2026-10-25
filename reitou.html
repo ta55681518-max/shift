@@ -2789,10 +2789,51 @@ function undoKind(rec){
   if(rec.salesLog === false) return { kind:'none' };
   return { kind:'missing' };
 }
+/* ============================================================
+   取消の順番（古い取込だけを先に取り消すと二重に減る問題の対策）
+   ------------------------------------------------------------
+   取込済みの印（DB.applied）は «日×POSの商品名» ごとに «そこまでに引いた出数» を持つ。
+   取消では、その取込が付けた印を «取込の前の値（prev）» に戻す。
+   同じ日・同じ商品を、後から別の取込がさらに引いていると、古いほうだけを取り消したときに
+   印が古い値に戻り、後の取込で引いたぶんが «まだ引いていない» 扱いになる
+   → 同じ売上を入れ直すと二重に減る（売上履歴も同じ）。
+   そこで、取り消そうとする取込が付けた印について
+     ① 後から同じ印を動かした取込（取消済みでないもの）があれば、取り消さない
+        （先に新しいほうを取り消してもらう）
+     ② 印の今の値が、この取込が付けた値と違えば（記録の残っていない取込などで
+        変わっている）、判断できないので取り消さない
+   どちらも、何も変えずに止める。
+   ============================================================ */
+function undoBlockers(rec){
+  const mine = {}; (rec.applied || []).forEach(a=>{ mine[a.key] = a.total; });
+  const keys = Object.keys(mine);
+  if(!keys.length) return { later:[], changed:0 };
+  const later = DB.imports.filter(r=>r !== rec && !r.undone && Number(r.id) > Number(rec.id)
+                                     && (r.applied || []).some(a=>a.key in mine));
+  const changed = later.length ? 0 : keys.filter(k=>(DB.applied[k] || 0) !== mine[k]).length;
+  return { later, changed };
+}
 function undoImport(id){
   const rec = DB.imports.find(r=>r.id===id);
   if(!rec || rec.undone) return;
   if(!canEdit()){ alert(DATA_LOCK ? LOCK_MSG : viewOnlyMsg()); return; }
+  const bl = undoBlockers(rec);
+  if(bl.later.length){
+    alert('⚠️ この取込は、まだ取り消せません。\n\n'
+        + 'この取込より後に、同じ日・同じ商品を取り込んだ取込があります：\n'
+        + bl.later.slice(0, 3).map(r=>'・' + fmtDT(r.at) + '　' + r.file).join('\n')
+        + (bl.later.length > 3 ? '\nほか ' + (bl.later.length - 3) + '件' : '') + '\n\n'
+        + '古いほうだけを取り消すと、同じ売上を入れ直したときに在庫が二重に減るためです。\n'
+        + '先に新しいほうの取込を取り消してから、この取込を取り消してください。\n\n何も変えていません。');
+    return;
+  }
+  if(bl.changed){
+    alert('⚠️ この取込は取り消せません。\n\n'
+        + 'この取込の後に、同じ日・同じ商品の取込状況が変わっています（' + bl.changed + '件。記録の残っていない取込など）。\n'
+        + '取り消すと在庫や売上履歴が合わなくなるおそれがあるため、止めました。\n\n何も変えていません。\n'
+        + '在庫が合わないときは、棚卸で実際の数に合わせてください。');
+    return;
+  }
   const k = undoKind(rec);
   if(k.kind === 'broken'){
     alert('⚠️ 売上履歴のデータを確かめられないため、取り消しを止めました。\n\n'
