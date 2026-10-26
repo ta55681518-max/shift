@@ -155,8 +155,8 @@
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js?v=20261024b2a"></script>
-<script src="kemuri-backup.js?v=20261012b"></script>
+<script src="kemuri-core.js?v=20261027s0"></script>
+<script src="kemuri-backup.js?v=20261027s0"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <script src="kemuri-data.js?v=20261012b"></script>
 
@@ -964,22 +964,82 @@ function bkPickCard(){
      + (n ? n + '件を読み込む' : '選んでください') + '</button></div></div>';
   return h;
 }
-function bkApply(){
+/* 読み込む（段階0：第2-B）
+   ① 中身を確かめる（形・第2形式なら検査値と件数）。異常があれば何も変えない
+   ② 何が何に置きかわるかを見せて、確認をもらう
+   ③ 在庫アプリの編集権（鍵）を «空いているときだけ» 借りる。在庫アプリが
+      開いていれば何も変えない（在庫アプリの画面が古い中身で上書きしないように）
+   ④ 安全な復元（控え → 1つずつ書いて読み直す → 失敗したら全部戻す）
+   ⑤ 鍵を返し、在庫アプリの画面には «最新を読み直す» よう知らせる */
+async function bkApply(){
   const box = BK.box; if(!box) return;
   const keys = Object.keys(BK.pick).filter(k=>BK.pick[k]);
   if(!keys.length) return;
-  const res = KemuriBackup.apply(box, keys);
+  if(KemuriBackup.pendingRestore()){ alert('前の復元が途中で止まったままです。\n画面の上の「復元が途中で止まっています」から先に確認してください。\n\n何も変えていません。'); render(); return; }
+  const chk = KemuriBackup.validate(box, keys);
+  if(!chk.ok){
+    alert('このバックアップは読み込めません。\n\n' + chk.problems.map(p=>'・' + p.label + '：' + p.why).join('\n') + '\n\n端末のデータは何も変えていません。');
+    return;
+  }
+  const now = KemuriBackup.current();
+  const lines = KemuriBackup.summary(box).filter(x=>keys.indexOf(x.key) >= 0)
+    .map(x=>'・' + x.label + '：' + (now[x.key] ? 'いま ' + now[x.key] : 'いまは無し') + ' → ' + x.detail);
+  if(!confirm('次のデータを、バックアップ（' + (box.at ? fmtAt(box.at) : '日時不明') + '）の中身に置きかえます。\n\n'
+            + lines.join('\n') + '\n\n選ばなかったものは変えません。\n置きかえてよいですか？')) return;
+  const r = await KemuriGuard.withEditor(()=> KemuriBackup.applySafe(box, keys, { who:'dashboard' }));
+  if(r.unsupported){ alert('この開き方では在庫アプリとの調整ができないため、ここからは復元できません。\n在庫アプリの「バックアップから戻す」を使ってください。\n\n何も変えていません。'); return; }
+  if(r.busy){ alert('在庫アプリ（冷凍在庫）が別の画面で開いています。\n在庫アプリの画面・タブをすべて閉じてから、もう一度押してください。\n\n何も変えていません。'); return; }
+  const res = r.value || { ok:false, why:'復元の途中でエラーが起きました' };
   BK = { box:null, from:'', pick:{} };
-  if(!res.ok.length){ toast('読み込めませんでした'); return; }
   /* 持ち回っている中身を読み直す。古いままだと «入れたのに出ない» になる */
   KemuriData.reloadAll();
   refresh(); render();
-  if(res.ng.length){
-    alert('一部が入りませんでした（' + res.ng.map(k=>KemuriBackup.label(k)).join('、') + '）。\n'
-        + '端末の空き容量が足りない可能性があります。');
+  if(res.ok){ toast(res.written.length + '件を読み込みました'); return; }
+  if(res.rolledBack) alert('⚠️ 読み込めませんでした。\n' + res.why + '\n\n途中まで入れたものは元に戻しました（読み込む前のままです）。');
+  else if(res.markLeft) alert('⚠️ 読み込みの途中で失敗し、元に戻すこともできませんでした。\n' + res.why + '\n\n画面の上の「復元が途中で止まっています」から確認してください。');
+  else alert('⚠️ 読み込めませんでした。\n' + res.why);
+}
+
+/* 途中で止まった復元（印が残っている）。自動では戻さず、人に選んでもらう */
+function restoreCard(){
+  const p = KemuriBackup.pendingRestore(); if(!p) return '';
+  const lab = k=>KemuriBackup.label(k);
+  let h = '<div class="card" style="border-color:#e74c3c;background:#fff5f4"><h2>⚠️ 復元が途中で止まっています</h2>';
+  if(p.broken){
+    h += '<div class="muted">' + esc(p.why) + '。控えを書き出して相談してください。</div>';
   }else{
-    toast(res.ok.length + '件を読み込みました');
+    h += '<div class="muted">始めた日時：' + esc(fmtAt(p.at)) + (p.who ? '（' + esc(({ dashboard:'ダッシュボードから', reitou:'在庫アプリから' })[p.who] || p.who) + '）' : '') + '</div>'
+       + '<div class="muted">入り終わっていたもの：' + esc(p.done.map(lab).join('、') || 'なし') + '</div>'
+       + '<div class="muted">入っていないもの：' + esc(p.rest.map(lab).join('、') || 'なし') + '</div>'
+       + '<div class="muted gap">在庫アプリは、これを片付けるまで編集を止めています。</div>'
+       + '<button class="btn btn-primary gap" onclick="restoreResolve(\'back\')">復元する前の中身に戻す</button>'
+       + (p.rest.length ? '' : '<button class="btn btn-gray gap" onclick="restoreResolve(\'keep\')">全部入っているので、このまま使う</button>');
   }
+  h += '<button class="btn btn-out gap" onclick="restoreExport()">📤 控え（復元する前の中身）を書き出す</button></div>';
+  return h;
+}
+async function restoreResolve(how){
+  const msg = how === 'back' ? '復元する前の中身に戻します。よいですか？' : '復元した中身をこのまま使います。よいですか？';
+  if(!confirm(msg)) return;
+  const r = await KemuriGuard.withEditor(()=> KemuriBackup.resolveRestore(how));
+  if(r.busy){ alert('在庫アプリ（冷凍在庫）が別の画面で開いています。閉じてから、もう一度押してください。'); return; }
+  if(r.unsupported){ alert('この開き方では片付けられません。在庫アプリから行ってください。'); return; }
+  const res = r.value || { ok:false, why:'エラーが起きました' };
+  KemuriData.reloadAll(); refresh(); render();
+  if(res.ok) toast(how === 'back' ? '復元する前の中身に戻しました' : '片付けました');
+  else alert('⚠️ できませんでした。\n' + res.why);
+}
+function restoreExport(){
+  const t = KemuriBackup.restoreMarkText();
+  if(t == null){ toast('控えがありません'); return; }
+  dlText(t, KemuriBackup.filename('restore-mark'));
+}
+function dlText(t, name){
+  const url = URL.createObjectURL(new Blob([t], { type:'application/json' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
 }
 
 function fmtAt(iso){
@@ -1456,6 +1516,7 @@ function viewSet(){
   /* 取り違えて取り込んだときに、確実に元に戻せる手段。
      取込履歴からの取消が効かない場合の逃げ道でもある。
      消したあとはCSVを入れ直せばいいだけなので、消せないより消せるほうがよい。 */
+  if(WIPE) h += wipeCard(); else {
   h += '<div class="card"><h2>入れ直したいとき</h2>'
      + '<div class="muted">取り違えて取り込んでしまったときは、ここで消してからCSVを入れ直してください。'
      + '<b>在庫の数は変わりません。</b>仕入単価とレシピも消えません。</div>';
@@ -1469,6 +1530,7 @@ function viewSet(){
   }
   if(!st.days && !ug2.days) h += '<div class="muted gap">いま消せる売上はありません。</div>';
   h += '</div>';
+  }
 
   h += '<div class="card"><h2>ほかのアプリ</h2>'
      + '<a class="btn btn-out" style="text-decoration:none;display:block;margin-bottom:8px" href="reitou.html">冷凍在庫</a>'
@@ -1484,21 +1546,82 @@ function row2(k,v){
   return '<div class="crow"><span class="nm">' + esc(k) + '</span>'
        + '<span class="muted" style="font-size:14px">' + esc(v) + '</span></div>';
 }
-/* 消すのは取り返しがつかないので、何が消えて何が残るかを書いて2回たしかめる */
-function wipeSales(){
-  const st = KemuriCore.sales.stats();
-  if(!confirm('商品ごとの売上 ' + st.days + '日ぶん（' + st.from + '〜' + st.to + '）を消します。\n\n'
-            + '・在庫の数は変わりません\n・仕入単価とレシピも残ります\n・CSVを入れ直せば戻せます\n\n消しますか？')) return;
-  if(!confirm('本当に消しますか？\nこの操作は元に戻せません。')) return;
-  try{ KemuriCore.sales.clear(); }catch(e){}
-  refresh(); render(); toast('商品ごとの売上を消しました');
-}
-function wipeDaily(){
+/* ============================================================
+   全消去の保護（段階0：E7）
+   ------------------------------------------------------------
+   ・何が・何日ぶん・何件消えるかを見せる
+   ・消す前に、必ず控え（まるごとバックアップ）を保存してもらう
+   ・「売上履歴を削除」（日別は「日別売上を削除」）と打ってもらう
+   ・在庫アプリの編集権を «空いているときだけ» 借りて消す。在庫アプリが
+     開いていれば消さない（在庫アプリが古い中身で書き戻さないように）
+   ・消したあと、本当に消えたかを確かめる
+   ============================================================ */
+let WIPE = null;     /* { kind:'sales'|'daily', saved:false } */
+const WIPE_WORD = { sales:'売上履歴を削除', daily:'日別売上を削除' };
+function wipeInfo(kind){
+  if(kind === 'sales'){
+    const st = KemuriCore.sales.stats();
+    let rows = 0; try{ const db = KemuriCore.sales.load(); Object.keys(db.days).forEach(d=>{ rows += Object.keys(db.days[d]).length; }); }catch(e){}
+    return { name:'商品ごとの売上（売上履歴）', days:st.days, from:st.from, to:st.to, rows };
+  }
   const d = KemuriData.daily.stats();
-  if(!confirm('日別の売上 ' + d.days + '日ぶん（' + d.from + '〜' + d.to + '）を消します。\n\n'
-            + '・在庫の数は変わりません\n・CSVを入れ直せば戻せます\n\n消しますか？')) return;
-  try{ KemuriData.daily.clear(); }catch(e){}
-  refresh(); render(); toast('日別の売上を消しました');
+  return { name:'日別の売上', days:d.days, from:d.from, to:d.to, rows:d.days };
+}
+function wipeSales(){ WIPE = { kind:'sales', saved:false }; render(); }
+function wipeDaily(){ WIPE = { kind:'daily', saved:false }; render(); }
+function wipeCancel(){ WIPE = null; render(); }
+function wipeCard(){
+  const w = WIPE, f = wipeInfo(w.kind), word = WIPE_WORD[w.kind];
+  return '<div class="card" id="wipecard" style="border-color:#e74c3c"><h2>' + esc(f.name) + 'を消す</h2>'
+    + '<div class="warn">消えるもの：<b>' + esc(f.name) + ' ' + f.days + '日ぶん</b>（' + esc(f.from || '') + '〜' + esc(f.to || '') + '）'
+    + (w.kind === 'sales' ? '・' + f.rows.toLocaleString() + '行' : '') + '<br>'
+    + '在庫の数・仕入単価・レシピは変わりません。CSVを入れ直せば戻せます。</div>'
+    + '<div class="gap"><b>① 消す前の控えを保存する（必須）</b>'
+    + '<div class="muted">まるごとバックアップを保存します。消したあとに戻したいときに使います。</div>'
+    + '<button class="btn btn-dark gap" onclick="wipeSave()">' + (w.saved ? '✅ 控えを保存しました（もう一度保存する）' : '💾 控えを保存する') + '</button></div>'
+    + '<div class="gap"><b>② 確認のため「' + esc(word) + '」と入力</b>'
+    + '<input class="txt gap" id="wipeword" autocomplete="off" placeholder="' + esc(word) + '" oninput="wipeCheck()"></div>'
+    + '<div class="two"><button class="btn btn-gray" onclick="wipeCancel()">やめる</button>'
+    + '<button class="btn btn-danger" id="wipego" disabled onclick="wipeGo()">消す</button></div></div>';
+}
+function wipeCheck(){
+  const el = document.getElementById('wipeword'), b = document.getElementById('wipego');
+  if(!el || !b || !WIPE) return;
+  b.disabled = !(WIPE.saved && el.value.trim() === WIPE_WORD[WIPE.kind]);
+}
+async function wipeSave(){
+  if(!WIPE) return;
+  const name = KemuriBackup.filename('before-wipe');
+  const text = KemuriBackup.text();
+  try{
+    const file = new File([text], name, { type:'application/json' });
+    if(navigator.canShare && navigator.canShare({ files:[file] })) await navigator.share({ files:[file], title:'消す前の控え' });
+    else dlText(text, name);
+    WIPE.saved = true;
+  }catch(e){
+    if(!(e && e.name === 'AbortError')) toast('保存できませんでした。もう一度試してください');
+  }
+  const typed = (document.getElementById('wipeword') || {}).value || '';
+  render();
+  const el = document.getElementById('wipeword'); if(el){ el.value = typed; wipeCheck(); }
+}
+async function wipeGo(){
+  const w = WIPE; if(!w) return;
+  const el = document.getElementById('wipeword');
+  if(!w.saved || !el || el.value.trim() !== WIPE_WORD[w.kind]) return;
+  if(KemuriBackup.pendingRestore()){ alert('復元が途中で止まったままです。先にその確認をしてください。\n\n何も消していません。'); return; }
+  const key = w.kind === 'sales' ? KemuriCore.SALES_KEY : 'kemuri_daily_v1';
+  const r = await KemuriGuard.withEditor(()=>{
+    if(w.kind === 'sales') KemuriCore.sales.clear(); else KemuriData.daily.clear();
+    let left = null; try{ left = localStorage.getItem(key); }catch(e){ left = '?'; }
+    return left === null;
+  });
+  if(r.unsupported){ alert('この開き方では在庫アプリとの調整ができないため、ここからは消せません。\n\n何も消していません。'); return; }
+  if(r.busy){ alert('在庫アプリ（冷凍在庫）が別の画面で開いています。\n在庫アプリの画面・タブをすべて閉じてから、もう一度押してください。\n\n何も消していません。'); return; }
+  WIPE = null;
+  KemuriData.reloadAll(); refresh(); render();
+  if(r.ok && r.value) toast('消しました');
+  else alert('⚠️ 消せませんでした（端末に残っています）。');
 }
 
 function savePass(){
@@ -1537,11 +1660,12 @@ function render(){
   document.getElementById('h-sub').textContent = ti[1];
 
   const v = document.getElementById('view');
-  v.innerHTML = TAB === 'tmr' ? viewTomorrow()
+  v.innerHTML = (KemuriBackup.pendingRestore() ? '<div class="pad" style="padding-bottom:0">' + restoreCard() + '</div>' : '')
+              + (TAB === 'tmr' ? viewTomorrow()
               : TAB === 'sum' ? viewSum()
               : TAB === 'cost' ? viewCost()
               : TAB === 'recipe' ? viewRecipe()
-              : viewSet();
+              : viewSet());
 
   document.getElementById('tabbar').innerHTML = TABS.map(([k,l,ic]) =>
     '<button class="' + (TAB===k?'on':'') + '" onclick="go(\'' + k + '\')">'

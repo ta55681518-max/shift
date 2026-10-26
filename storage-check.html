@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<script src="test-env.js?v=test1"></script><!-- テスト環境専用（test-envブランチのみ） -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KEMURI 保存の確認（テスト環境専用）</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f6f5f2;color:#222}
+  .band{background:#b3261e;color:#fff;padding:10px 14px;font-weight:700}
+  main{padding:14px;max-width:720px;margin:auto}
+  section{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px;margin:12px 0}
+  h2{font-size:16px;margin:0 0 8px}
+  p{font-size:14px;line-height:1.6;margin:6px 0}
+  button{font-size:15px;padding:10px 12px;margin:4px 6px 4px 0;border-radius:8px;border:1px solid #888;background:#fff;color:#222}
+  button:disabled{opacity:.5}
+  pre{white-space:pre-wrap;word-break:break-all;background:#f0efec;padding:8px;border-radius:6px;font-size:12px;min-height:1em}
+</style>
+</head>
+<body>
+<div class="band">テスト環境専用：IndexedDBと保存容量の確認（段階0）</div>
+<main>
+<p>このページは、いまのデータ（在庫・売上など）を<b>読むだけ</b>で、書きかえません。
+試験で書くのは <code>kmtest_</code> で始まる名前の試験用データだけで、試験が終わると消します
+（「残るかの確認」の記録だけは、消すボタンを押すまで残します）。本番サイトでは動きません。</p>
+<p>上から順に押して、最後の「結果をまとめてコピー」を送ってください。</p>
+
+<section><h2>1. 基本情報</h2><pre id="info">確認中…</pre></section>
+
+<section><h2>2. いまのデータの大きさ（読むだけ）</h2>
+<button onclick="sizes()">測る</button><pre id="sizes"></pre></section>
+
+<section><h2>3. 保存容量の見積もり</h2>
+<button onclick="estimate()">見積もり</button>
+<button onclick="askPersist()">消されにくくするよう頼む</button>
+<p>「消されにくく」は、ブラウザに «このサイトのデータを容量不足のときに自動で消さないで» と頼むだけです（データは変えません）。断られることもあります。</p>
+<pre id="quota"></pre></section>
+
+<section><h2>4. IndexedDB の働き</h2>
+<p>試験用の別の入れ物（kmtest_storage_check）に、納品書1枚ぶん（台帳1件＋明細30行）・写真ぐらいの大きさのファイルを書いて確かめます。</p>
+<button onclick="idbBasic()">働きを確かめる</button><pre id="idb"></pre></section>
+
+<section><h2>5. IndexedDB にどれだけ入るか</h2>
+<p>1MBずつ書いて、入らなくなったところで止めます（最大の量を選ぶ）。終わったら消します。</p>
+<button onclick="idbCap(20)">20MBまで</button><button onclick="idbCap(100)">100MBまで</button>
+<pre id="cap"></pre></section>
+
+<section><h2>6. 閉じても残るか</h2>
+<p>① 「記録を残す」→ ② アプリ（またはタブ）を完全に閉じる → ③ 時間をおいて開き直し、このページを開く → 「記録を読む」。
+ホーム画面アプリとSafari・Chromeのタブで、同じ記録が見えるかも分かります。</p>
+<button onclick="keepWrite()">記録を残す</button><button onclick="keepRead()">記録を読む</button><button onclick="keepClear()">記録を消す</button>
+<pre id="keep"></pre></section>
+
+<section><h2>7. localStorage の余裕（安全な復元に要る分）</h2>
+<p>安全な復元は、置きかえる前の中身を一時的に控えるので、いまのデータの約2倍の空きが要ります。
+その量の試験用データを一時的に書けるかを確かめ、すぐ消します。<b>在庫アプリが開いていると試験しません</b>（試験中に在庫アプリの保存が空き不足にならないように）。</p>
+<button onclick="lsRoom()">確かめる</button><pre id="room"></pre></section>
+
+<section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
+</main>
+<script src="kemuri-core.js?v=20261027s0"></script>
+<script>
+'use strict';
+var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
+if (location.hostname === PROD_HOST) {
+  document.body.innerHTML = '<div class="band">本番サイトではこのページを使いません</div>';
+  throw new Error('production host');
+}
+var TDB = 'kmtest_storage_check', KDB = 'kmtest_storage_keep';
+var LOG = {};
+function put(id, text){ document.getElementById(id).textContent = text; LOG[id] = text; }
+function add(id, line){ put(id, (LOG[id] ? LOG[id] + '\n' : '') + line); }
+function now(){ return new Date().toISOString(); }
+function kb(n){ return Math.round(n / 1024).toLocaleString() + 'K'; }
+function idbReq(r){ return new Promise(function(res, rej){ r.onsuccess = function(){ res(r.result); }; r.onerror = function(){ rej(r.error); }; }); }
+function txDone(tx){ return new Promise(function(res, rej){ tx.oncomplete = function(){ res(true); }; tx.onerror = function(){ rej(tx.error); }; tx.onabort = function(){ rej(tx.error || new Error('abort')); }; }); }
+function openDB(name, up){
+  return new Promise(function(res, rej){
+    var r; try { r = indexedDB.open(name, 1); } catch (e) { rej(e); return; }
+    r.onupgradeneeded = function(){ up(r.result); };
+    r.onsuccess = function(){ res(r.result); };
+    r.onerror = function(){ rej(r.error); };
+    r.onblocked = function(){ rej(new Error('blocked')); };
+  });
+}
+function delDB(name){ return new Promise(function(res){ var r = indexedDB.deleteDatabase(name); r.onsuccess = r.onerror = r.onblocked = function(){ res(); }; }); }
+
+(function info(){
+  var standalone = (window.navigator.standalone === true) ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  put('info', [
+    '日時: ' + now(),
+    'URL: ' + location.origin,
+    'ホーム画面アプリとして起動: ' + (standalone ? 'はい' : 'いいえ'),
+    'UserAgent: ' + navigator.userAgent,
+    'IndexedDB: ' + (('indexedDB' in window) ? 'あり' : 'なし'),
+    'Web Locks: ' + (('locks' in navigator) ? 'あり' : 'なし'),
+    'storage.estimate: ' + ((navigator.storage && navigator.storage.estimate) ? 'あり' : 'なし'),
+    'storage.persist: ' + ((navigator.storage && navigator.storage.persist) ? 'あり' : 'なし'),
+    'crypto.subtle: ' + ((window.crypto && crypto.subtle) ? 'あり' : 'なし')
+  ].join('\n'));
+})();
+
+/* 2. 読むだけ */
+var NAMES = { kemuri_reitou_v1:'在庫アプリ', kemuri_sales_v1:'売上履歴', kemuri_daily_v1:'日別売上', kemuri_costs_v1:'仕入原価',
+              kemuri_recipes_v1:'レシピ', kemuri_zaiko_v1:'串打ち前の在庫', kemuri_kushiyaki_v1:'串焼き', kemuri_hacchu_v1:'発注',
+              kemuri_restore_v1:'復元中の印（残っていれば異常）' };
+function sizes(){
+  var rows = [], kemuri = 0, all = 0;
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i), v = localStorage.getItem(k) || '';
+      all += k.length + v.length;
+      if (/^kemuri_/.test(k)) { kemuri += v.length; rows.push([k, v.length]); }
+    }
+  } catch (e) { put('sizes', '読めませんでした: ' + e); return; }
+  rows.sort(function(a, b){ return b[1] - a[1]; });
+  put('sizes', rows.map(function(r){ return (NAMES[r[0]] || r[0]) + ': ' + kb(r[1]) + '文字'; }).join('\n')
+    + '\n---\nKEMURIのデータ合計: ' + kb(kemuri) + '文字\nこのサイトのlocalStorage合計: ' + kb(all) + '文字'
+    + '\n（多くのiPhoneでは、1つのサイトあたり約5,000K文字が上限の目安）');
+  LOG.kemuriChars = kemuri;
+}
+
+/* 3 */
+async function estimate(){
+  var lines = [];
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      var e = await navigator.storage.estimate();
+      lines.push('使用量: ' + kb(e.usage || 0) + 'B / 上限の見積もり: ' + Math.round((e.quota || 0) / 1048576).toLocaleString() + 'MB');
+    } else lines.push('見積もり機能なし');
+    if (navigator.storage && navigator.storage.persisted) lines.push('消されにくい設定（persisted）: ' + await navigator.storage.persisted());
+  } catch (e) { lines.push('エラー: ' + e); }
+  put('quota', lines.join('\n'));
+}
+async function askPersist(){
+  if (!(navigator.storage && navigator.storage.persist)) { add('quota', '頼む機能なし'); return; }
+  try { add('quota', '頼んだ結果: ' + (await navigator.storage.persist() ? '認められた' : '認められなかった')); }
+  catch (e) { add('quota', 'エラー: ' + e); }
+}
+
+/* 4. 台帳1件＋明細30行を «1回の保存» で書く／途中で止めたら何も残らないか／写真ぐらいのファイル */
+function upTest(db){
+  db.createObjectStore('ledger', { keyPath: 'id' });
+  var s = db.createObjectStore('lines', { keyPath: 'id' }); s.createIndex('doc', 'doc');
+  db.createObjectStore('blobs');
+}
+async function idbBasic(){
+  put('idb', '確認中…');
+  var t0 = performance.now(), out = [];
+  await delDB(TDB);
+  var db;
+  try { db = await openDB(TDB, upTest); } catch (e) { put('idb', '❌ 開けませんでした: ' + e + '\n（プライベートブラウズでは使えないことがあります）'); return; }
+  try {
+    /* a. 1回の保存で台帳＋明細 */
+    var doc = 'kmtest-doc-1';
+    var tx = db.transaction(['ledger', 'lines'], 'readwrite');
+    tx.objectStore('ledger').put({ id: doc, at: now(), vendor: '試験業者', total: 12345 });
+    for (var i = 0; i < 30; i++) tx.objectStore('lines').put({ id: doc + '-' + i, doc: doc, name: '試験商品' + i, qty: i + 1, price: 100 + i, tax: 8 });
+    await txDone(tx);
+    var rtx = db.transaction(['ledger', 'lines']);
+    var led = await idbReq(rtx.objectStore('ledger').get(doc));
+    var lines = await idbReq(rtx.objectStore('lines').index('doc').getAll(doc));
+    out.push((led && lines.length === 30 ? '✅' : '❌') + ' 台帳1件＋明細30行を1回で保存して読み戻し（明細 ' + lines.length + '行）');
+
+    /* b. 途中で取り消したら何も残らない（原子性） */
+    var doc2 = 'kmtest-doc-2';
+    var tx2 = db.transaction(['ledger', 'lines'], 'readwrite');
+    tx2.objectStore('ledger').put({ id: doc2, at: now() });
+    for (var j = 0; j < 30; j++) tx2.objectStore('lines').put({ id: doc2 + '-' + j, doc: doc2, qty: j });
+    tx2.abort();
+    try { await txDone(tx2); } catch (e) { /* 取り消し */ }
+    var rtx2 = db.transaction(['ledger', 'lines']);
+    var led2 = await idbReq(rtx2.objectStore('ledger').get(doc2));
+    var lines2 = await idbReq(rtx2.objectStore('lines').index('doc').getAll(doc2));
+    out.push((!led2 && lines2.length === 0 ? '✅' : '❌') + ' 途中で取り消した保存は、台帳も明細も残らない（残った明細 ' + lines2.length + '行）');
+
+    /* c. 写真ぐらいのファイル（2MB） */
+    var bytes = new Uint8Array(2 * 1024 * 1024); for (var b = 0; b < bytes.length; b += 4096) bytes[b] = b & 255;
+    var tx3 = db.transaction('blobs', 'readwrite');
+    tx3.objectStore('blobs').put(new Blob([bytes], { type: 'image/jpeg' }), 'photo');
+    await txDone(tx3);
+    var got = await idbReq(db.transaction('blobs').objectStore('blobs').get('photo'));
+    var back = got && got.arrayBuffer ? new Uint8Array(await got.arrayBuffer()) : null;
+    var same = !!back && back.length === bytes.length && back[4096] === bytes[4096];
+    out.push((same ? '✅' : '❌') + ' 写真ぐらいのファイル（2MB）を保存して読み戻し');
+    out.push('所要 ' + Math.round(performance.now() - t0) + 'ms');
+  } catch (e) {
+    out.push('❌ エラー: ' + (e && (e.name + ' ' + e.message) || e));
+  }
+  try { db.close(); } catch (e) {}
+  await delDB(TDB);
+  out.push('試験用データは消しました');
+  put('idb', out.join('\n'));
+}
+
+/* 5 */
+async function idbCap(maxMB){
+  put('cap', '書いています…（最大 ' + maxMB + 'MB）');
+  await delDB(TDB);
+  var db; try { db = await openDB(TDB, upTest); } catch (e) { put('cap', '❌ 開けませんでした: ' + e); return; }
+  var mb = 0, err = '', blob = new Blob([new Uint8Array(1024 * 1024)]), t0 = performance.now();
+  for (var i = 0; i < maxMB; i++) {
+    try { var tx = db.transaction('blobs', 'readwrite'); tx.objectStore('blobs').put(blob, 'k' + i); await txDone(tx); mb++; }
+    catch (e) { err = (e && e.name) || String(e); break; }
+    if (i % 5 === 4) put('cap', '書いています… ' + mb + 'MB');
+  }
+  try { db.close(); } catch (e) {}
+  await delDB(TDB);
+  put('cap', mb + 'MB 書けた（' + (err ? '止まった理由: ' + err : '上限の ' + maxMB + 'MB まで問題なし') + '）／所要 ' + Math.round(performance.now() - t0) + 'ms。試験用データは消しました');
+}
+
+/* 6 */
+async function keepWrite(){
+  try {
+    var db = await openDB(KDB, function(d){ d.createObjectStore('m'); });
+    var tx = db.transaction('m', 'readwrite'); tx.objectStore('m').put({ at: now(), ua: navigator.userAgent }, 'mark'); await txDone(tx); db.close();
+    try { localStorage.setItem('kmtest_keep', now()); } catch (e) {}
+    keepRead();
+  } catch (e) { put('keep', '❌ 書けませんでした: ' + e); }
+}
+/* 無ければ作らずに null（読むだけで試験用の入れ物を作らないように） */
+function openExisting(name){
+  return new Promise(function(res, rej){
+    var r; try { r = indexedDB.open(name); } catch (e) { rej(e); return; }
+    var created = false;
+    r.onupgradeneeded = function(){ created = true; r.transaction.abort(); };
+    r.onsuccess = function(){ res(r.result); };
+    r.onerror = function(){ if (created) res(null); else rej(r.error); };
+  });
+}
+async function keepRead(){
+  var lines = ['読んだ時刻: ' + now()];
+  try {
+    var db = await openExisting(KDB), v = null;
+    if (db) { v = db.objectStoreNames.contains('m') ? await idbReq(db.transaction('m').objectStore('m').get('mark')) : null; db.close(); }
+    lines.push('IndexedDBの記録: ' + (v ? v.at : 'なし'));
+  } catch (e) { lines.push('IndexedDB: 読めません ' + e); }
+  var l = null; try { l = localStorage.getItem('kmtest_keep'); } catch (e) {}
+  lines.push('localStorageの記録: ' + (l || 'なし'));
+  put('keep', lines.join('\n'));
+}
+async function keepClear(){ await delDB(KDB); try { localStorage.removeItem('kmtest_keep'); } catch (e) {} keepRead(); }
+
+/* 7. いまのデータの2倍を一時的に書けるか（在庫アプリの鍵を借りている間だけ） */
+async function lsRoom(){
+  var cur = 0;
+  try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (/^kemuri_/.test(k)) cur += (localStorage.getItem(k) || '').length; } } catch (e) {}
+  var need = Math.max(cur * 2, 256 * 1024);
+  var r = await KemuriGuard.withEditor(function(){
+    var key = 'kmtest_room', ok = false, t0 = performance.now();
+    try { localStorage.setItem(key, 'x'.repeat(need)); ok = (localStorage.getItem(key) || '').length === need; } catch (e) { ok = false; }
+    try { localStorage.removeItem(key); } catch (e) {}
+    var gone = true; try { gone = localStorage.getItem(key) === null; } catch (e) {}
+    return { ok: ok, gone: gone, ms: Math.round(performance.now() - t0) };
+  });
+  if (r.unsupported) { put('room', 'Web Locksが使えないため試験しませんでした'); return; }
+  if (r.busy) { put('room', '在庫アプリが開いているため試験しませんでした。在庫アプリを閉じてからもう一度押してください'); return; }
+  var v = r.value || {};
+  put('room', 'いまのKEMURIのデータ: ' + kb(cur) + '文字\n試験で一時的に書いた量: ' + kb(need) + '文字 → ' + (v.ok ? '✅ 書けた' : '❌ 書けなかった（安全な復元の控えが作れない可能性）')
+    + '\n試験用データ: ' + (v.gone ? '消しました' : '⚠️ 消せませんでした（kmtest_room）') + '／所要 ' + v.ms + 'ms');
+}
+
+function copyAll(){
+  var t = Object.keys(LOG).filter(function(k){ return typeof LOG[k] === 'string'; })
+    .map(function(k){ return '[' + k + ']\n' + LOG[k]; }).join('\n\n');
+  put('all', t);
+  if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function(){});
+}
+</script>
+</body>
+</html>

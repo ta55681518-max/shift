@@ -447,6 +447,69 @@
     }
   };
 
+  /* ============================================================
+     編集権の借り方（段階0：第2-B・E7。ダッシュボードの復元・全消去）
+     ------------------------------------------------------------
+     在庫アプリは鍵「kemuri-reitou-editor」を持っている画面だけが保存する。
+     ダッシュボードが在庫アプリ・売上履歴のデータを書きかえるときも、
+     同じ鍵を «空いているときだけ» 借りる（奪わない・待たない）。
+       ・借りられた → fn() を同期で実行 → 鍵を返す → 在庫アプリの画面に
+         «空いた»（free）を知らせる。保存データの版・検査値も一緒に送るので、
+         在庫アプリは最新を読み直してから編集を再開する
+       ・借りられない（在庫アプリが開いている）→ 何もしない（{ busy:true }）
+       ・Web Locks が使えない → 何もしない（{ unsupported:true }）
+     ============================================================ */
+  var EDIT_LOCK = 'kemuri-reitou-editor';
+  function quickHash(str) {
+    var h = 2166136261 >>> 0;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h.toString(16) + ':' + str.length;
+  }
+  /* 在庫アプリの storedSummary と同じ中身（引き継ぎの照合に使われる） */
+  function reitouSummary() {
+    var raw = null;
+    try { raw = global.localStorage.getItem('kemuri_reitou_v1'); } catch (e) { return { rev: -1 }; }
+    if (raw == null) return { rev: 0, wid: '', hash: '', pend: 0, marks: 0, empty: true };
+    var o = null; try { o = JSON.parse(raw); } catch (e) {}
+    var pend = o && Array.isArray(o.imports) ? o.imports.filter(function (r) { return r && r.salesPending && !r.undone; }).length : 0;
+    var marks = o ? Object.keys(o.applied || {}).length + Object.keys(o.seen || {}).length : 0;
+    return { rev: (o && Number(o.rev)) || 0, wid: (o && o.wid) || '', hash: quickHash(raw), pend: pend, marks: marks };
+  }
+  var Guard = {
+    EDIT_LOCK: EDIT_LOCK,
+    supported: function () {
+      try { return !!(global.navigator && navigator.locks && typeof navigator.locks.request === 'function'); }
+      catch (e) { return false; }
+    },
+    /* fn は同期の関数。戻り値は Promise<{ ok, busy, unsupported, value, error }> */
+    withEditor: function (fn) {
+      if (!Guard.supported()) return Promise.resolve({ ok: false, unsupported: true });
+      var out = { ok: false };
+      return navigator.locks.request(EDIT_LOCK, { ifAvailable: true }, function (lock) {
+        if (!lock) { out.busy = true; return; }
+        try { out.value = fn(); out.ok = true; }
+        catch (e) { out.error = e; }
+      }).then(function () {
+        if (!out.busy) Guard.announceFree();
+        return out;
+      }, function (e) { out.error = e; return out; });
+    },
+    /* 在庫アプリの画面に «鍵が空いた» を知らせる（表示中の画面は取りにいく） */
+    announceFree: function () {
+      try {
+        if (!('BroadcastChannel' in global)) return;
+        var ch = new BroadcastChannel('kemuri-editor');
+        var m = reitouSummary();
+        m.t = 'free'; m.from = 'dash-' + Math.random().toString(36).slice(2, 8); m.at = new Date().toISOString();
+        ch.postMessage(m);
+        setTimeout(function () { try { ch.close(); } catch (e) {} }, 500);
+      } catch (e) {}
+    },
+    reitouSummary: reitouSummary
+  };
+
+  global.KemuriGuard = Guard;
+
   global.KemuriCore = {
     num: num,
     norm: norm,

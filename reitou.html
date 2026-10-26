@@ -230,8 +230,8 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261024b2a"></script>
-<script src="kemuri-backup.js?v=20261012b"></script>
+<script src="kemuri-core.js?v=20261027s0"></script>
+<script src="kemuri-backup.js?v=20261027s0"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
 <script src="kemuri-data.js?v=20261024e2"></script>
@@ -435,7 +435,23 @@ function lockData(r){
   try{ console.warn('[冷凍在庫] 保存データに異常のため停止:', DATA_LOCK.kind, DATA_LOCK.detail); }catch(e){}
 }
 
+/* 段階0（第2-B）：復元が途中で止まっている（復元中の印が残っている）ときは、
+   どのデータが入れ替わり途中か分からないので、編集・取込・保存を止める（DATA_LOCK）。
+   自動では戻さない。停止中の画面で «復元前に戻す» かを選んでもらう */
+function restoreHalt(){
+  let p = null;
+  try{ p = (window.KemuriBackup && KemuriBackup.pendingRestore) ? KemuriBackup.pendingRestore() : null; }catch(e){}
+  if(!p){ if(DATA_LOCK && DATA_LOCK.kind === 'restore') DATA_LOCK = null; return false; }
+  if(DATA_LOCK && DATA_LOCK.kind === 'restore') return true;
+  lockData({ state:'restore', detail:p.broken ? p.why : '復元が途中で止まっています（入っていないもの：' + (p.rest.map(k=>KemuriBackup.label(k)).join('、') || 'なし') + '）' });
+  return true;
+}
 function load(){
+  const d = loadStored();
+  restoreHalt();
+  return d;
+}
+function loadStored(){
   const r = readStored();
   if(r.state === 'empty') return seedDB();                      /* はじめて使う */
   /* ここでは書かない（端末の中身＝SAVED_RAW のままにしておく）。埋めた項目は起動時の保存で残る */
@@ -499,6 +515,8 @@ function applySeedPos(d){
    ・呼ぶ側は、false のときは「保存しました」などの成功表示を出さずに止める
    ============================================================ */
 function save(opts){
+  /* 復元が途中で止まっている → 書かない（段階0） */
+  if(!DATA_LOCK && restoreHalt()){ try{ render(); }catch(e){} }
   /* 保存データに異常があるときは、何があっても書かない（元のデータを守る） */
   if(DATA_LOCK){
     if(!(opts && opts.silent)) alert(LOCK_MSG + '\n\n（' + DATA_LOCK.detail + '）');
@@ -601,6 +619,7 @@ function becomeEditor(){
   if(r.state === 'ok'){ DB = migrate(Object.assign(blank(), r.data), true); SAVED_RAW = r.raw; DATA_LOCK = null; }
   else if(r.state === 'empty'){ if(SAVED_RAW != null){ r.detail = '保存したはずのデータが端末に見つかりません'; lockData(r); } else DB = seedDB(); }
   else lockData(r);
+  restoreHalt();
   if(!DATA_LOCK){
     prepareDB();
     /* 開いたときの手入れを残す（編集権のある画面だけ）。
@@ -866,6 +885,7 @@ function tryAutoEdit(why){
    入力を続けるか・最新を読み込んで知らせるかを決める（classifyChange・applyChange） */
 function resumeEditor(wasDormant){
   const base = AUTO.dormantRaw;
+  if(restoreHalt()){ AUTO.dormantRaw = null; AUTO.lastFree = null; render(); return; }
   if(!wasDormant){ becomeEditor(); return; }
   const r = readStored();
   if(r.state !== 'ok'){ becomeEditor(); return; }   /* 壊れている・無い → becomeEditor が停止を判断 */
@@ -915,6 +935,13 @@ function editBar(){
    自分の直前の保存が «ほぼ同時の保存» で上書きされていたら、それも知らせる。
    版番号・画面の印だけの違いは «変更なし» として扱う（classifyChange）。 */
 function checkFresh(){
+  /* 復元中の印（段階0）：残っていれば止める。消えていれば、止めていたぶんを解いて読み直す */
+  if(DATA_LOCK && DATA_LOCK.kind === 'restore'){
+    if(restoreHalt()) return;
+    restoreSaved(); try{ KemuriCore.sales.reload && KemuriCore.sales.reload(); }catch(e){}
+    render(); return;
+  }
+  if(!DATA_LOCK && restoreHalt()){ render(); return; }
   if(DATA_LOCK) return;
   if(EDITOR.mode === 'dormant') return;      /* 裏に回って手放した画面は、戻ったとき resumeEditor が比べる */
   let raw = null;
@@ -1073,7 +1100,7 @@ function applyChange(c, r, opt){
   toast('最新の内容を読み込みました（在庫の数は変わっていません）');
   return 'other';
 }
-window.addEventListener('storage', e=>{ if(e.key === LS_KEY || e.key === null) checkFresh(); });
+window.addEventListener('storage', e=>{ if(e.key === LS_KEY || e.key === null || e.key === KemuriBackup.MARK) checkFresh(); });
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') checkFresh(); });
 window.addEventListener('pageshow', e=>{ if(e.persisted) checkFresh(); });
 window.addEventListener('focus', ()=>checkFresh());
@@ -1107,11 +1134,12 @@ function saveFailed(why, opts){
 
 const LOCK_MSG = '保存データに異常が見つかりました。データ保護のため編集・取込を停止しています。初期化せず、バックアップを確認してください。';
 const LOCK_KIND = { corrupt:'データが壊れている', invalid:'項目・形が不正', version:'未対応の版',
-                    error:'読み出しの失敗', empty:'データが見つからない' };
+                    error:'読み出しの失敗', empty:'データが見つからない', restore:'復元が途中で止まった' };
 
 /* 停止中の画面。編集・取込のボタンは出さない */
 function viewLock(){
   const L = DATA_LOCK;
+  if(L.kind === 'restore') return viewRestoreLock();
   return '<div class="pad">'
     + '<div class="warn" style="margin-bottom:12px"><b>⚠️ ' + esc(LOCK_MSG) + '</b></div>'
     + '<div class="card"><h2>見つかった異常</h2>'
@@ -3518,30 +3546,73 @@ function bkApply(){
   if(!keys.length) return;
   if(DATA_LOCK){ closeSheet(); render(); return; }   /* 停止中は «復旧» の手順だけを使う */
   if(EDITOR.mode !== 'editor'){ closeSheet(); alert(viewOnlyMsg()); render(); return; }   /* 表示専用の画面では復元しない */
-  /* 在庫アプリぶんを入れるなら、先に中身を確かめる（異常なデータで上書きしない） */
+  /* 段階0（第2-B）：入れるもの全部を先に確かめる（形・第2形式なら検査値と件数）。
+     在庫アプリぶんは在庫アプリと同じ基準（異常なデータで上書きしない） */
   if(keys.indexOf(LS_KEY) >= 0){
     const c = checkBackupReitou(box);
     if(!c.data){ alert(c.why + '\n\n何も読み込んでいません。'); return; }
   }
-  const res = KemuriBackup.apply(box, keys);
+  const chk = KemuriBackup.validate(box, keys);
+  if(!chk.ok){ alert('このバックアップは読み込めません。\n\n' + chk.problems.map(p=>'・' + p.label + '：' + p.why).join('\n') + '\n\n何も読み込んでいません。'); return; }
+  /* 安全な復元：控え → 1つずつ書いて読み直す → 失敗したら全部戻す（この画面が編集権を持っている） */
+  const res = KemuriBackup.applySafe(box, keys, { who:'reitou' });
   closeSheet();
-  if(!res.ok.length){ toast('読み込めませんでした'); return; }
   /* 在庫アプリぶんを読み直す。後から足した項目はここで埋まる */
   const rs = readStored();
-  if(rs.state !== 'ok' && rs.state !== 'empty'){ lockData(rs); render(); return; }
+  if(rs.state !== 'ok' && rs.state !== 'empty'){ lockData(rs); restoreHalt(); render(); return; }
   DB = rs.state === 'ok' ? migrate(Object.assign(blank(), rs.data), true) : seedDB();
   SAVED_RAW = rs.state === 'ok' ? rs.raw : null;
+  try{ KemuriCore.sales.reload && KemuriCore.sales.reload(); }catch(e){}
+  if(restoreHalt()){ render(); alert('⚠️ 読み込みの途中で失敗し、元に戻すこともできませんでした。\n' + res.why + '\n\n画面の案内に沿って確認してください。'); return; }
+  if(!res.ok){
+    render();
+    alert('⚠️ 読み込めませんでした。\n' + res.why + (res.rolledBack ? '\n\n途中まで入れたものは元に戻しました（読み込む前のままです）。' : '\n\n何も読み込んでいません。'));
+    return;
+  }
   /* 読み込んだ中身はもう端末に入っている。ここで書けなくても、
      後から足した項目が次に開いたときに埋まるだけなので、知らせない */
   save({ silent:true });
-  try{ KemuriCore.sales.reload && KemuriCore.sales.reload(); }catch(e){}
   render();
-  if(res.ng.length){
-    alert('一部が入りませんでした（' + res.ng.map(k=>KemuriBackup.label(k)).join('、') + '）。\n'
-        + '端末の空き容量が足りない可能性があります。');
-  }else{
-    toast(res.ok.length + '件を読み込みました');
+  toast(res.written.length + '件を読み込みました');
+}
+/* 復元が途中で止まっているときの画面（段階0） */
+function viewRestoreLock(){
+  const p = KemuriBackup.pendingRestore() || { broken:true, why:'復元中の印を読めません', done:[], rest:[] };
+  const lab = k=>KemuriBackup.label(k);
+  let h = '<div class="pad">'
+    + '<div class="warn" style="margin-bottom:12px"><b>⚠️ バックアップからの復元が途中で止まっています。どのデータが入れ替わり途中か確かめるまで、編集・取込を停止しています。</b></div>'
+    + '<div class="card"><h2>止まった復元</h2>';
+  if(p.broken) h += '<div class="muted">' + esc(p.why) + '</div>';
+  else h += '<div class="muted">始めた日時：' + esc(fmtDT(p.at)) + '</div>'
+          + '<div class="muted">入り終わっていたもの：' + esc(p.done.map(lab).join('、') || 'なし') + '</div>'
+          + '<div class="muted">入っていないもの：' + esc(p.rest.map(lab).join('、') || 'なし') + '</div>';
+  h += '</div><div class="card"><h2>次にやること</h2>'
+    + '<div class="muted">分からないときは何も押さずに閉じて、相談してください（このまま閉じても何も変わりません）。</div>';
+  if(!p.broken){
+    h += '<button class="btn btn-primary gap" onclick="restoreResolveR(\'back\')">復元する前の中身に戻す</button>';
+    if(!p.rest.length) h += '<button class="btn btn-gray gap" onclick="restoreResolveR(\'keep\')">全部入っているので、このまま使う</button>';
   }
+  h += '<button class="btn btn-gray gap" onclick="restoreExportR()">📤 控え（復元する前の中身）を書き出す</button></div></div>';
+  return h;
+}
+function restoreResolveR(how){
+  if(EDITOR.mode !== 'editor'){ alert(viewOnlyMsg()); return; }
+  if(!confirm(how === 'back' ? '復元する前の中身に戻します。よいですか？' : '復元した中身をこのまま使います。よいですか？')) return;
+  const r = KemuriBackup.resolveRestore(how);
+  if(!r.ok){ alert('⚠️ できませんでした。\n' + r.why); render(); return; }
+  DATA_LOCK = null;
+  try{ KemuriCore.sales.reload && KemuriCore.sales.reload(); }catch(e){}
+  SAVED_RAW = null;
+  becomeEditor();
+  if(!DATA_LOCK) toast(how === 'back' ? '復元する前の中身に戻しました' : '片付けました');
+}
+function restoreExportR(){
+  const t = KemuriBackup.restoreMarkText();
+  if(t == null){ toast('控えがありません'); return; }
+  const name = KemuriBackup.filename('restore-mark');
+  const url = URL.createObjectURL(new Blob([t], { type:'application/json' })), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
 }
 function resetAll(){
   if(DATA_LOCK){ alert(LOCK_MSG + '\n\n停止中は初期化できません。'); return; }
