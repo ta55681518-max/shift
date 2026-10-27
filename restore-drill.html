@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<script src="test-env.js?v=test1"></script><!-- テスト環境専用（test-envブランチのみ） -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KEMURI 復元の試験（テスト環境専用）</title>
+<style>
+  body{font-family:-apple-system,system-ui,sans-serif;margin:0;background:#f6f5f2;color:#222}
+  .band{background:#b3261e;color:#fff;padding:10px 14px;font-weight:700}
+  main{padding:14px;max-width:720px;margin:auto}
+  section{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px;margin:12px 0}
+  h2{font-size:16px;margin:0 0 8px}
+  p{font-size:14px;line-height:1.6;margin:6px 0}
+  button{font-size:15px;padding:10px 12px;margin:4px 6px 4px 0;border-radius:8px;border:1px solid #888;background:#fff;color:#222}
+  button.warn{border-color:#b3261e;color:#b3261e}
+  pre{white-space:pre-wrap;word-break:break-all;background:#f0efec;padding:8px;border-radius:6px;font-size:12px;min-height:1em}
+  textarea{width:100%;box-sizing:border-box;height:6em;font-size:12px}
+</style>
+</head>
+<body>
+<div class="band">テスト環境専用：バックアップ・復元の通し試験（段階0・残課題A-3）</div>
+<main>
+<p>このページは <b>テストのURLの中だけ</b> で動きます（本番では動きません）。
+使うデータは «ダミー» だけです。<b>本番のバックアップファイルは使いません。</b></p>
+
+<section><h2>0. 安全確認（開くたびに見る）</h2><pre id="safe">確認中…</pre></section>
+
+<section><h2>1. ダミーのバックアップファイルを作る</h2>
+<p>作ったファイルは「ファイル」アプリの試験用フォルダに保存し、ダッシュボードの «バックアップのファイルを選ぶ» で読み込みます。
+ファイル名はすべて <code>TEST_kemuri-dummy-…</code> です。</p>
+<p>D0＝基準／D1＝全部の種類で中身が違うもの／D2＝数字を1つ書きかえた（読み込みを断られるはず）／D3＝途中で切れた（読めないはず）</p>
+<button onclick="exportDummy('D0')">D0 を作る</button><button onclick="exportDummy('D1')">D1 を作る</button>
+<button onclick="exportDummy('D2')">D2 を作る</button><button onclick="exportDummy('D3')">D3 を作る</button>
+<pre id="exp"></pre>
+<textarea id="exptext" style="display:none" readonly></textarea></section>
+
+<section><h2>2. いまの中身を比べる</h2>
+<p>端末のデータが D0・D1 のどちらと同じかを、種類ごとに確かめます（読むだけ）。
+在庫アプリの版番号など、開いたときに変わってよい所は比べません。</p>
+<button onclick="compareNow()">比べる</button><pre id="cmp"></pre></section>
+
+<section><h2>3. 失敗を起こす復元（いまが D0 のときだけ）</h2>
+<p>D1 を «安全な復元» で読み込みますが、わざと途中で失敗・停止させます。<b>在庫アプリを閉じてから</b>押してください。</p>
+<button class="warn" onclick="drillFail()">失敗を起こして復元（日別売上で失敗）</button>
+<button class="warn" onclick="drillStop()">途中で止めて復元（在庫アプリの直後で停止）</button>
+<pre id="drill"></pre></section>
+
+<section><h2>4. 試験データを消す</h2>
+<p>このテストのURLの、バックアップ対象の8種類と «復元中の印» だけを消します。エラーの記録・申請の記録は残します。
+<b>在庫アプリが開いていると消しません。</b></p>
+<button class="warn" onclick="wipeTest()">試験データを消す</button><pre id="wipe"></pre></section>
+
+<section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
+</main>
+<script src="kemuri-core.js?v=20261027s0"></script>
+<script src="kemuri-backup.js?v=20261027s0"></script>
+<script src="kemuri-errlog.js?v=20261027a1"></script>
+<script>
+'use strict';
+/* ============================================================
+   復元の通し試験（段階0・残課題A-3）
+   ・本番のホスト名、またはテスト環境の印（test-env.js）が無いときは何もしない
+   ・ダミーは «ダミー» で始まる名前・2026-01-05〜08 の固定日だけ
+   ・書くのは «失敗を起こす復元» と «試験データを消す» だけ。
+     どちらも在庫アプリの編集権を空いているときだけ借りる（KemuriGuard.withEditor）
+   ============================================================ */
+var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
+var STOP = (location.hostname === PROD_HOST) || window.KEMURI_ENV !== 'test' || !window.KemuriBackup || !window.KemuriGuard;
+if (STOP) {
+  document.body.innerHTML = '<div class="band">このページはテスト環境のURLでだけ使います（何もしていません）</div>';
+  throw new Error('not test env');
+}
+var TAG = 'kemuri-backup-TEST';
+var KEYS = KemuriBackup.KEYS, MARK = KemuriBackup.MARK;
+var LOG = {};
+function put(id, t){ document.getElementById(id).textContent = t; LOG[id] = t; }
+function add(id, t){ put(id, (LOG[id] ? LOG[id] + '\n' : '') + t); }
+function label(k){ return KemuriBackup.label(k); }
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+var norm = KemuriCore.norm;
+var T0 = '2026-01-05T09:00:00.000Z';
+
+/* ---------- ダミーデータ（v=0 → D0、v=1 → D1。D1 は全種類で中身を変える） ---------- */
+function dummyData(v){
+  var d1 = v === 1;
+  /* 在庫アプリ。mig2・mig3・posSeeded を入れておく（無いと在庫アプリが開いたときに実在の品目を足すため） */
+  var items = [
+    [1, 'ダミー鶏もも', 10], [2, 'ダミーねぎ', 3], [3, 'ダミー豚バラ', 0], [4, 'ダミー砂肝', 7.5], [5, 'ダミー牛タン', 20]
+  ];
+  if (d1) { items[0][2] = 99; items[1][2] = 4; items.push([6, 'ダミーつくね', 12]); }
+  var reitou = { v: 1, rev: 1, wid: 'dummy', seq: items.length + 1,
+    items: items.map(function(x){ return { id: x[0], name: x[1], stock: x[2], min: 2, per: 1, cost: 100 + x[0], cat: 'frozen', sup: '', unit: '個' }; }),
+    map: {}, seen: {}, applied: {}, imports: [], csvMap: null, ordered: {}, sups: [], supCfg: {}, orders: [],
+    history: [
+      { at: T0, name: 'ダミー鶏もも', before: 0, after: 10, reason: 'ダミー入荷' },
+      { at: T0, name: 'ダミーねぎ', before: 0, after: 3, reason: 'ダミー入荷' },
+      { at: T0, name: 'ダミー砂肝', before: 0, after: 7.5, reason: 'ダミー入荷' }
+    ].concat(d1 ? [{ at: T0, name: 'ダミーつくね', before: 0, after: 12, reason: 'ダミー入荷' }] : []),
+    last: { cat: 'frozen', sup: '', unit: '個' }, posSeeded: 1, mig2: 1, mig3: 1 };
+
+  /* 売上履歴（商品別）：D0＝3日×4行、D1＝4日（4・4・4・3行） */
+  var names = ['ダミーねぎま', 'ダミーつくね串', 'ダミー皮串', 'ダミー砂肝串'];
+  var days = ['2026-01-05', '2026-01-06', '2026-01-07'].concat(d1 ? ['2026-01-08'] : []);
+  var sdays = {};
+  days.forEach(function(day, di){
+    var rows = {}, n = (d1 && di === 3) ? 3 : 4;
+    for (var i = 0; i < n; i++) { var q = 3 + di + i; rows[norm(names[i])] = { name: names[i], qty: q, amount: q * 180 }; }
+    sdays[day] = rows;
+  });
+  var sales = { v: 1, days: sdays, spans: {}, seen: {}, closed: {}, totals: {}, logs: {}, order: [], updatedAt: T0 };
+
+  /* 日別売上 */
+  var dd = {};
+  days.forEach(function(day, i){ dd[day] = { weather: '晴れ', gross: 100000 + i * 1000, net: 90909 + i * 909, guests: 30 + i, groups: 10 + i }; });
+  var daily = { v: 1, days: dd, updatedAt: T0 };
+
+  /* 仕入原価・レシピ */
+  function cost(name, price){ return { name: name, unit: '個', price: price, sale: null, rate: null, tax: '税込', status: '計算済', category: 'ダミー', note: '', updatedAt: T0 }; }
+  var ci = {}; [['ダミー鶏もも', 50], ['ダミーねぎ', 8], ['ダミー豚バラ', 40]].concat(d1 ? [['ダミー砂肝', 30]] : [])
+    .forEach(function(x){ ci[norm(x[0])] = cost(x[0], x[1]); });
+  if (d1) ci[norm('ダミー鶏もも')].price = 55;
+  var costs = { v: 1, items: ci, updatedAt: T0 };
+  var ri = {};
+  [['ダミーねぎま', [['ダミー鶏もも', 1], ['ダミーねぎ', 1]]], ['ダミー豚バラ串', [['ダミー豚バラ', 1]]]]
+    .concat(d1 ? [['ダミー砂肝串', [['ダミー砂肝', 1]]]] : [])
+    .forEach(function(x){ ri[norm(x[0])] = { name: x[0], parts: x[1].map(function(p){ return { name: p[0], qty: p[1] }; }) }; });
+  var recipes = { v: 1, items: ri, updatedAt: T0 };
+
+  /* 串打ち前の在庫（旧アプリの形）・串焼き・発注 */
+  var zaiko = { ingredients: [{ name: 'ダミー豚バラ串', genre: 'ダミー', unit: '本', qty: 30, min: 10 }]
+    .concat(d1 ? [{ name: 'ダミー皮串', genre: 'ダミー', unit: '本', qty: 15, min: 5 }] : []),
+    recipes: {}, menus: [], days: {}, log: [] };
+  var kit = {};
+  kit['ダミーねぎま'] = { min: 5, par: 20, per: 1, cost: 40, keep: 3, lots: [{ id: 1, made: '2026-01-05', exp: '2026-01-08', qty: 12 }] };
+  if (d1) kit['ダミー皮串'] = { min: 5, par: 15, per: 1, cost: 30, keep: 3, lots: [{ id: 2, made: '2026-01-06', exp: '2026-01-09', qty: 8 }] };
+  var kushiyaki = { items: kit, applied: {}, log: [], losses: [], seq: d1 ? 3 : 2, syncZaiko: false, reflectBy: 'material',
+    posFrom: '', posAuto: false, posMap: {}, posMarks: {}, posLog: [], migPos: 1 };
+  var prods = [{ id: 'dp1', sid: 'ds1', name: 'ダミー鶏もも', unit: 'kg', pin: false, freq: 0, last: null, cat: 'ダミー' }];
+  if (d1) prods.push({ id: 'dp2', sid: 'ds1', name: 'ダミーねぎ', unit: '束', pin: false, freq: 0, last: null, cat: 'ダミー' });
+  var hacchu = { suppliers: [{ id: 'ds1', name: 'ダミー業者', emoji: '📦' }], products: prods, order: {}, done: {}, sentToday: {}, history: [], supDates: {} };
+
+  return { kemuri_reitou_v1: reitou, kemuri_sales_v1: sales, kemuri_daily_v1: daily, kemuri_costs_v1: costs,
+           kemuri_recipes_v1: recipes, kemuri_zaiko_v1: zaiko, kemuri_kushiyaki_v1: kushiyaki, kemuri_hacchu_v1: hacchu };
+}
+/* 第2形式のバックアップの箱にする（KemuriBackup.collect と同じ作り。端末には書かない） */
+function boxOf(name, objs){
+  var data = {}, meta = {};
+  KEYS.forEach(function(k){
+    if (objs[k] === undefined) return;
+    data[k] = { j: objs[k] };
+    var w = JSON.stringify(objs[k]);
+    meta[k] = { hash: KemuriBackup.hash(w), len: w.length, count: KemuriBackup.counts(k, objs[k]) };
+  });
+  return { tag: TAG, v: 2, at: new Date().toISOString(), env: 'test', host: location.host, drill: name, data: data, meta: meta, idb: {} };
+}
+function dummyText(name){
+  if (name === 'D0') return JSON.stringify(boxOf('D0', dummyData(0)));
+  var b1 = boxOf(name, dummyData(1));
+  if (name === 'D1') return JSON.stringify(b1);
+  if (name === 'D2') { b1.data.kemuri_daily_v1.j.days['2026-01-08'].gross += 1; return JSON.stringify(b1); }   /* 検査値はそのまま */
+  if (name === 'D3') { var t = JSON.stringify(b1); return t.slice(0, Math.floor(t.length / 2)); }               /* 途中で切れた */
+  return '';
+}
+
+/* ---------- 比べる：開いたときに変わってよい所を除いた «中身の要点» ---------- */
+function sortedKeys(o){ return Object.keys(o || {}).sort(); }
+function proj(k, o){
+  if (!o || typeof o !== 'object') return null;
+  switch (k) {
+    case 'kemuri_reitou_v1':
+      return { items: (o.items || []).slice().sort(function(a, b){ return a.id - b.id; }).map(function(it){ return [it.id, it.name, it.stock, it.min]; }),
+               imports: (o.imports || []).filter(function(r){ return r && !r.undone; }).length, history: (o.history || []).length };
+    case 'kemuri_sales_v1':
+      return sortedKeys(o.days).map(function(d){ return [d, sortedKeys(o.days[d]).map(function(r){ return [r, o.days[d][r].qty]; })]; });
+    case 'kemuri_daily_v1':
+      return sortedKeys(o.days).map(function(d){ return [d, o.days[d].gross]; });
+    case 'kemuri_costs_v1':
+      return sortedKeys(o.items).map(function(i){ return [i, o.items[i].price]; });
+    case 'kemuri_recipes_v1':
+      return sortedKeys(o.items).map(function(i){ return [i, (o.items[i].parts || []).map(function(p){ return [p.name, p.qty]; })]; });
+    case 'kemuri_zaiko_v1':
+      return (o.ingredients || []).map(function(g){ return [g.name, g.qty]; }).sort();
+    case 'kemuri_kushiyaki_v1':
+      return sortedKeys(o.items).map(function(n){ return [n, (o.items[n].lots || []).reduce(function(a, l){ return a + (Number(l.qty) || 0); }, 0)]; });
+    case 'kemuri_hacchu_v1':
+      return { sup: (o.suppliers || []).map(function(s){ return s.id; }).sort(), prod: (o.products || []).map(function(p){ return p.id + '|' + p.name; }).sort() };
+  }
+  return null;
+}
+function fp(k, o){ var p = proj(k, o); return p == null ? '' : KemuriBackup.hash(JSON.stringify(p)); }
+/* いまの状態。{ rows:[{k, now:'D0'|'D1'|'なし'|'違う'}], mark, verdict:'D0'|'D1'|'空'|'混在' } */
+function stateNow(){
+  var e0 = dummyData(0), e1 = dummyData(1), rows = [], mark = false;
+  try { mark = localStorage.getItem(MARK) != null; } catch (e) {}
+  KEYS.forEach(function(k){
+    var raw = null, o = null, st;
+    try { raw = localStorage.getItem(k); } catch (e) {}
+    if (raw == null) st = 'なし';
+    else {
+      try { o = JSON.parse(raw); } catch (e) { o = null; }
+      var f = fp(k, o);
+      st = !f ? '読めない' : f === fp(k, e0[k]) ? 'D0' : f === fp(k, e1[k]) ? 'D1' : '違う';
+    }
+    rows.push({ k: k, now: st });
+  });
+  var kinds = {}; rows.forEach(function(r){ kinds[r.now] = 1; });
+  var ks = Object.keys(kinds);
+  var verdict = ks.length === 1 && kinds['なし'] ? '空' : ks.length === 1 && (kinds.D0 || kinds.D1) ? ks[0] : '混在';
+  return { rows: rows, mark: mark, verdict: verdict };
+}
+function stateText(s){
+  return s.rows.map(function(r){ return (r.now === 'D0' || r.now === 'D1' ? '✅ ' : r.now === 'なし' ? '・ ' : '❌ ') + label(r.k) + '：' + r.now; }).join('\n')
+    + '\n復元中の印：' + (s.mark ? '⚠️ 残っている' : 'なし')
+    + '\n判定：' + (s.verdict === '空' ? '何も入っていない' : s.verdict === '混在' ? '⚠️ D0・D1 のどちらとも一致しない（種類ごとの結果を見る）' : '全部 ' + s.verdict + ' と一致');
+}
+function compareNow(){ put('cmp', new Date().toLocaleString() + '\n' + stateText(stateNow())); }
+
+/* ---------- 書き出し（送る → 保存 → 文字の順に試す） ---------- */
+function stamp(){ var d = new Date(), p = function(x){ return ('0' + x).slice(-2); }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()); }
+async function exportDummy(name){
+  var text = dummyText(name), fname = 'TEST_kemuri-dummy-' + name + '-' + stamp() + '.json';
+  try {
+    var file = new File([text], fname, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: fname });
+      add('exp', name + '：送りました（' + fname + '）'); return;
+    }
+    var url = URL.createObjectURL(file), a = document.createElement('a');
+    a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+    add('exp', name + '：保存しました（' + fname + '）');
+  } catch (e) {
+    if (e && e.name === 'AbortError') { add('exp', name + '：やめました'); return; }
+    var ta = document.getElementById('exptext'); ta.style.display = 'block'; ta.value = text; ta.focus(); ta.select();
+    add('exp', name + '：ファイルにできなかったので、下の枠に出しました（長押しでコピー → ダッシュボードの貼り付けへ）');
+  }
+}
+
+/* ---------- 失敗を起こす復元 ---------- */
+async function drillRun(opts, title){
+  var s = stateNow();
+  if (s.mark) { put('drill', '復元中の印が残っています。先に在庫アプリかダッシュボードで片付けてください（何もしていません）'); return; }
+  if (s.verdict !== 'D0') { put('drill', 'いまが D0 ではありません（' + s.verdict + '）。先にダッシュボードで D0 を読み込んでください（何もしていません）'); return; }
+  if (!confirm(title + 'を行います。\n（テストのURLのダミーだけが対象です）')) return;
+  var box = JSON.parse(dummyText('D1'));
+  var keys = KEYS.filter(function(k){ return box.data[k] !== undefined; });
+  var r = await KemuriGuard.withEditor(function(){ return KemuriBackup.applySafe(box, keys, Object.assign({ who: 'drill' }, opts)); });
+  if (r.unsupported) { put('drill', 'Web Locks が使えないため試験しませんでした（何もしていません）'); return; }
+  if (r.busy) { put('drill', '在庫アプリが開いています。在庫アプリの画面・タブをすべて閉じてから、もう一度押してください（何もしていません）'); return; }
+  if (r.error) { put('drill', '❌ エラー：' + KemuriErr.format(KemuriErr.fromError(r.error, { op: 'drill', step: 'apply' }))); return; }
+  var v = r.value || {}, after = stateNow();
+  var lines = [title, '結果：ok=' + v.ok + '／失敗したキー=' + (v.failedKey ? label(v.failedKey) : '-') + '／巻き戻し=' + v.rolledBack + '／印が残った=' + v.markLeft,
+               '理由：' + (v.why || '-'), '--- 復元のあと ---', stateText(after)];
+  if (opts.fail) lines.push(v.rolledBack && !after.mark && after.verdict === 'D0' ? '✅ 合格：巻き戻されて D0 のまま、印なし' : '❌ 不合格：期待は «巻き戻し・D0・印なし»');
+  if (opts.stopAfter) lines.push(v.markLeft && after.mark && after.rows[0].now === 'D1'
+    ? '✅ 期待どおり：在庫アプリだけ D1・印あり。次に【TEST】在庫アプリとダッシュボードを開いて、停止の表示を確かめ、«復元する前の中身に戻す» を押してください'
+    : '❌ 不合格：期待は «在庫アプリだけ D1・印あり»');
+  put('drill', lines.join('\n'));
+}
+function drillFail(){ return drillRun({ fail: 'kemuri_daily_v1' }, '失敗を起こして復元（日別売上で失敗）'); }
+function drillStop(){ return drillRun({ stopAfter: 'kemuri_reitou_v1' }, '途中で止めて復元（在庫アプリの直後で停止）'); }
+
+/* ---------- 試験データを消す（このURLの8種類と印だけ） ---------- */
+async function wipeTest(){
+  if (!confirm('このテストのURLの、在庫・売上履歴などの試験データ（8種類）と «復元中の印» を消します。\n本番には影響しません。よいですか？')) return;
+  var r = await KemuriGuard.withEditor(function(){
+    var left = [];
+    KEYS.concat([MARK]).forEach(function(k){ try { localStorage.removeItem(k); if (localStorage.getItem(k) != null) left.push(k); } catch (e) { left.push(k); } });
+    return left;
+  });
+  if (r.unsupported) { put('wipe', 'Web Locks が使えないため消しませんでした'); return; }
+  if (r.busy) { put('wipe', '在庫アプリが開いています。閉じてから、もう一度押してください（何も消していません）'); return; }
+  var left = r.value || [];
+  put('wipe', (left.length ? '⚠️ 消せなかったもの：' + left.map(label).join('、') : '✅ 消しました') + '\n' + stateText(stateNow()));
+}
+
+function copyAll(){
+  var t = Object.keys(LOG).map(function(k){ return '[' + k + ']\n' + LOG[k]; }).join('\n\n')
+        + '\n\n[errlog]\n' + (KemuriErr.text() || '（記録なし）');
+  put('all', t);
+  if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function(){});
+}
+
+(function safe(){
+  var sa = (navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  var s = stateNow();
+  put('safe', ['URL：' + location.origin,
+    'テスト環境の印：' + (window.KEMURI_ENV === 'test' ? 'あり（赤い帯が出ていること）' : 'なし'),
+    'ホーム画面アプリとして起動：' + (sa ? 'はい' : 'いいえ'),
+    location.hostname === 'kemuri-kanri-test.netlify.app' ? '通常のテストURLです（試験はこのURLで行う）' : '⚠️ 通常のテストURLではありません。保存領域が別になるので、試験は kemuri-kanri-test.netlify.app で行ってください',
+    '--- いまの中身 ---', stateText(s)].join('\n'));
+})();
+</script>
+</body>
+</html>

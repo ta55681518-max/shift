@@ -33,16 +33,23 @@
 <section><h2>3. 保存容量の見積もり</h2>
 <button onclick="estimate()">見積もり</button>
 <button onclick="askPersist()">消されにくくするよう頼む</button>
-<p>「消されにくく」は、ブラウザに «このサイトのデータを容量不足のときに自動で消さないで» と頼むだけです（データは変えません）。断られることもあります。</p>
-<pre id="quota"></pre></section>
+<p>「消されにくく」は、ブラウザに «このサイトのデータを容量不足のときに自動で消さないで» と頼むだけです（データは変えません）。断られることもあります。
+頼んだ直後に、本当に «消されにくい» になったかを読み直して表示します。</p>
+<pre id="quota"></pre>
+<p>申請の記録（このURL・この開き方のぶん。閉じて開き直したときに比べるため）</p>
+<button onclick="persistLogClear()">申請の記録を消す</button>
+<pre id="plog"></pre></section>
 
 <section><h2>4. IndexedDB の働き</h2>
 <p>試験用の別の入れ物（kmtest_storage_check）に、納品書1枚ぶん（台帳1件＋明細30行）・写真ぐらいの大きさのファイルを書いて確かめます。</p>
 <button onclick="idbBasic()">働きを確かめる</button><pre id="idb"></pre></section>
 
 <section><h2>5. IndexedDB にどれだけ入るか</h2>
-<p>1MBずつ書いて、入らなくなったところで止めます（最大の量を選ぶ）。終わったら消します。</p>
-<button onclick="idbCap(20)">20MBまで</button><button onclick="idbCap(100)">100MBまで</button>
+<p>1MBずつ書いて、入らなくなったところで止めます（最大の量を選ぶ）。終わったら消します。
+«Blob»（写真と同じ形）と «ArrayBuffer»（ただのバイト列）を分けて試すので、
+«容量が足りない» のか «Blobの形だけ入らない» のかを見分けられます。</p>
+<button onclick="idbCap(20, 'blob')">Blob 20MB</button><button onclick="idbCap(100, 'blob')">Blob 100MB</button><br>
+<button onclick="idbCap(20, 'ab')">ArrayBuffer 20MB</button><button onclick="idbCap(100, 'ab')">ArrayBuffer 100MB</button>
 <pre id="cap"></pre></section>
 
 <section><h2>6. 閉じても残るか</h2>
@@ -56,9 +63,16 @@
 その量の試験用データを一時的に書けるかを確かめ、すぐ消します。<b>在庫アプリが開いていると試験しません</b>（試験中に在庫アプリの保存が空き不足にならないように）。</p>
 <button onclick="lsRoom()">確かめる</button><pre id="room"></pre></section>
 
+<section><h2>8. エラーの記録</h2>
+<p>保存に失敗したときの «種類・文・番号・段階» だけを、このURLの中に残しています（最新50件）。
+データの中身・写真・ファイル名は入れていません。</p>
+<button onclick="errShow()">表示</button><button onclick="errClear()">記録を消す</button>
+<pre id="errlog"></pre></section>
+
 <section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
 </main>
 <script src="kemuri-core.js?v=20261027s0"></script>
+<script src="kemuri-errlog.js?v=20261027a1"></script>
 <script>
 'use strict';
 var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
@@ -72,17 +86,14 @@ function put(id, text){ document.getElementById(id).textContent = text; LOG[id] 
 function add(id, line){ put(id, (LOG[id] ? LOG[id] + '\n' : '') + line); }
 function now(){ return new Date().toISOString(); }
 function kb(n){ return Math.round(n / 1024).toLocaleString() + 'K'; }
-function idbReq(r){ return new Promise(function(res, rej){ r.onsuccess = function(){ res(r.result); }; r.onerror = function(){ rej(r.error); }; }); }
-function txDone(tx){ return new Promise(function(res, rej){ tx.oncomplete = function(){ res(true); }; tx.onerror = function(){ rej(tx.error); }; tx.onabort = function(){ rej(tx.error || new Error('abort')); }; }); }
-function openDB(name, up){
-  return new Promise(function(res, rej){
-    var r; try { r = indexedDB.open(name, 1); } catch (e) { rej(e); return; }
-    r.onupgradeneeded = function(){ up(r.result); };
-    r.onsuccess = function(){ res(r.result); };
-    r.onerror = function(){ rej(r.error); };
-    r.onblocked = function(){ rej(new Error('blocked')); };
-  });
-}
+/* 残課題A-1：失敗の理由は «書き込み要求 → トランザクション → 開くとき» の順に拾う
+   （以前は tx.onerror の中で tx.error を返していた。その時点では null なので «エラー null» になっていた） */
+KemuriErr.installGlobal();
+function idbReq(r, op){ return KemuriErr.idbReq(r, op || 'read'); }
+function txDone(tx, op, info){ return KemuriErr.idbTx(tx, op || 'tx', info); }
+function openDB(name, up, op){ return KemuriErr.idbOpen(name, 1, up, op || 'open'); }
+/* 失敗を記録して、人が読める一行にする（null・空欄にしない） */
+function errLine(e, ctx){ var x = KemuriErr.fromError(e, ctx || {}); return KemuriErr.format(x || KemuriErr.describe(e, ctx || {})); }
 function delDB(name){ return new Promise(function(res){ var r = indexedDB.deleteDatabase(name); r.onsuccess = r.onerror = r.onblocked = function(){ res(); }; }); }
 
 (function info(){
@@ -99,7 +110,26 @@ function delDB(name){ return new Promise(function(res){ var r = indexedDB.delete
     'storage.persist: ' + ((navigator.storage && navigator.storage.persist) ? 'あり' : 'なし'),
     'crypto.subtle: ' + ((window.crypto && crypto.subtle) ? 'あり' : 'なし')
   ].join('\n'));
+  /* 残課題A-2：開くたびに «いまの消されにくさ» と容量の見積もりを自動で出し、前回の申請と並べる */
+  KemuriErr.refreshEnv().then(function(env){
+    var last = persistLog().slice(-1)[0];
+    add('info', 'persisted（いま）: ' + env.persisted + '／容量の見積もり: ' + (env.quotaMB == null ? '-' : env.quotaMB.toLocaleString() + 'MB'));
+    if (last) add('info', '前回の申請: ' + last.at + ' → ' + (last.granted ? '認められた' : '認められなかった') + '（直後の persisted: ' + last.after + '）'
+      + (last.granted && env.persisted !== true ? '\n⚠️ 認められたのに、いまは消されにくい設定になっていません' : ''));
+    else add('info', '前回の申請: なし');
+    persistLogShow();
+  });
 })();
+
+/* 申請の記録（このURL・この開き方のぶん。最新20件） */
+var PKEY = 'kmtest_persist_log';
+function persistLog(){ try { var a = JSON.parse(localStorage.getItem(PKEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function persistLogAdd(x){ try { var a = persistLog(); a.push(x); localStorage.setItem(PKEY, JSON.stringify(a.slice(-20))); } catch (e) {} }
+function persistLogShow(){
+  var a = persistLog();
+  put('plog', a.length ? a.map(function(x){ return x.at + '  申請 ' + (x.granted ? '認められた' : '認められなかった') + '／直後の persisted ' + x.after + '／' + (x.standalone ? 'ホーム画面' : 'タブ'); }).join('\n') : '（まだありません）');
+}
+function persistLogClear(){ try { localStorage.removeItem(PKEY); } catch (e) {} persistLogShow(); }
 
 /* 2. 読むだけ */
 var NAMES = { kemuri_reitou_v1:'在庫アプリ', kemuri_sales_v1:'売上履歴', kemuri_daily_v1:'日別売上', kemuri_costs_v1:'仕入原価',
@@ -130,13 +160,23 @@ async function estimate(){
       lines.push('使用量: ' + kb(e.usage || 0) + 'B / 上限の見積もり: ' + Math.round((e.quota || 0) / 1048576).toLocaleString() + 'MB');
     } else lines.push('見積もり機能なし');
     if (navigator.storage && navigator.storage.persisted) lines.push('消されにくい設定（persisted）: ' + await navigator.storage.persisted());
-  } catch (e) { lines.push('エラー: ' + e); }
+  } catch (e) { lines.push('エラー: ' + errLine(e, { op: 'estimate', step: 'storage' })); }
   put('quota', lines.join('\n'));
 }
+/* 残課題A-2：頼んだ直後に persisted() を読み直す。結果と時刻を申請の記録に残す */
 async function askPersist(){
   if (!(navigator.storage && navigator.storage.persist)) { add('quota', '頼む機能なし'); return; }
-  try { add('quota', '頼んだ結果: ' + (await navigator.storage.persist() ? '認められた' : '認められなかった')); }
-  catch (e) { add('quota', 'エラー: ' + e); }
+  var granted = null, after = null;
+  try { granted = !!(await navigator.storage.persist()); }
+  catch (e) { add('quota', 'エラー: ' + errLine(e, { op: 'persist', step: 'storage' })); return; }
+  try { after = navigator.storage.persisted ? !!(await navigator.storage.persisted()) : null; }
+  catch (e) { add('quota', 'エラー: ' + errLine(e, { op: 'persisted', step: 'storage' })); }
+  add('quota', '頼んだ結果: ' + (granted ? '認められた' : '認められなかった') + '\n頼んだ直後の persisted: ' + after
+    + (granted && after !== true ? '\n⚠️ 認められたのに、読み直すと消されにくい設定になっていません' : ''));
+  var sa = (window.navigator.standalone === true) || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  persistLogAdd({ at: now(), granted: granted, after: after, standalone: !!sa });
+  persistLogShow();
+  KemuriErr.refreshEnv();
 }
 
 /* 4. 台帳1件＋明細30行を «1回の保存» で書く／途中で止めたら何も残らないか／写真ぐらいのファイル */
@@ -145,70 +185,104 @@ function upTest(db){
   var s = db.createObjectStore('lines', { keyPath: 'id' }); s.createIndex('doc', 'doc');
   db.createObjectStore('blobs');
 }
+/* 段階ごとに試し、1つ失敗しても次の段階は続ける（どこで失敗したかを残すため） */
 async function idbBasic(){
   put('idb', '確認中…');
   var t0 = performance.now(), out = [];
   await delDB(TDB);
   var db;
-  try { db = await openDB(TDB, upTest); } catch (e) { put('idb', '❌ 開けませんでした: ' + e + '\n（プライベートブラウズでは使えないことがあります）'); return; }
+  try { db = await openDB(TDB, upTest, 'basic-open'); }
+  catch (e) { put('idb', '❌ 開けませんでした: ' + errLine(e, { op: 'basic-open' }) + '\n（プライベートブラウズでは使えないことがあります）'); return; }
+
+  /* a. 1回の保存で台帳＋明細 */
   try {
-    /* a. 1回の保存で台帳＋明細 */
     var doc = 'kmtest-doc-1';
     var tx = db.transaction(['ledger', 'lines'], 'readwrite');
     tx.objectStore('ledger').put({ id: doc, at: now(), vendor: '試験業者', total: 12345 });
     for (var i = 0; i < 30; i++) tx.objectStore('lines').put({ id: doc + '-' + i, doc: doc, name: '試験商品' + i, qty: i + 1, price: 100 + i, tax: 8 });
-    await txDone(tx);
+    await txDone(tx, 'basic-batch', { kind: 'object' });
     var rtx = db.transaction(['ledger', 'lines']);
-    var led = await idbReq(rtx.objectStore('ledger').get(doc));
-    var lines = await idbReq(rtx.objectStore('lines').index('doc').getAll(doc));
+    var led = await idbReq(rtx.objectStore('ledger').get(doc), 'basic-batch-read');
+    var lines = await idbReq(rtx.objectStore('lines').index('doc').getAll(doc), 'basic-batch-read');
     out.push((led && lines.length === 30 ? '✅' : '❌') + ' 台帳1件＋明細30行を1回で保存して読み戻し（明細 ' + lines.length + '行）');
+  } catch (e) { out.push('❌ 台帳＋明細の保存: ' + errLine(e, { op: 'basic-batch', kind: 'object' })); }
 
-    /* b. 途中で取り消したら何も残らない（原子性） */
+  /* b. 途中で取り消したら何も残らない（原子性）。ここでの «中止» は試験どおりなので記録しない */
+  try {
     var doc2 = 'kmtest-doc-2';
     var tx2 = db.transaction(['ledger', 'lines'], 'readwrite');
     tx2.objectStore('ledger').put({ id: doc2, at: now() });
     for (var j = 0; j < 30; j++) tx2.objectStore('lines').put({ id: doc2 + '-' + j, doc: doc2, qty: j });
     tx2.abort();
-    try { await txDone(tx2); } catch (e) { /* 取り消し */ }
+    try { await txDone(tx2, 'basic-abort'); } catch (e) { /* 取り消し（予定どおり） */ }
     var rtx2 = db.transaction(['ledger', 'lines']);
-    var led2 = await idbReq(rtx2.objectStore('ledger').get(doc2));
-    var lines2 = await idbReq(rtx2.objectStore('lines').index('doc').getAll(doc2));
+    var led2 = await idbReq(rtx2.objectStore('ledger').get(doc2), 'basic-abort-read');
+    var lines2 = await idbReq(rtx2.objectStore('lines').index('doc').getAll(doc2), 'basic-abort-read');
     out.push((!led2 && lines2.length === 0 ? '✅' : '❌') + ' 途中で取り消した保存は、台帳も明細も残らない（残った明細 ' + lines2.length + '行）');
+  } catch (e) { out.push('❌ 取り消しの確認: ' + errLine(e, { op: 'basic-abort' })); }
 
-    /* c. 写真ぐらいのファイル（2MB） */
-    var bytes = new Uint8Array(2 * 1024 * 1024); for (var b = 0; b < bytes.length; b += 4096) bytes[b] = b & 255;
+  /* c. 写真ぐらいのファイル（2MB）。失敗したら同じ大きさの ArrayBuffer で試し、原因を分ける */
+  var SIZE = 2 * 1024 * 1024;
+  var bytes = new Uint8Array(SIZE); for (var b = 0; b < bytes.length; b += 4096) bytes[b] = b & 255;
+  try {
     var tx3 = db.transaction('blobs', 'readwrite');
     tx3.objectStore('blobs').put(new Blob([bytes], { type: 'image/jpeg' }), 'photo');
-    await txDone(tx3);
-    var got = await idbReq(db.transaction('blobs').objectStore('blobs').get('photo'));
+    await txDone(tx3, 'blob-put', { kind: 'blob', size: SIZE, type: 'image/jpeg' });
+    var got = await idbReq(db.transaction('blobs').objectStore('blobs').get('photo'), 'blob-read');
     var back = got && got.arrayBuffer ? new Uint8Array(await got.arrayBuffer()) : null;
     var same = !!back && back.length === bytes.length && back[4096] === bytes[4096];
-    out.push((same ? '✅' : '❌') + ' 写真ぐらいのファイル（2MB）を保存して読み戻し');
-    out.push('所要 ' + Math.round(performance.now() - t0) + 'ms');
+    out.push((same ? '✅' : '❌') + ' 写真ぐらいのファイル（2MB・Blob）を保存して読み戻し');
   } catch (e) {
-    out.push('❌ エラー: ' + (e && (e.name + ' ' + e.message) || e));
+    out.push('❌ 写真ぐらいのファイル（2MB・Blob）: ' + errLine(e, { op: 'blob-put', kind: 'blob', size: SIZE, type: 'image/jpeg' }));
+    var cls = '';
+    try {
+      var tx4 = db.transaction('blobs', 'readwrite');
+      tx4.objectStore('blobs').put(bytes.buffer.slice(0), 'photo-ab');
+      await txDone(tx4, 'blob-diag-ab', { kind: 'arraybuffer', size: SIZE });
+      cls = 'blob-only';
+      out.push('　→ 同じ大きさの ArrayBuffer は書けた：Blobの形だけが入らない（容量の問題ではない）');
+    } catch (e2) {
+      cls = (e2 && e2.name === 'QuotaExceededError') || (e && e.name === 'QuotaExceededError') ? 'quota' : 'all-writes';
+      out.push('　→ ArrayBuffer も書けない: ' + errLine(e2, { op: 'blob-diag-ab', kind: 'arraybuffer', size: SIZE })
+        + (cls === 'quota' ? '\n　→ 容量の上限' : '\n　→ 形に関係なく書けない（接続・端末側の問題の可能性）'));
+    }
+    KemuriErr.record({ op: 'blob-diag', step: 'diagnose', src: 'none', note: 'diag:' + cls, kind: 'blob', size: SIZE, type: 'image/jpeg' });
   }
+  out.push('所要 ' + Math.round(performance.now() - t0) + 'ms');
   try { db.close(); } catch (e) {}
   await delDB(TDB);
   out.push('試験用データは消しました');
   put('idb', out.join('\n'));
 }
 
-/* 5 */
-async function idbCap(maxMB){
-  put('cap', '書いています…（最大 ' + maxMB + 'MB）');
+/* 5. kind … 'blob'（写真と同じ形）／'ab'（ArrayBuffer）。止まったら理由を名前・文・番号・段階つきで出す */
+async function idbCap(maxMB, kind){
+  kind = kind === 'ab' ? 'ab' : 'blob';
+  var label = kind === 'ab' ? 'ArrayBuffer' : 'Blob';
+  put('cap', label + ' を書いています…（最大 ' + maxMB + 'MB）');
   await delDB(TDB);
-  var db; try { db = await openDB(TDB, upTest); } catch (e) { put('cap', '❌ 開けませんでした: ' + e); return; }
-  var mb = 0, err = '', blob = new Blob([new Uint8Array(1024 * 1024)]), t0 = performance.now();
+  var db; try { db = await openDB(TDB, upTest, 'cap-open'); } catch (e) { put('cap', '❌ 開けませんでした: ' + errLine(e, { op: 'cap-open' })); return; }
+  var MB = 1024 * 1024, mb = 0, err = '', t0 = performance.now();
+  var blob = new Blob([new Uint8Array(MB)]), buf = new Uint8Array(MB).buffer;
+  var op = kind === 'ab' ? 'cap-arraybuffer' : 'cap-blob';
   for (var i = 0; i < maxMB; i++) {
-    try { var tx = db.transaction('blobs', 'readwrite'); tx.objectStore('blobs').put(blob, 'k' + i); await txDone(tx); mb++; }
-    catch (e) { err = (e && e.name) || String(e); break; }
-    if (i % 5 === 4) put('cap', '書いています… ' + mb + 'MB');
+    try {
+      var tx = db.transaction('blobs', 'readwrite');
+      tx.objectStore('blobs').put(kind === 'ab' ? buf : blob, 'k' + i);
+      await txDone(tx, op, { kind: kind === 'ab' ? 'arraybuffer' : 'blob', size: MB });
+      mb++;
+    } catch (e) { err = errLine(e, { op: op, kind: kind === 'ab' ? 'arraybuffer' : 'blob', size: MB }); break; }
+    if (i % 5 === 4) put('cap', label + ' を書いています… ' + mb + 'MB');
   }
   try { db.close(); } catch (e) {}
   await delDB(TDB);
-  put('cap', mb + 'MB 書けた（' + (err ? '止まった理由: ' + err : '上限の ' + maxMB + 'MB まで問題なし') + '）／所要 ' + Math.round(performance.now() - t0) + 'ms。試験用データは消しました');
+  put('cap', label + '：' + mb + 'MB 書けた（' + (err ? '止まった理由: ' + err : '上限の ' + maxMB + 'MB まで問題なし') + '）／所要 ' + Math.round(performance.now() - t0) + 'ms。試験用データは消しました'
+    + (err && mb === 0 ? '\n※ 最初の1MBで止まっています。容量不足ではなく «この形が入らない» 可能性が高いので、もう一方の形でも試してください' : ''));
 }
+
+/* 8. エラーの記録 */
+function errShow(){ var t = KemuriErr.text(); put('errlog', t || '（記録はありません）'); }
+function errClear(){ KemuriErr.clear(); errShow(); }
 
 /* 6 */
 async function keepWrite(){
@@ -217,7 +291,7 @@ async function keepWrite(){
     var tx = db.transaction('m', 'readwrite'); tx.objectStore('m').put({ at: now(), ua: navigator.userAgent }, 'mark'); await txDone(tx); db.close();
     try { localStorage.setItem('kmtest_keep', now()); } catch (e) {}
     keepRead();
-  } catch (e) { put('keep', '❌ 書けませんでした: ' + e); }
+  } catch (e) { put('keep', '❌ 書けませんでした: ' + errLine(e, { op: 'keep-write' })); }
 }
 /* 無ければ作らずに null（読むだけで試験用の入れ物を作らないように） */
 function openExisting(name){
@@ -262,7 +336,8 @@ async function lsRoom(){
 }
 
 function copyAll(){
-  var t = Object.keys(LOG).filter(function(k){ return typeof LOG[k] === 'string'; })
+  errShow();   /* エラーの記録も一緒に送れるように */
+  var t =Object.keys(LOG).filter(function(k){ return typeof LOG[k] === 'string'; })
     .map(function(k){ return '[' + k + ']\n' + LOG[k]; }).join('\n\n');
   put('all', t);
   if (navigator.clipboard) navigator.clipboard.writeText(t).catch(function(){});
