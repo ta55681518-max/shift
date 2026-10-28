@@ -77,6 +77,39 @@
     }
   }, true);
 
+  /* --- 赤い帯の中のリンク（段階0：ホーム画面アプリにはアドレスバーが無いので、
+         試験に使うページへここから移る。同じサイトの中だけ＝同じ保存領域のまま） --- */
+  var PAGES = [
+    ['reitou.html', '在庫'],
+    ['dashboard.html', 'ダッシュボード'],
+    ['restore-drill.html', '試験ページ'],
+    ['storage-check.html', '確認ページ']
+  ];
+  function links() {
+    var here = (location.pathname.split('/').pop() || 'index.html').toLowerCase();
+    return '<span id="kemuri-test-links" style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:6px">'
+      + PAGES.map(function (pg) {
+          var on = here === pg[0];
+          return '<a href="' + pg[0] + '" style="color:' + (on ? '#b3261e' : '#fff') + ';background:' + (on ? '#fff' : 'rgba(255,255,255,.18)')
+            + ';border:1px solid #fff;border-radius:999px;padding:3px 10px;font-size:13px;font-weight:700;text-decoration:none">' + pg[1] + '</a>';
+        }).join('')
+      + '</span>';
+  }
+
+  /* --- ホーム画面に追加したときの名前とアイコン（テスト用。本番と見分ける） --- */
+  function homeIcon() {
+    try {
+      var t = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+      if (!t) { t = document.createElement('meta'); t.setAttribute('name', 'apple-mobile-web-app-title'); document.head.appendChild(t); }
+      t.setAttribute('content', 'TEST在庫');
+      if (!document.querySelector('link[rel="apple-touch-icon"]')) {
+        var l = document.createElement('link'); l.setAttribute('rel', 'apple-touch-icon'); l.setAttribute('href', 'test-icon.png');
+        document.head.appendChild(l);
+      }
+    } catch (e) {}
+  }
+  if (document.head) homeIcon(); else document.addEventListener('DOMContentLoaded', homeIcon);
+
   /* --- 赤い帯 --- */
   function band() {
     if (document.getElementById('kemuri-test-band')) return;
@@ -91,7 +124,8 @@
       'font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif'
     ].join(';'));
     bar.innerHTML = 'テスト環境・本番ではありません'
-      + '<span id="kemuri-test-blocked" style="display:none;font-weight:400;font-size:12px"></span>';
+      + '<span id="kemuri-test-blocked" style="display:none;font-weight:400;font-size:12px"></span>'
+      + links();
     document.body.insertBefore(bar, document.body.firstChild);
     if (blocked.length) { var b = document.getElementById('kemuri-test-blocked'); b.textContent = '外部への送信を止めました（' + blocked.length + '件）'; b.style.display = 'block'; }
   }

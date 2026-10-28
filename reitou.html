@@ -2,11 +2,12 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<script src="test-env.js?v=test1"></script><!-- テスト環境専用（test-envブランチのみ） -->
+<script src="test-env.js?v=test2"></script><!-- テスト環境専用（test-envブランチのみ） -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="冷凍在庫">
+<meta name="apple-mobile-web-app-title" content="TEST在庫"><!-- テスト環境専用（test-envブランチのみ。本番は「冷凍在庫」） -->
+<link rel="apple-touch-icon" href="test-icon.png"><!-- テスト環境専用（test-envブランチのみ） -->
 <title>KEMURI屋 冷凍在庫</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -2910,9 +2911,9 @@ function undoImport(id){
 function viewSet(){
   let h = '<div class="pad">';
 
-  h += '<div class="card"><h2>売上・原価をみる</h2>'
-     + '<div class="muted">取り込んだ売上から、売れ筋・原価率・在庫の残り日数を出します。</div>'
-     + '<a class="btn btn-dark gap" style="text-decoration:none;display:block" href="dashboard.html">📊 売上・原価をひらく</a></div>';
+  h += '<div class="card"><h2>ダッシュボード（売上・原価）</h2>'
+     + '<div class="muted">取り込んだ売上から、売れ筋・原価率・在庫の残り日数を出します。バックアップの復元・売上の全消去もここです。</div>'
+     + '<a class="btn btn-dark gap" style="text-decoration:none;display:block" href="dashboard.html">📊 ダッシュボード（売上・原価）をひらく</a></div>';
 
   h += '<div class="card"><h2>商品マスタ（'+DB.items.length+'）</h2>'
      + '<div class="muted">タップして 分類・仕入先・単位・発注ライン・POSの商品名を設定できます。</div><div class="gap">';
@@ -3587,7 +3588,8 @@ function viewRestoreLock(){
           + '<div class="muted">入り終わっていたもの：' + esc(p.done.map(lab).join('、') || 'なし') + '</div>'
           + '<div class="muted">入っていないもの：' + esc(p.rest.map(lab).join('、') || 'なし') + '</div>';
   h += '</div><div class="card"><h2>次にやること</h2>'
-    + '<div class="muted">分からないときは何も押さずに閉じて、相談してください（このまま閉じても何も変わりません）。</div>';
+    + '<div class="muted">分からないときは何も押さずに閉じて、相談してください（このまま閉じても何も変わりません）。</div>'
+    + '<a class="btn btn-gray gap" style="text-decoration:none;display:block" href="dashboard.html">📊 ダッシュボードを開く（同じ内容を確かめられます）</a>';
   if(!p.broken){
     h += '<button class="btn btn-primary gap" onclick="restoreResolveR(\'back\')">復元する前の中身に戻す</button>';
     if(!p.rest.length) h += '<button class="btn btn-gray gap" onclick="restoreResolveR(\'keep\')">全部入っているので、このまま使う</button>';
