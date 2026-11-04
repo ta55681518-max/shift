@@ -3502,13 +3502,20 @@ function bkRestore(text, from){
   /* 既定は «中身が増えるものだけ» 入れる。棚卸した在庫を黙って空にしないため。
      減るもの・消えるものは、こちらで選んでもらう。 */
   const now = KemuriBackup.current();
+  BK.auto = {};      /* 安全のため最初にチェックを外したもの（理由を出すため・段階0） */
   KemuriBackup.summary(box).forEach(x=>{
     BK.pick[x.key] = !now[x.key] || !bkLooksSmaller(x.detail, now[x.key]);
+    if(!BK.pick[x.key]) BK.auto[x.key] = true;
   });
   drawBk();
 }
 /* 「22品目」「268日ぶん」のような一言から、先頭の数を取り出して比べる。
    厳密な比較ではないので «たぶん減る» を既定オフにするためだけに使う。 */
+/* 読み込まないもの（選ばなかったもの）を «いまのまま残る» 形で一覧にする（段階0：チェック漏れの防止） */
+function bkSkipLines(box, keys, now){
+  return KemuriBackup.summary(box).filter(x=>keys.indexOf(x.key) < 0)
+    .map(x=>'・' + x.label + '（' + (now[x.key] ? 'いまの ' + now[x.key] + ' のまま残ります' : 'いまは無いまま。入りません') + '）');
+}
 function bkNum(t){ const m = String(t||'').match(/(\d[\d,]*)/); return m ? +m[1].replace(/,/g,'') : null; }
 function bkLooksSmaller(a, b){
   const x = bkNum(a), y = bkNum(b);
@@ -3532,9 +3539,12 @@ function drawBk(){
        + '<span class="bk-b"><b>' + esc(KemuriBackup.label(x.key)) + '</b>'
        + '<small>' + (cur ? 'いま ' + esc(cur) + ' → ' : 'いまは無し → ') + esc(x.detail) + '</small>'
        + (on && gone ? '<small class="bk-ng">いまのほうが多いので、減ります</small>' : '')
+       + (!on && BK.auto && BK.auto[x.key] ? '<small class="bk-ng">いまのデータのほうが多いため、安全のため最初はチェックを外しています（入れるときは押して☑に）</small>' : '')
        + '</span></button>';
   });
   const n = Object.keys(BK.pick).filter(k=>BK.pick[k]).length;
+  const skip = bkSkipLines(box, Object.keys(BK.pick).filter(k=>BK.pick[k]), now);
+  if(skip.length) h += '<div class="warn gap" id="bkskip"><b>読み込まないもの：</b><br>' + skip.map(esc).join('<br>') + '</div>';
   h += '<div class="muted gap">選ばなかったものは、いまのまま残ります。</div>'
      + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
      + '<button class="btn btn-primary" ' + (n?'':'disabled') + ' onclick="bkApply()">'

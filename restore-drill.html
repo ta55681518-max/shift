@@ -212,7 +212,17 @@ function stateNow(){
 function stateText(s){
   return s.rows.map(function(r){ return (r.now === 'D0' || r.now === 'D1' ? '✅ ' : r.now === 'なし' ? '・ ' : '❌ ') + label(r.k) + '：' + r.now; }).join('\n')
     + '\n復元中の印：' + (s.mark ? '⚠️ 残っている' : 'なし')
-    + '\n判定：' + (s.verdict === '空' ? '何も入っていない' : s.verdict === '混在' ? '⚠️ D0・D1 のどちらとも一致しない（種類ごとの結果を見る）' : '全部 ' + s.verdict + ' と一致');
+    + '\n判定：' + (s.verdict === '空' ? '何も入っていない' : s.verdict === '混在' ? '⚠️ D0・D1 のどちらとも一致しない（種類ごとの結果を見る）' : '全部 ' + s.verdict + ' と一致')
+    + reitouHint(s);
+}
+/* 在庫アプリだけが違う（ほかは全部同じD0かD1）→ 読み込むときに在庫アプリのチェックが外れていた可能性が高い（段階0） */
+function reitouHint(s){
+  var r0 = s.rows[0], rest = s.rows.slice(1).map(function(r){ return r.now; });
+  if (r0.k !== 'kemuri_reitou_v1' || r0.now !== '違う' || !rest.length) return '';
+  if (!rest.every(function(v){ return v === rest[0]; }) || (rest[0] !== 'D0' && rest[0] !== 'D1')) return '';
+  return '\n\n💡 在庫アプリだけが ' + rest[0] + ' と違います。読み込むとき、在庫アプリのチェックが外れていた可能性があります'
+       + '（いまのデータのほうが多いと、安全のため最初はチェックが外れます）。\n'
+       + '→ ダッシュボードで在庫アプリにチェックを入れ（☑）、バックアップを読み込み直してください。';
 }
 function compareNow(){ put('cmp', new Date().toLocaleString() + '\n' + stateText(stateNow())); }
 

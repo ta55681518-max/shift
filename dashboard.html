@@ -927,10 +927,17 @@ function bkRestore(text, from){
   if(!box){ toast('バックアップとして読めませんでした'); return; }
   BK.box = box; BK.from = from; BK.pick = {};
   const now = KemuriBackup.current();
+  BK.auto = {};      /* 安全のため最初にチェックを外したもの（理由を出すため・段階0） */
   KemuriBackup.summary(box).forEach(x=>{
     BK.pick[x.key] = !now[x.key] || !bkLooksSmaller(x.detail, now[x.key]);
+    if(!BK.pick[x.key]) BK.auto[x.key] = true;
   });
   render();
+}
+/* 読み込まないもの（選ばなかったもの）を «いまのまま残る» 形で一覧にする（段階0：チェック漏れの防止） */
+function bkSkipLines(box, keys, now){
+  return KemuriBackup.summary(box).filter(x=>keys.indexOf(x.key) < 0)
+    .map(x=>'・' + x.label + '（' + (now[x.key] ? 'いまの ' + now[x.key] + ' のまま残ります' : 'いまは無いまま。入りません') + '）');
 }
 function bkNum(t){ const m = String(t||'').match(/(\d[\d,]*)/); return m ? +m[1].replace(/,/g,'') : null; }
 function bkLooksSmaller(a, b){
@@ -955,6 +962,7 @@ function bkPickCard(){
        + '<span class="bk-b"><b>' + esc(KemuriBackup.label(x.key)) + '</b>'
        + '<small>' + (cur ? 'いま ' + esc(cur) + ' → ' : 'いまは無し → ') + esc(x.detail) + '</small>'
        + (on && gone ? '<small class="bk-ng">いまのほうが多いので、減ります</small>' : '')
+       + (!on && BK.auto && BK.auto[x.key] ? '<small class="bk-ng">いまのデータのほうが多いため、安全のため最初はチェックを外しています（入れるときは押して☑に）</small>' : '')
        + '</span></button>';
   });
   const n = Object.keys(BK.pick).filter(k=>BK.pick[k]).length;
@@ -984,8 +992,11 @@ async function bkApply(){
   const now = KemuriBackup.current();
   const lines = KemuriBackup.summary(box).filter(x=>keys.indexOf(x.key) >= 0)
     .map(x=>'・' + x.label + '：' + (now[x.key] ? 'いま ' + now[x.key] : 'いまは無し') + ' → ' + x.detail);
+  const skip = bkSkipLines(box, keys, now);
   if(!confirm('次のデータを、バックアップ（' + (box.at ? fmtAt(box.at) : '日時不明') + '）の中身に置きかえます。\n\n'
-            + lines.join('\n') + '\n\n選ばなかったものは変えません。\n置きかえてよいですか？')) return;
+            + lines.join('\n')
+            + (skip.length ? '\n\n読み込まないもの：\n' + skip.join('\n') : '')
+            + '\n\n選ばなかったものは変えません。\n置きかえてよいですか？')) return;
   const r = await KemuriGuard.withEditor(()=> KemuriBackup.applySafe(box, keys, { who:'dashboard' }));
   if(r.unsupported){ alert('この開き方では在庫アプリとの調整ができないため、ここからは復元できません。\n在庫アプリの「バックアップから戻す」を使ってください。\n\n何も変えていません。'); return; }
   if(r.busy){ alert('在庫アプリ（冷凍在庫）が別の画面で開いています。\n在庫アプリの画面・タブをすべて閉じてから、もう一度押してください。\n\n何も変えていません。'); return; }
