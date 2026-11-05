@@ -235,7 +235,7 @@
 <script src="kemuri-backup.js?v=20261027s0"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
-<script src="kemuri-data.js?v=20261024e2"></script>
+<script src="kemuri-data.js?v=20261106s0"></script>
 
 <script>
 /* ============================================================
@@ -2220,7 +2220,7 @@ function saveDailyCsv(){
      読み込んだ内容は画面に残すので、空きを作ってからもう一度押せる */
   if(res && res.saved === false){
     render();
-    alert('⚠️ 日別の売上を保存できませんでした\n（端末の保存容量がいっぱいの可能性があります）\n\n'
+    alert('⚠️ 日別の売上を保存できませんでした\n（' + (res.why || '端末の保存容量がいっぱいの可能性があります') + '）\n\n'
         + 'いまの取込は反映されていません。空き容量を確認してから、もう一度やり直してください。');
     return;
   }

@@ -158,7 +158,7 @@
 <script src="kemuri-core.js?v=20261027s0"></script>
 <script src="kemuri-backup.js?v=20261027s0"></script>
 <script src="pos-source.js?v=20261012b"></script>
-<script src="kemuri-data.js?v=20261012b"></script>
+<script src="kemuri-data.js?v=20261106s0"></script>
 
 <script>
 "use strict";
@@ -376,10 +376,17 @@ function readDailyCsv(fromFile){
   }
   render();
 }
+/* 段階0：保存できなかったときの知らせ（«保存しました» は出さない）。手元は最新に読み直してある */
+function saveNg(what, why){
+  refresh(); render();
+  alert('⚠️ ' + what + 'を保存できませんでした\n（' + (why || '理由がわかりません') + '）\n\n'
+      + 'いまの変更は反映されていません。保存されていたデータは消えていません。\n画面は最新の中身に読み直しました。');
+}
 function saveDailyCsv(){
   const r = DIMP.res;
   if(!r || !r.rows || !r.rows.length) return;
   const res = KemuriData.daily.importRows(r.rows);
+  if(res && res.saved === false){ saveNg('日別の売上', res.why); return; }   /* 読み込んだ内容は残すので、もう一度押せる */
   DIMP.open=false; DIMP.text=''; DIMP.res=null; DIMP.err='';
   refresh(); render();
   toast(res.added + '日ぶんを登録しました' + (res.updated ? '（' + res.updated + '日ぶんは上書き）' : ''));
@@ -1253,6 +1260,7 @@ function readCostCsv(){
 function saveCostCsv(){
   if(!CIMP.rows || !CIMP.rows.length) return;
   const r = KemuriData.costs.importRows(CIMP.rows);
+  if(r && r.saved === false){ saveNg('仕入原価', r.why); return; }
   CIMP = { rows:null, skipped:null, error:'' };
   refresh(); render();
   toast('新規 ' + r.added + '件 ／ 更新 ' + r.updated + '件を登録しました');
@@ -1261,11 +1269,12 @@ function editCost(name){ EDIT_C = { name }; render();
   setTimeout(() => { const el = document.getElementById('e-price'); if(el) el.scrollIntoView({behavior:'smooth',block:'center'}); }, 30); }
 function saveEditCost(){
   const g = id => (document.getElementById(id)||{}).value;
-  KemuriData.costs.set(EDIT_C.name, {
+  const ok = KemuriData.costs.set(EDIT_C.name, {
     price: num(g('e-price')),
     sale: g('e-sale') === '' ? null : num(g('e-sale')),
     unit: g('e-unit'), status: g('e-status'),
   });
+  if(!ok){ saveNg('仕入原価', KemuriData.costs.why); return; }
   EDIT_C = { name:'' };
   refresh(); render(); toast('保存しました');
 }
@@ -1293,13 +1302,14 @@ async function importCosts(){
 function saveCosts(){
   if(!IMP.rows || !IMP.rows.length) return;
   const r = KemuriData.costs.importRows(IMP.rows);
+  if(r && r.saved === false){ saveNg('仕入原価', r.why); return; }
   IMP = { loading:false, rows:null, error:'' };
   refresh(); render();
   toast('新規 ' + r.added + '件 ／ 更新 ' + r.updated + '件を保存しました');
 }
 function delCost(name){
   if(!confirm('「' + name + '」を原価マスタから削除しますか？')) return;
-  KemuriData.costs.remove(name);
+  if(!KemuriData.costs.remove(name)){ saveNg('仕入原価（削除）', KemuriData.costs.why); return; }
   EDIT_C = { name:'' };
   refresh(); render(); toast('削除しました');
 }
@@ -1429,6 +1439,7 @@ async function importRecipes(){
 function saveRecipes(){
   if(!RIMP.rows || !RIMP.rows.length) return;
   const r = KemuriData.recipes.importRows(RIMP.rows);
+  if(r && r.saved === false){ saveNg('レシピ', r.why); return; }
   RIMP = { loading:false, rows:null, error:'' };
   refresh(); render();
   toast('新規 ' + r.added + '件 ／ 更新 ' + r.updated + '件を保存しました');
@@ -1436,6 +1447,7 @@ function saveRecipes(){
 
 function seedRecipes(){
   const n = KemuriData.recipes.seedFromStock();
+  if(!n && KemuriData.recipes.why){ saveNg('レシピ', KemuriData.recipes.why); return; }
   refresh(); render();
   toast(n > 0 ? n + '件のレシピを作りました' : '新しく作れるものはありませんでした');
 }
@@ -1457,7 +1469,7 @@ function saveRecipe(){
     return m ? { name:m[1].trim(), qty:num(m[2]), unit:(m[3]||'').trim() } : { name:l, qty:1, unit:'' };
   });
   if(!parts.length){ toast('材料を1つ以上入れてください'); return; }
-  KemuriData.recipes.set(name, parts);
+  if(!KemuriData.recipes.set(name, parts)){ EDIT_R = { name, parts: txt }; saveNg('レシピ', KemuriData.recipes.why); return; }
   EDIT_R = { name:'', parts:'' };
   refresh(); render(); toast('保存しました');
 }
@@ -1683,7 +1695,10 @@ function render(){
   document.getElementById('h-sub').textContent = ti[1];
 
   const v = document.getElementById('view');
+  const brk = KemuriData.brokenList();   /* 段階0：読めない保存データは保存を止めている */
   v.innerHTML = (KemuriBackup.pendingRestore() ? '<div class="pad" style="padding-bottom:0">' + restoreCard() + '</div>' : '')
+              + (brk.length ? '<div class="pad" style="padding-bottom:0"><div class="card" id="data-broken" style="border-color:#e74c3c"><b>⚠️ 保存データが読めません：' + esc(brk.join('・')) + '</b>'
+                  + '<div class="muted">上書きしないよう、これらは保存を止めています。データを消さずに、管理者に知らせてください。</div></div></div>' : '')
               + (TAB === 'tmr' ? viewTomorrow()
               : TAB === 'sum' ? viewSum()
               : TAB === 'cost' ? viewCost()
@@ -1701,6 +1716,21 @@ function render(){
   const c = readCache(); if(c) AI = { loading:false, error:'', result:c.result, at:c.at };
   render();
 })();
+
+/* 段階0：ほかの画面・復元で原価・レシピ・日別売上・売上履歴が変わっていたら、最新を読み直す
+   （戻ってきたとき・知らせが来たとき）。古い中身のまま保存しないため */
+function dataCheck(){
+  let sales = false;
+  try{ const sl = KemuriCore.sales; sales = !!(sl._db && localStorage.getItem(KemuriCore.SALES_KEY) !== sl._raw); }catch(e){}
+  if(!KemuriData.changedAny() && !sales) return;
+  KemuriData.reloadAll(); refresh(); render();
+  toast('別の画面で変わったので、最新を読み直しました');
+}
+window.addEventListener('storage', e=>{
+  if(e.key === null || e.key === KemuriData.COST_KEY || e.key === KemuriData.RECIPE_KEY || e.key === KemuriData.DAILY_KEY || e.key === KemuriCore.SALES_KEY) dataCheck();
+});
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') dataCheck(); });
+window.addEventListener('pageshow', ()=> dataCheck());
 </script>
 </body>
 </html>

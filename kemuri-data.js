@@ -36,6 +36,53 @@
   }
   function nowISO() { return new Date().toISOString(); }
 
+  /* ===== 段階0（test-env）：原価・レシピ・日別売上を、古い画面・壊れたデータで上書きしない =====
+     self._raw … この画面が最後に読んだ／書いた保存データ（文字のまま）
+     ・読めないデータ → self.broken。画面には空で見せるが、保存はしない（空で上書きしない）
+     ・保存の直前に端末の中身が _raw のままか確かめる。違えば書かず、手元の中身を捨てる
+       （次に読むときは最新。古い入力を勝手に保存し直さない）
+     ・書いたあと読み直して一致したときだけ成功。失敗の理由は self.why に入れる */
+  function loadStore(self, key, blankFn) {
+    var raw;
+    try { raw = global.localStorage.getItem(key); } catch (e) { raw = undefined; }
+    self._raw = raw; self.broken = '';
+    if (raw === undefined) { self.broken = '端末から読み出せません'; return blankFn(); }
+    if (raw == null || raw === '') return blankFn();
+    try {
+      var o = JSON.parse(raw);
+      if (o && typeof o === 'object' && !Array.isArray(o)) return o;
+    } catch (e) {}
+    self.broken = '保存データが壊れていて読めません';
+    return blankFn();
+  }
+  function saveStore(self, key) {
+    self.why = ''; self.conflict = false;
+    if (self.broken) { self.why = self.broken + '（上書きしないよう、保存を止めています）'; return false; }
+    var d = self._db;
+    if (!d) { self.why = '保存する中身がありません'; return false; }
+    var cur;
+    try { cur = global.localStorage.getItem(key); }
+    catch (e) { self.why = '端末から読み出せませんでした'; self._db = null; return false; }
+    if (cur !== self._raw) {
+      self.conflict = true; self._db = null;
+      self.why = '別の画面で変わっていたため、保存していません（最新を読み直しました）';
+      return false;
+    }
+    d.updatedAt = nowISO();
+    var s = JSON.stringify(d), ok = false;
+    try { global.localStorage.setItem(key, s); ok = global.localStorage.getItem(key) === s; } catch (e) { ok = false; }
+    if (ok) { self._raw = s; return true; }
+    self._db = null;
+    self.why = '端末に保存できませんでした（空きが足りない可能性があります）';
+    return false;
+  }
+  /* その保存データが、この画面が知っている中身から変わったか（ほかの画面・復元） */
+  function storeChanged(self, key) {
+    if (self._db == null) return false;
+    var cur; try { cur = global.localStorage.getItem(key); } catch (e) { return false; }
+    return cur !== self._raw;
+  }
+
   /* ============================================================
      原価マスタ
      items[norm(名前)] = {
@@ -54,13 +101,16 @@
   var Costs = {
     _db: null,
     /* 持ち回っている中身を捨てて読み直す。バックアップを戻したあとに要る */
+    _raw: null, broken: '', why: '', conflict: false, _batch: false,
     reload: function () { this._db = null; return this.load(); },
     load: function () {
-      if (!this._db) this._db = readLS(COST_KEY, { v: 1, items: {}, updatedAt: '' });
+      if (!this._db) this._db = loadStore(this, COST_KEY, function () { return { v: 1, items: {}, updatedAt: '' }; });
       if (!this._db.items) this._db.items = {};
       return this._db;
     },
-    save: function () { var d = this.load(); d.updatedAt = nowISO(); return writeLS(COST_KEY, d); },
+    /* 戻り値 … 保存できたか。できなかった理由は why（段階0） */
+    save: function () { this.load(); return saveStore(this, COST_KEY); },
+    changed: function () { return storeChanged(this, COST_KEY); },
 
     all: function () {
       var it = this.load().items;
@@ -107,22 +157,26 @@
         note: pick('note'),
         updatedAt: nowISO(),
       };
-      this.save();
-      return true;
+      if (this._batch) return true;
+      return this.save();   /* 段階0：保存できたかを返す（以前は常に true） */
     },
-    remove: function (name) { var d = this.load(); delete d.items[norm(name)]; this.save(); },
+    remove: function (name) { var d = this.load(); delete d.items[norm(name)]; return this.save(); },
 
     /* AIが整形した行をまとめて入れる。既にある商品は上書き。
-       戻り値 … { added, updated } */
+       戻り値 … { added, updated, saved, why }（段階0：まとめて1回だけ保存し、結果を返す） */
     importRows: function (rows) {
       var d = this.load(), added = 0, updated = 0, self = this;
-      (rows || []).forEach(function (r) {
-        var name = String(r && r.name || '').trim();
-        if (!name) return;
-        if (d.items[norm(name)]) updated++; else added++;   // 同じ名前は更新
-        self.set(name, r);
-      });
-      return { added: added, updated: updated };
+      this._batch = true;
+      try {
+        (rows || []).forEach(function (r) {
+          var name = String(r && r.name || '').trim();
+          if (!name) return;
+          if (d.items[norm(name)]) updated++; else added++;   // 同じ名前は更新
+          self.set(name, r);
+        });
+      } finally { this._batch = false; }
+      var saved = (added + updated) ? this.save() : true;
+      return { added: saved ? added : 0, updated: saved ? updated : 0, saved: saved, why: saved ? '' : this.why };
     },
 
     stats: function () {
@@ -189,13 +243,15 @@
 
   var Recipes = {
     _db: null,
+    _raw: null, broken: '', why: '', conflict: false, _batch: false,
     reload: function () { this._db = null; return this.load(); },
     load: function () {
-      if (!this._db) this._db = readLS(RECIPE_KEY, { v: 1, items: {}, seeded: 0, updatedAt: '' });
+      if (!this._db) this._db = loadStore(this, RECIPE_KEY, function () { return { v: 1, items: {}, seeded: 0, updatedAt: '' }; });
       if (!this._db.items) this._db.items = {};
       return this._db;
     },
-    save: function () { var d = this.load(); d.updatedAt = nowISO(); return writeLS(RECIPE_KEY, d); },
+    save: function () { this.load(); return saveStore(this, RECIPE_KEY); },
+    changed: function () { return storeChanged(this, RECIPE_KEY); },
 
     all: function () {
       var it = this.load().items;
@@ -216,21 +272,27 @@
           };
         }).filter(function (p) { return !!p.name; }),
       };
-      this.save();
-      return true;
+      if (this._batch) return true;
+      return this.save();   /* 段階0：保存できたかを返す */
     },
-    remove: function (name) { var d = this.load(); delete d.items[norm(name)]; this.save(); },
+    remove: function (name) { var d = this.load(); delete d.items[norm(name)]; return this.save(); },
 
-    /* AIが整形したレシピをまとめて入れる。既にあるメニューは上書き */
+    /* AIが整形したレシピをまとめて入れる。既にあるメニューは上書き
+       戻り値 … { added, updated, saved, why }（段階0：まとめて1回だけ保存） */
     importRows: function (rows) {
       var added = 0, updated = 0, self = this;
-      (rows || []).forEach(function (r) {
-        var name = String(r && r.name || '').trim();
-        if (!name || !Array.isArray(r.parts) || !r.parts.length) return;
-        if (self.get(name)) updated++; else added++;
-        self.set(name, r.parts);
-      });
-      return { added: added, updated: updated };
+      this.load();
+      this._batch = true;
+      try {
+        (rows || []).forEach(function (r) {
+          var name = String(r && r.name || '').trim();
+          if (!name || !Array.isArray(r.parts) || !r.parts.length) return;
+          if (self.get(name)) updated++; else added++;
+          self.set(name, r.parts);
+        });
+      } finally { this._batch = false; }
+      var saved = (added + updated) ? this.save() : true;
+      return { added: saved ? added : 0, updated: saved ? updated : 0, saved: saved, why: saved ? '' : this.why };
     },
 
     /* 冷凍在庫の対応表から、1対1のレシピを作る（既にあるものは触らない）。
@@ -252,7 +314,7 @@
         d.items[key] = { name: label, parts: [{ name: it.name, qty: num(it.per) || 1 }] };
         n++;
       });
-      if (n) { d.seeded = 1; this.save(); }
+      if (n) { d.seeded = 1; if (!this.save()) return 0; }   /* 段階0：保存できなかったら «作った» と言わない */
       return n;
     },
 
@@ -611,30 +673,18 @@
   var Daily = {
     _db: null,
     reload: function () { this._db = null; return this.load(); },
+    _raw: null, broken: '', why: '', conflict: false,
     load: function () {
       if (this._db) return this._db;
-      try {
-        var raw = global.localStorage.getItem(DAILY_KEY);
-        if (raw) {
-          var p = JSON.parse(raw);
-          this._db = Object.assign(blankDaily(), p && typeof p === 'object' ? p : {});
-          return this._db;
-        }
-      } catch (e) { /* 壊れていたら作り直す */ }
-      this._db = blankDaily();
+      /* 段階0：壊れていたら空で見せるが、保存は止める（以前は作り直して次の保存で上書きしていた） */
+      var p = loadStore(this, DAILY_KEY, blankDaily);
+      this._db = Object.assign(blankDaily(), p);
+      if (!this._db.days || typeof this._db.days !== 'object') this._db.days = {};
       return this._db;
     },
-    save: function () {
-      var db = this.load();
-      db.updatedAt = new Date().toISOString();
-      /* 書いたあと読み直して、一致したときだけ成功（E2） */
-      try {
-        var s = JSON.stringify(db);
-        global.localStorage.setItem(DAILY_KEY, s);
-        return global.localStorage.getItem(DAILY_KEY) === s;
-      }
-      catch (e) { return false; }
-    },
+    /* 書いたあと読み直して、一致したときだけ成功（E2）。保存の直前に、ほかの画面で変わっていないか確かめる（段階0） */
+    save: function () { this.load(); return saveStore(this, DAILY_KEY); },
+    changed: function () { return storeChanged(this, DAILY_KEY); },
 
     /* rows[] = { day, weather, gross, net, guests, groups } を入れる。
        同じ日は上書き（入れ直しても増えない）。 */
@@ -653,7 +703,8 @@
          端末に保存されている中身に戻す（画面と保存データを食い違わせない） */
       var saved = this.save();
       if (!saved) this._db = null;
-      return { added: n, updated: upd, total: Object.keys(this.load().days).length, saved: saved };
+      var why = this.why;
+      return { added: n, updated: upd, total: Object.keys(this.load().days).length, saved: saved, why: saved ? '' : why };
     },
 
     all: function () { return this.load().days; },
@@ -784,6 +835,7 @@
     clear: function () {
       this._db = blankDaily();
       try { global.localStorage.removeItem(DAILY_KEY); } catch (e) {}
+      this._raw = null; this.broken = '';   /* 段階0：消したあとは «空» を知っている状態 */
     },
   };
 
@@ -1241,10 +1293,20 @@
     Costs.reload(); Recipes.reload(); Daily.reload();
     /* Stock は毎回 localStorage から読むので、持ち回っていない */
   }
+  /* 段階0：原価・レシピ・日別売上のどれかが、ほかの画面・復元で変わったか */
+  function changedAny() { return Costs.changed() || Recipes.changed() || Daily.changed(); }
+  /* 段階0：読めない保存データ（保存を止めているもの）の一覧 */
+  function brokenList() {
+    var out = [];
+    [['仕入原価', Costs], ['レシピ', Recipes], ['日別売上', Daily]].forEach(function (x) { x[1].load(); if (x[1].broken) out.push(x[0]); });
+    return out;
+  }
 
   global.KemuriData = {
-    BUILD: '2026-10-12b',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-11-06s0',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
+    changedAny: changedAny,
+    brokenList: brokenList,
     forecast: forecast,
     backtest: backtest,
     FORECAST_WEEKS: WEEKS,
