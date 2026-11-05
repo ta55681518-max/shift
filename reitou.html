@@ -3516,6 +3516,16 @@ function bkSkipLines(box, keys, now){
   return KemuriBackup.summary(box).filter(x=>keys.indexOf(x.key) < 0)
     .map(x=>'・' + x.label + '（' + (now[x.key] ? 'いまの ' + now[x.key] + ' のまま残ります' : 'いまは無いまま。入りません') + '）');
 }
+/* 段階0（D）：串焼き・発注・串打ち前の在庫を読み込むときの案内。表示だけ（復元の処理は変えない） */
+function bkOtherNote(keys){
+  const out = [];
+  if(['kemuri_zaiko_v1','kemuri_kushiyaki_v1','kemuri_hacchu_v1'].some(k=>keys.indexOf(k) >= 0))
+    out.push('・串焼き・発注の画面を開いている場合は、先に閉じてください（開いたままの画面は、読み込んだあとに中身を読み直します）');
+  let share = ''; try{ share = localStorage.getItem('kemuri_kushiyaki_share') || ''; }catch(e){}
+  if(share && keys.indexOf('kemuri_kushiyaki_v1') >= 0)
+    out.push('・⚠️ この端末は串焼きの «スタッフ共有» がONです。串焼きを読み込むと、共有の中身で置きかわったり、読み込んだ中身がほかの端末に広がったりします。共有がONの端末では、串焼きのチェックを外すのが安全です');
+  return out;
+}
 function bkNum(t){ const m = String(t||'').match(/(\d[\d,]*)/); return m ? +m[1].replace(/,/g,'') : null; }
 function bkLooksSmaller(a, b){
   const x = bkNum(a), y = bkNum(b);
@@ -3545,6 +3555,8 @@ function drawBk(){
   const n = Object.keys(BK.pick).filter(k=>BK.pick[k]).length;
   const skip = bkSkipLines(box, Object.keys(BK.pick).filter(k=>BK.pick[k]), now);
   if(skip.length) h += '<div class="warn gap" id="bkskip"><b>読み込まないもの：</b><br>' + skip.map(esc).join('<br>') + '</div>';
+  const note = bkOtherNote(Object.keys(BK.pick).filter(k=>BK.pick[k]));
+  if(note.length) h += '<div class="warn gap" id="bknote">' + note.map(esc).join('<br>') + '</div>';
   h += '<div class="muted gap">選ばなかったものは、いまのまま残ります。</div>'
      + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
      + '<button class="btn btn-primary" ' + (n?'':'disabled') + ' onclick="bkApply()">'

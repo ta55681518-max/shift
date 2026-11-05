@@ -396,18 +396,88 @@ function blank() {
   return { items: {}, applied: {}, log: [], losses: [], seq: 1, syncZaiko: false, reflectBy: 'material',
            posFrom: '', posAuto: true, posMap: {}, posMarks: {}, posLog: [] };
 }
+/* ===== 段階0（test-env）：ほかの画面・復元と重なったときに古い中身で上書きしない =====
+   A：KBASE＝この画面が最後に読んだ／書いた保存データ（文字のまま）。
+      保存の直前に端末の保存データと比べ、変わっていたら書かずに読み直す。
+      POSの出数を自動で引くときも、引く前に最新を読み直し、保存は同じ確認を通す。
+   B：復元中の印（kemuri_restore_v1）があるあいだは、保存・出数を引く・共有の送受信・
+      串打ち前の在庫への反映をしない。
+   C：保存データが読めないときは、空のデータで上書きしない。
+   データの形・共有の仕組みは変えない。 */
+const RMARK = 'kemuri_restore_v1';
+let KBASE = null;      // この画面が知っている保存データ（文字）
+let KBROKEN = false;   // 保存データが読めない
+let KHALT_SEEN = false;
+let TOAST_HOLD = 0;    // 保存しなかった知らせを、ほかの知らせで消さない
+let K_LOADING = false; // 補いの途中（補いの保存が止められても、読み直しをくり返さない）
+let K_RELOADING = false; // ほかの画面の変更を読み直している途中：補いだけでは保存しない（共有に勝手に上げない）
+function kRaw() { try { return localStorage.getItem(KKEY); } catch (e) { return undefined; } }
+function kHalted() { try { return localStorage.getItem(RMARK) != null; } catch (e) { return true; } }
+function kStopWhy() { return KBROKEN ? 'broken' : kHalted() ? 'restore' : ''; }
+function kFresh() { return kRaw() === KBASE; }
+function holdToast(msg) { TOAST_HOLD = 0; toast(msg); TOAST_HOLD = Date.now() + 3000; }
+function kStopMsg(why) {
+  return why === 'restore' ? '復元が途中で止まっているので保存していないさ（ダッシュボードで復元を終わらせてね）'
+                           : '串在庫の保存データが読めないので、上書きしないよう保存を止めているさ';
+}
+/* 端末の保存データを読み直して描き直す */
+function kReload(msg) {
+  KDB = loadK();
+  K_LOADING = true; K_RELOADING = true; try { normalizeItems(); } finally { K_LOADING = false; K_RELOADING = false; }
+  renderStopBar();
+  try { redrawAll(); refreshOpen(); } catch (e) {}
+  if (msg) holdToast(msg);
+}
+/* 止めている理由を画面の上に出す */
+function renderStopBar() {
+  let el = document.getElementById('k-stop');
+  const why = kStopWhy();
+  KHALT_SEEN = why === 'restore';
+  if (!why) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div'); el.id = 'k-stop';
+    el.style.cssText = 'background:#b0402a;color:#fff;padding:10px 12px;font-weight:bold;line-height:1.6;font-size:14px';
+    document.body.insertBefore(el, document.body.firstChild);
+  }
+  el.innerHTML = why === 'restore'
+    ? '⏸ 復元が途中で止まっています。この画面では保存しません（POSの出数も引きません）。<br>'
+      + '<a href="dashboard.html" style="color:#fff;text-decoration:underline">📊 ダッシュボードを開いて、復元を終わらせてください</a>'
+    : '⚠️ 串在庫の保存データが読めません。上書きしないよう、この画面では保存しません。<br>データを消さずに、管理者に知らせてください。';
+}
+/* ほかの画面で変わった・復元が終わった → 読み直す */
+function kCheck() {
+  const wasHalt = KHALT_SEEN;
+  renderStopBar();
+  if (wasHalt && !KHALT_SEEN) { kReload('復元が終わったので、串在庫を読み直したさ'); return; }
+  if (!KBROKEN && !kFresh()) kReload('別の画面で串在庫が変わったので、読み直したさ');
+}
+
 let KDB = loadK();
 let VIEW = [];        // 在庫の表示順（名前配列）
 let PICK = [];        // 設定タブの商品チェックリスト表示順
 
 function loadK() {
-  try { const r = localStorage.getItem(KKEY); return r ? Object.assign(blank(), JSON.parse(r)) : blank(); }
-  catch (e) { return blank(); }
+  const r = kRaw();
+  KBASE = r; KBROKEN = false;
+  if (r === undefined) { KBROKEN = true; return blank(); }          /* 端末から読み出せない（段階0） */
+  if (r == null || r === '') return blank();                        /* はじめて使う */
+  try {
+    const d = JSON.parse(r);
+    if (!d || typeof d !== 'object' || Array.isArray(d)) throw new Error('形が違う');
+    return Object.assign(blank(), d);
+  } catch (e) { KBROKEN = true; return blank(); }                   /* 壊れている → 空で上書きしない（段階0） */
 }
 function save() {
-  try { localStorage.setItem(KKEY, JSON.stringify(KDB)); }
+  /* 段階0：止めているとき・ほかの画面で変わっていたときは書かない */
+  if (K_RELOADING) return false;   /* 読み直しの補いでは書かない（次にふつうに保存するときに一緒に入る） */
+  const why = kStopWhy();
+  if (why) { if (!K_LOADING) { kReload(); holdToast(kStopMsg(why)); } return false; }
+  if (!kFresh()) { kReload('別の画面で串在庫が変わったので読み直したさ。いまの操作は保存していないよ。もう一度やってね'); return false; }
+  const s = JSON.stringify(KDB);
+  try { localStorage.setItem(KKEY, s); KBASE = s; }
   catch (e) { toast('保存できんかったさ…'); }
   schedulePush();
+  return true;
 }
 function nextSeq() { return KDB.seq++; }
 
@@ -429,6 +499,7 @@ function schedulePush() {
 }
 async function pushShared() {
   if (!shareOn()) return;
+  if (kStopWhy()) return;   /* 段階0：復元が途中・データが読めないあいだは共有に上げない */
   SHARE.pushing = true; updateShareStatus();
   try {
     const res = await fetch(SHARE.url, { method: 'POST', body: JSON.stringify({ data: KDB, baseRev: SHARE.rev }) });
@@ -441,6 +512,7 @@ async function pushShared() {
 async function pullShared(opts) {
   opts = opts || {};
   if (!shareOn()) return;
+  if (kStopWhy()) return;   /* 段階0：復元が途中・データが読めないあいだは共有から書き込まない */
   if (!opts.force && (SHARE.pushing || SHARE.dirty)) return;   // ローカル未保存を上書きしない
   if (PULLING) return; PULLING = true;
   try {
@@ -450,7 +522,7 @@ async function pullShared(opts) {
     if (r.data && (opts.force || r.rev !== SHARE.rev)) {
       KDB = Object.assign(blank(), r.data);
       normalizeItems();
-      localStorage.setItem(KKEY, JSON.stringify(KDB));   // pushを起こさず直接保存
+      { const s = JSON.stringify(KDB); localStorage.setItem(KKEY, s); KBASE = s; }   // pushを起こさず直接保存（段階0：この画面が知っている中身も合わせる）
       SHARE.rev = (r.rev != null ? r.rev : SHARE.rev);
       redrawAll();
       if (!document.getElementById('p-reflect').classList.contains('hide')) renderReflect();
@@ -732,6 +804,8 @@ function posPending() {
 
 /* まだ引いていない出数を在庫から引く。auto=true は自動で引いたとき */
 function posApply(auto) {
+  if (kStopWhy()) return null;   /* 段階0 */
+  if (!kFresh()) kReload();      /* 段階0：最新の台帳で引く（二重に引かない） */
   const p = posPending();
   if (!p.marks.length) return null;
   const lines = [], shorts = [];
@@ -780,6 +854,9 @@ function posUndo(id) {
 /* 自動で引く。開いたとき・画面に戻ったとき・別タブでPOSを取り込んだとき・共有から読んだときに呼ぶ */
 let LAST_AUTO = null;
 function autoApply() {
+  /* 段階0：止めているときは引かない。ほかの画面で変わっていたら、最新を読み直してから引く（古い中身で引いて保存しない） */
+  if (kStopWhy()) return;
+  if (!kFresh()) kReload();
   if (!salesOk() || !KDB.posAuto || !KDB.posFrom) return;
   const rec = posApply(true);
   if (!rec) return;
@@ -867,6 +944,7 @@ function zGenreGroups() {
 
 /* 串在庫の合計本数を zaiko の在庫（本数）へ書き戻す */
 function syncToZaiko(reason, force) {
+  if (kStopWhy() || !kFresh()) return false;   /* 段階0：止めているとき・保存できなかったときは串打ち前の在庫に書かない */
   if (!force && !KDB.syncZaiko) return false;
   const z = liveZaiko();
   if (!z) return false;
@@ -937,6 +1015,7 @@ function expLabel(exp) {
 
 let toastTimer = null;
 function toast(msg) {
+  if (Date.now() < TOAST_HOLD) return;   /* 段階0：保存しなかった知らせを、すぐあとの «できた» で消さない */
   const t = document.getElementById('toast');
   t.textContent = msg; t.style.display = 'block';
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = 'none', 3400);
@@ -1473,6 +1552,7 @@ function renderPosPending() {
     <button class="act" style="margin-top:9px" onclick="posApplyNow()">今すぐ在庫から引く</button>`;
 }
 function posApplyNow() {
+  const why = kStopWhy(); if (why) { holdToast(kStopMsg(why)); return; }   /* 段階0 */
   const rec = posApply(false);
   redrawAll(); renderReflect();
   toast(rec ? `${rec.lines.length}種・${fmt(totalOf(rec))}本を引いたさ` : '引くものが無かったさ');
@@ -1712,7 +1792,8 @@ function wipe() {
 
 /* ========== 起動 ========== */
 function redrawAll() { renderStock(); }
-normalizeItems();
+K_LOADING = true; try { normalizeItems(); } finally { K_LOADING = false; }
+renderStopBar();   /* 段階0：復元が途中・データが読めないときは画面の上に出す */
 fillQtySelects();
 document.getElementById('prep-made').value = today();
 document.getElementById('add-qty').value = 0;
@@ -1734,6 +1815,12 @@ function salesChanged() {
   autoApply();
   redrawAll(); refreshOpen();
 }
+/* 段階0：ほかの画面で串在庫が変わった・復元中の印が付いた／消えた → 読み直す・止める */
+window.addEventListener('storage', e => {
+  if (e.key === KKEY || e.key === RMARK || e.key === null) kCheck();
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kCheck(); });
+window.addEventListener('pageshow', () => kCheck());
 window.addEventListener('storage', e => {
   if (!salesOk()) return;
   if (e.key === CORE.SALES_KEY || e.key === null) salesChanged();

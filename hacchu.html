@@ -245,6 +245,44 @@
 "use strict";
 /* ================= データ ================= */
 const LS_KEY = "kemuri_hacchu_v1";
+/* ===== 段階0（test-env）：ほかの画面・復元と重なったときに古い中身で上書きしない =====
+   A：HBASE＝この画面が最後に読んだ／書いた保存データ（文字のまま）。保存の直前に比べ、
+      変わっていたら書かずに読み直す。
+   B：復元中の印（kemuri_restore_v1）があるあいだは保存しない。
+   C：保存データが読めないときは、見本のデータで上書きしない。保存の失敗を知らせる。
+   データの形・機能は変えない。 */
+const RMARK = "kemuri_restore_v1";
+let HBASE = null, HBROKEN = false, HHALT_SEEN = false, TOAST_HOLD = 0;
+function hRaw(){ try { return localStorage.getItem(LS_KEY); } catch(e){ return undefined; } }
+function hHalted(){ try { return localStorage.getItem(RMARK) != null; } catch(e){ return true; } }
+function hStopWhy(){ return HBROKEN ? "broken" : hHalted() ? "restore" : ""; }
+function hFresh(){ return hRaw() === HBASE; }
+function holdToast(msg){ TOAST_HOLD = 0; toast(msg); TOAST_HOLD = Date.now() + 3000; }
+function hReload(msg){
+  S = load(); closeModal(); renderHStop();
+  try { render(); } catch(e){}
+  if (msg) holdToast(msg);
+}
+function renderHStop(){
+  let b = document.getElementById("h-stop");
+  const why = hStopWhy();
+  HHALT_SEEN = why === "restore";
+  if (!why) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement("div"); b.id = "h-stop";
+    b.style.cssText = "background:#b0402a;color:#fff;padding:10px 12px;font-weight:bold;line-height:1.6;font-size:14px";
+    document.body.insertBefore(b, document.body.firstChild);
+  }
+  b.innerHTML = why === "restore"
+    ? "⏸ 復元が途中で止まっています。この画面では保存しません。<br><a href=\"dashboard.html\" style=\"color:#fff;text-decoration:underline\">📊 ダッシュボードを開いて、復元を終わらせてください</a>"
+    : "⚠️ 発注の保存データが読めません。上書きしないよう、この画面では保存しません。<br>データを消さずに、管理者に知らせてください。";
+}
+function hCheck(){
+  const was = HHALT_SEEN;
+  renderHStop();
+  if (was && !HHALT_SEEN) { hReload("復元が終わったので、発注のデータを読み直したよ"); return; }
+  if (!HBROKEN && !hFresh()) hReload("別の画面で発注のデータが変わったので、読み直したよ");
+}
 let S = load();
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -311,13 +349,29 @@ function dateLabelFor(sid){
 }
 
 function load(){
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) return migrate(JSON.parse(raw));
-  } catch(e){}
+  const raw = hRaw();
+  HBASE = raw; HBROKEN = false;
+  if (raw === undefined) { HBROKEN = true; return migrate(seed()); }   /* 端末から読み出せない（段階0） */
+  if (raw) {
+    try { return migrate(JSON.parse(raw)); }
+    catch(e){ HBROKEN = true; return migrate(seed()); }               /* 壊れている → 見本で上書きしない（段階0） */
+  }
   return migrate(seed());
 }
-function save(){ try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch(e){} }
+function save(){
+  /* 段階0：止めているとき・ほかの画面で変わっていたときは書かない。失敗したら知らせる */
+  const why = hStopWhy();
+  if (why) {
+    hReload();
+    holdToast(why === "restore" ? "復元が途中で止まっているので保存していないよ（ダッシュボードで復元を終わらせてね）"
+                                : "発注の保存データが読めないので、上書きしないよう保存を止めているよ");
+    return false;
+  }
+  if (!hFresh()) { hReload("別の画面で発注のデータが変わったので読み直したよ。いまの操作は保存していないので、もう一度やってね"); return false; }
+  const s = JSON.stringify(S);
+  try { localStorage.setItem(LS_KEY, s); HBASE = s; return true; }
+  catch(e){ holdToast("保存できなかったよ（端末の空きが足りないかも）。いまの変更は残らないかもしれません"); return false; }
+}
 
 /* order: { productId: qty }  done: { productId: true }  sentToday: { supplierId: 日付 } */
 
@@ -651,6 +705,7 @@ function openFormModal(title, fields, onSave, onDelete){
 /* ================= トースト ================= */
 let toastTimer = null;
 function toast(msg){
+  if (Date.now() < TOAST_HOLD) return;   /* 段階0：保存しなかった知らせを、すぐあとの «できた» で消さない */
   const t = document.getElementById("toast");
   t.textContent = msg;
   t.classList.add("show");
@@ -1105,6 +1160,10 @@ function renderTabbar(){
 }
 
 render();
+renderHStop();   /* 段階0 */
+window.addEventListener("storage", e => { if (e.key === LS_KEY || e.key === RMARK || e.key === null) hCheck(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") hCheck(); });
+window.addEventListener("pageshow", () => hCheck());
 </script>
 </body>
 </html>
