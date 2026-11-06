@@ -38,7 +38,8 @@
 <section><h2>2. いまの中身を比べる</h2>
 <p>端末のデータが D0・D1 のどちらと同じかを、種類ごとに確かめます（読むだけ）。
 在庫アプリの版番号など、開いたときに変わってよい所は比べません。</p>
-<button onclick="compareNow()">比べる</button><pre id="cmp"></pre></section>
+<p><b>要点比較</b>（上の欄）は在庫数・件数・値段などの要点だけを比べます。<b>詳細比較</b>（下の欄）は、最低ライン・目標数・原価・日持ちなど、利用者が変えられる項目を全部比べ、違う所を具体的に出します。</p>
+<button onclick="compareNow()">比べる</button><pre id="cmp"></pre><pre id="cmpd"></pre></section>
 
 <section><h2>3. 失敗を起こす復元（いまが D0 のときだけ）</h2>
 <p>D1 を «安全な復元» で読み込みますが、わざと途中で失敗・停止させます。<b>在庫アプリを閉じてから</b>押してください。</p>
@@ -189,6 +190,89 @@ function proj(k, o){
   return null;
 }
 function fp(k, o){ var p = proj(k, o); return p == null ? '' : KemuriBackup.hash(JSON.stringify(p)); }
+
+/* ---------- 詳細比較：利用者が変えられる項目を全部比べる（上の要点比較はそのまま残す） ----------
+   比べないもの＝開いたとき・保存のたびに自動で変わる所（試験で確かめた）：
+   ・どのデータも：updatedAt（保存した時刻）
+   ・在庫アプリ：rev（保存の番号）・wid（どの画面が保存したか）・mig2/mig3/posSeeded（引っ越しの印）
+   ・串焼き：migPos（引っ越しの印）。costMode・gPer・gPrice は、無いと開いたときに初期値
+     （piece・0・0）が補われるので、無いものは初期値とみなして比べる
+   ・発注：supDates（次の納品日。開いた日付で自動で決まる） */
+var DETAIL_SKIP = { kemuri_reitou_v1: ['rev', 'wid', 'mig2', 'mig3', 'posSeeded'], kemuri_kushiyaki_v1: ['migPos'], kemuri_hacchu_v1: ['supDates'] };
+var DETAIL_SKIP_TEXT = '保存した時刻（どのデータも）、在庫アプリの保存の番号・保存した画面の印・引っ越しの印、串焼きの引っ越しの印、発注の次の納品日（開いた日で自動で決まる）';
+function stripDeep(o, f){
+  if (o && typeof o === 'object') { if (!Array.isArray(o)) delete o[f]; Object.keys(o).forEach(function(x){ stripDeep(o[x], f); }); }
+}
+/* 配列を «名前» で引けるようにする（違いを «「ダミー鶏もも」の在庫数» のように出すため） */
+function byName(arr, keyFn){
+  var o = {};
+  (Array.isArray(arr) ? arr : []).forEach(function(x, i){ var k = String(keyFn(x || {}, i)); while (o[k] !== undefined) k += '＊'; o[k] = x; });
+  return o;
+}
+function dnorm(k, o){
+  if (!o || typeof o !== 'object') return null;
+  var c = clone(o);
+  (DETAIL_SKIP[k] || []).forEach(function(f){ delete c[f]; });
+  stripDeep(c, 'updatedAt');
+  if (k === 'kemuri_reitou_v1') c.items = byName(c.items, function(it, i){ return it.name || ('ID' + (it.id != null ? it.id : i)); });
+  if (k === 'kemuri_zaiko_v1') c.ingredients = byName(c.ingredients, function(g, i){ return g.name || i; });
+  if (k === 'kemuri_hacchu_v1') {
+    c.suppliers = byName(c.suppliers, function(x, i){ return x.name || x.id || i; });
+    c.products = byName(c.products, function(x, i){ return x.name || x.id || i; });
+  }
+  if (k === 'kemuri_kushiyaki_v1' && c.items && typeof c.items === 'object') Object.keys(c.items).forEach(function(n){
+    var it = c.items[n]; if (!it || typeof it !== 'object') return;
+    if (it.costMode == null) it.costMode = 'piece'; if (it.gPer == null) it.gPer = 0; if (it.gPrice == null) it.gPrice = 0;
+  });
+  return c;
+}
+function ddiff(a, b, path, out){
+  if (out.length >= 200) return out;
+  var oa = a !== null && typeof a === 'object', ob = b !== null && typeof b === 'object';
+  if (oa && ob && Array.isArray(a) === Array.isArray(b)) {
+    var ks = {}; Object.keys(a).forEach(function(x){ ks[x] = 1; }); Object.keys(b).forEach(function(x){ ks[x] = 1; });
+    Object.keys(ks).sort().forEach(function(x){ ddiff(a[x], b[x], path.concat([x]), out); });
+  } else if (JSON.stringify(a) !== JSON.stringify(b)) out.push({ path: path, from: a, to: b });
+  return out;
+}
+var FIELD = { min:'最低ライン', par:'目標数', per:'入り数', cost:'原価', keep:'日持ち', costMode:'原価の計算方法', gPer:'1本のグラム', gPrice:'グラム単価',
+  lots:'ロット', qty:'数量', made:'作った日', exp:'期限', stock:'在庫数', name:'名前', cat:'分類', sup:'仕入先', unit:'単位', price:'値段', sale:'売値',
+  rate:'原価率', tax:'税', status:'状態', category:'分類', note:'メモ', parts:'材料', gross:'売上（税込）', net:'売上（税抜）', guests:'客数', groups:'組数',
+  weather:'天気', amount:'金額', history:'履歴', imports:'取込の記録', order:'発注書', done:'済み', sentToday:'送った日', genre:'分類', emoji:'絵文字',
+  pin:'ピン留め', freq:'回数', last:'前回', posMap:'POSの紐付け', posMarks:'POSで引いた記録', posLog:'POSの記録', posAuto:'POSの自動', posFrom:'POSの開始日',
+  log:'記録', losses:'ロス', applied:'反映の記録', seq:'通し番号', syncZaiko:'串打ち前在庫への反映', reflectBy:'反映のしかた', seen:'取込済みの印',
+  items:'', days:'', products:'', suppliers:'', ingredients:'', recipes:'レシピ', menus:'メニュー' };
+function pathText(p){
+  return p.map(function(x){ if (FIELD[x] !== undefined) return FIELD[x]; if (/^\d+$/.test(x)) return (Number(x) + 1) + '番目'; return '「' + x + '」'; })
+          .filter(Boolean).join('の') || '全体';
+}
+function valText(v){ if (v === undefined) return '（なし）'; var t = JSON.stringify(v); return t.length > 40 ? t.slice(0, 40) + '…' : t; }
+/* 1つの種類の詳細比較。quick＝要点比較の結果（違うときは、それと同じ見本と比べた違いを出す） */
+function detailRow(k, raw, e0, e1, quick){
+  if (raw == null) return { st: 'なし', diffs: [] };
+  var o = null; try { o = JSON.parse(raw); } catch (e) {}
+  var n = dnorm(k, o); if (!n) return { st: '読めない', diffs: [] };
+  var d0 = ddiff(dnorm(k, e0[k]), n, [], []), d1 = ddiff(dnorm(k, e1[k]), n, [], []);
+  if (!d0.length) return { st: 'D0', diffs: [] };
+  if (!d1.length) return { st: 'D1', diffs: [] };
+  var ref = quick === 'D0' || quick === 'D1' ? quick : (d1.length < d0.length ? 'D1' : 'D0');
+  return { st: '違う', ref: ref, diffs: ref === 'D0' ? d0 : d1 };
+}
+function detailText(s){
+  var lines = ['【詳細比較】利用者が変えられる項目を全部比べます'];
+  s.rows.forEach(function(r){
+    var d = r.detail || { st: '？', diffs: [] };
+    if (d.st !== '違う') { lines.push((d.st === 'D0' || d.st === 'D1' ? '✅ ' : d.st === 'なし' ? '・ ' : '❌ ') + label(r.k) + '：' + d.st); return; }
+    lines.push('❌ ' + label(r.k) + '：' + d.ref + ' と違う所が ' + d.diffs.length + (d.diffs.length >= 200 ? ' か所以上' : ' か所'));
+    d.diffs.slice(0, 8).forEach(function(x){ lines.push('   ・' + pathText(x.path) + '：' + d.ref + ' は ' + valText(x.from) + ' → いまは ' + valText(x.to)); });
+    if (d.diffs.length > 8) lines.push('   ・ほか ' + (d.diffs.length - 8) + ' か所');
+  });
+  var bad = s.rows.filter(function(r){ return r.detail && (r.detail.st === '違う' || r.detail.st === '読めない'); }).map(function(r){ return label(r.k); });
+  lines.push('詳細の判定：' + (s.dverdict === '空' ? '何も入っていない' : s.dverdict === 'D0' || s.dverdict === 'D1' ? '全部 ' + s.dverdict + ' と一致'
+    : bad.length ? '⚠️ 違いあり（' + bad.join('・') + '）' : '⚠️ D0・D1 が混ざっている'));
+  lines.push('比べていない所：' + DETAIL_SKIP_TEXT);
+  return lines.join('\n');
+}
 /* いまの状態。{ rows:[{k, now:'D0'|'D1'|'なし'|'違う'}], mark, verdict:'D0'|'D1'|'空'|'混在' } */
 function stateNow(){
   var e0 = dummyData(0), e1 = dummyData(1), rows = [], mark = false;
@@ -202,12 +286,15 @@ function stateNow(){
       var f = fp(k, o);
       st = !f ? '読めない' : f === fp(k, e0[k]) ? 'D0' : f === fp(k, e1[k]) ? 'D1' : '違う';
     }
-    rows.push({ k: k, now: st });
+    rows.push({ k: k, now: st, detail: detailRow(k, raw, e0, e1, st) });
   });
   var kinds = {}; rows.forEach(function(r){ kinds[r.now] = 1; });
   var ks = Object.keys(kinds);
   var verdict = ks.length === 1 && kinds['なし'] ? '空' : ks.length === 1 && (kinds.D0 || kinds.D1) ? ks[0] : '混在';
-  return { rows: rows, mark: mark, verdict: verdict };
+  var dk = {}; rows.forEach(function(r){ dk[r.detail.st] = 1; });
+  var dks = Object.keys(dk);
+  var dverdict = dks.length === 1 && dk['なし'] ? '空' : dks.length === 1 && (dk.D0 || dk.D1) ? dks[0] : '混在';
+  return { rows: rows, mark: mark, verdict: verdict, dverdict: dverdict };
 }
 function stateText(s){
   return s.rows.map(function(r){ return (r.now === 'D0' || r.now === 'D1' ? '✅ ' : r.now === 'なし' ? '・ ' : '❌ ') + label(r.k) + '：' + r.now; }).join('\n')
@@ -224,7 +311,7 @@ function reitouHint(s){
        + '（いまのデータのほうが多いと、安全のため最初はチェックが外れます）。\n'
        + '→ ダッシュボードで在庫アプリにチェックを入れ（☑）、バックアップを読み込み直してください。';
 }
-function compareNow(){ put('cmp', new Date().toLocaleString() + '\n' + stateText(stateNow())); }
+function compareNow(){ var s = stateNow(); put('cmp', new Date().toLocaleString() + '\n【要点比較】\n' + stateText(s)); put('cmpd', detailText(s)); }
 
 /* ---------- 書き出し（送る → 保存 → 文字の順に試す） ---------- */
 function stamp(){ var d = new Date(), p = function(x){ return ('0' + x).slice(-2); }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()); }
