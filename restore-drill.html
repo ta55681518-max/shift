@@ -65,8 +65,8 @@
 
 <section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
 </main>
-<script src="kemuri-core.js?v=20261027s0"></script>
-<script src="kemuri-backup.js?v=20261027s0"></script>
+<script src="kemuri-core.js?v=20261109a1"></script>
+<script src="kemuri-backup.js?v=20261109a1"></script>
 <script src="kemuri-errlog.js?v=20261027a1"></script>
 <script>
 'use strict';
@@ -254,15 +254,19 @@ function sameAsBig(k, raw, exp){
   var i = 0, m = Math.min(raw.length, want.length); while (i < m && raw.charCodeAt(i) === want.charCodeAt(i)) i++;
   return { ok: false, why: '長さ ' + raw.length + '／ダミー ' + want.length + '、' + (i + 1) + '文字目から違う' };
 }
+/* 保存場所の量。iPhone の数え方（Latin-1 の外の文字を含む文字列は1文字2バイト、そうでなければ1バイト）でも出す */
+function wideStr(t){ return /[^\u0000-\u00ff]/.test(t); }
+function lsB(k, v){ return (wideStr(k) ? 2 : 1) * k.length + (wideStr(v) ? 2 : 1) * v.length; }
 function storageChars(){
-  var total = 0, kem = 0;
+  var total = 0, kem = 0, totalB = 0, kemB = 0;
   for (var i = 0; i < localStorage.length; i++) {
-    var k = localStorage.key(i), v = localStorage.getItem(k) || '';
-    total += k.length + v.length; if (KEYS.indexOf(k) >= 0 || k === MARK) kem += k.length + v.length;
+    var k = localStorage.key(i), v = localStorage.getItem(k) || '', b = lsB(k, v);
+    total += k.length + v.length; totalB += b;
+    if (KEYS.indexOf(k) >= 0 || k === MARK) { kem += k.length + v.length; kemB += b; }
   }
-  return { total: total, kem: kem };
+  return { total: total, kem: kem, totalB: totalB, kemB: kemB };
 }
-function verifyBig(n){
+async function verifyBig(n){
   var exp = bigData(n), lines = ['【大' + n + 'と照合】' + new Date().toLocaleString()], bad = 0;
   KEYS.forEach(function(k){
     var raw = localStorage.getItem(k), r = sameAsBig(k, raw, exp);
@@ -271,7 +275,9 @@ function verifyBig(n){
   });
   var mk = localStorage.getItem(MARK) != null, sc = storageChars();
   lines.push('復元中の印：' + (mk ? 'あり ⚠️（ダッシュボードで片付けてください）' : 'なし'));
-  lines.push('いまの保存の量：KEMURIのデータ ' + kchars(sc.kem) + '／このURL全体 ' + kchars(sc.total));
+  var ci = await KemuriBackup.restoreCopyInfo();
+  lines.push('復元の控え（IndexedDB）：' + (ci.has ? 'あり' + (mk ? '（印と組で残っている）' : ' ⚠️（印が無いのに残っている）') : ci.error ? '確かめられない（' + ci.error + '）' : 'なし'));
+  lines.push('いまの保存の量：KEMURIのデータ ' + kchars(sc.kem) + '（約' + mb(sc.kemB) + '）／このURL全体 約' + mb(sc.totalB) + '（iPhoneの上限 約5.2MB の ' + Math.round(sc.totalB / 5242880 * 100) + '%）');
   lines.push('エラーの記録：' + (window.KemuriErr && KemuriErr.text() ? 'あり（«結果をまとめてコピー» で見られます）' : 'なし'));
   lines.push(bad === 0 && !mk ? '判定：✅ 8種類とも大' + n + 'と完全に一致' : '判定：❌ 大' + n + 'と違う（' + bad + '種類）' + (mk ? '・印あり' : ''));
   put('big', lines.join('\n'));
@@ -291,7 +297,7 @@ function fpTake(){
   catch (e) { put('big', '❌ 指紋を書けませんでした（空きが足りない可能性）'); return; }
   put('big', '✅ いまの中身の指紋を取りました（' + new Date(f.at).toLocaleString() + '）\n' + KEYS.map(function(k){ return '・' + label(k) + '：' + (f.keys[k] ? kchars(Number(f.keys[k].split(':')[1])) : 'なし'); }).join('\n'));
 }
-function fpCheck(){
+async function fpCheck(){
   var f = null; try { f = JSON.parse(localStorage.getItem(FP_KEY)); } catch (e) {}
   if (!f || !f.keys) { put('big', '指紋がありません。先に «いまの中身の指紋を取る» を押してください'); return; }
   var now = fpNow(), bad = [];
@@ -299,6 +305,8 @@ function fpCheck(){
   KEYS.forEach(function(k){ var same = now[k] === f.keys[k]; if (!same) bad.push(label(k)); lines.push((same ? '✅ ' : '❌ ') + label(k) + '：' + (same ? '変わっていない' : '変わっている')); });
   var mk = localStorage.getItem(MARK) != null;
   lines.push('復元中の印：' + (mk ? 'あり ⚠️' : 'なし'));
+  var ci = await KemuriBackup.restoreCopyInfo();
+  lines.push('復元の控え（IndexedDB）：' + (ci.has ? (mk ? 'あり（印と組で残っている）' : 'あり ⚠️（印が無いのに残っている）') : 'なし'));
   lines.push(bad.length === 0 && !mk ? '判定：✅ 指紋を取ったときから1文字も変わっていない（元の中身が守られている）' : '判定：❌ 変わっている（' + bad.join('・') + '）' + (mk ? '・印あり' : ''));
   put('big', lines.join('\n'));
 }
@@ -316,11 +324,13 @@ async function roomMeasure(){
   if (!confirm('空き容量を測ります。\n試験用の名前で上限まで試しに書き、すぐに全部消します（KEMURIのデータには触れません）。\nほかのアプリの画面は閉じておいてください。')) return;
   put('big', '測っています…（最大' + ROOM_SEC + '秒）');
   await new Promise(function(r){ setTimeout(r, 30); });
+  /* 段階0・案A：試しに書く文字は日本語（あ）。KEMURIのデータと同じ «1文字2バイト» で数えられるので、
+     iPhone でも «KEMURIのデータがあとどれだけ入るか» をそのまま測れる（英数字だと1文字1バイトで多めに出る） */
   var before = storageChars(), fp0 = fpNow(), written = 0, n = 0, t0 = Date.now(), hitLimit = false, err = '';
   try {
-    [524288, 65536, 8192, 1024].forEach(function(sz){
-      var chunk = new Array(sz + 1).join('x');
-      while (written + sz <= ROOM_CAP && (Date.now() - t0) < ROOM_SEC * 1000) {
+    [262144, 32768, 4096, 512].forEach(function(sz){
+      var chunk = new Array(sz + 1).join('あ');
+      while (written + sz <= ROOM_CAP / 2 && (Date.now() - t0) < ROOM_SEC * 1000) {
         try { localStorage.setItem(ROOM_PREFIX + (n++), chunk); written += sz; }
         catch (e) { hitLimit = true; err = e && e.name || ''; break; }
       }
@@ -328,17 +338,19 @@ async function roomMeasure(){
   } finally {
     var c = roomCleanup();
     var fp1 = fpNow(), kept = KEYS.every(function(k){ return fp0[k] === fp1[k]; });
-    var total = before.total + written;
+    var freeB = written * 2, totalB = before.totalB + freeB;
     var lines = ['【空き容量】' + new Date().toLocaleString(),
-      'いまの保存の量：KEMURIのデータ ' + kchars(before.kem) + '／このURL全体 ' + kchars(before.total),
-      'さらに書けた量：' + kchars(written) + (hitLimit ? '（ここで上限に届いた' + (err ? '：' + err : '') + '）' : '（安全の上限 ' + kchars(ROOM_CAP) + '・' + ROOM_SEC + '秒で止めた。実際の上限はこれより大きい）'),
-      '上限の目安（いま＋さらに書けた量）：' + kchars(total),
+      'いまの保存の量：KEMURIのデータ ' + kchars(before.kem) + '（約' + mb(before.kemB) + '）／このURL全体 約' + mb(before.totalB),
+      'さらに書けた量：日本語で ' + kchars(written) + '（約' + mb(freeB) + '）' + (hitLimit ? '（ここで上限に届いた' + (err ? '：' + err : '') + '）' : '（安全の上限・' + ROOM_SEC + '秒で止めた。実際の上限はこれより大きい）'),
+      '上限の目安：約' + mb(totalB) + '（KEMURIのデータに換算して約 ' + kchars(totalB / 2) + '）',
       '試験用データ：' + (c.left === 0 ? '全部消しました（' + c.removed + '個）' : '⚠️ ' + c.left + '個消せませんでした。ページを開き直すと消します'),
       'KEMURIのデータ：' + (kept ? '変わっていない ✅' : '⚠️ 変わっている'),
-      '--- 復元に要る量の目安（控えの分も含む：いまのデータ ＋ 大きい方） ---'];
+      '--- いまのデータの上に大きいダミーを読み込むときに、一時的に使う量の見込み ---',
+      '（新しい方式＝控えは IndexedDB／これまでの方式＝控えも localStorage）'];
     [1, 2, 4].forEach(function(m){
-      var big = bigText(m).length, need = before.total + Math.max(before.kem, big);
-      lines.push('大' + m + '（' + kchars(big) + '）を今のデータの上に読み込む：約 ' + kchars(need) + ' → ' + (!hitLimit ? '上限は測れていないが ' + kchars(total) + ' 以上ある' : need <= total ? '✅ 足りる見込み' : '⚠️ 足りない見込み'));
+      var box = JSON.parse(bigText(m)), e = KemuriBackup.estimate(box, KEYS);
+      var judge = function(b){ return !hitLimit ? '上限は測れていない' : b <= totalB ? '✅ 入る見込み（' + Math.round(b / totalB * 100) + '%）' : '⚠️ 足りない見込み（' + Math.round(b / totalB * 100) + '%）'; };
+      lines.push('大' + m + '：新しい方式 約' + mb(e.peak) + ' → ' + judge(e.peak) + '／これまでの方式 約' + mb(e.peakLs) + ' → ' + judge(e.peakLs));
     });
     put('big', lines.join('\n'));
   }
@@ -550,7 +562,8 @@ async function wipeTest(){
   if (r.unsupported) { put('wipe', 'Web Locks が使えないため消しませんでした'); return; }
   if (r.busy) { put('wipe', '在庫アプリが開いています。閉じてから、もう一度押してください（何も消していません）'); return; }
   var left = r.value || [];
-  put('wipe', (left.length ? '⚠️ 消せなかったもの：' + left.map(label).join('、') : '✅ 消しました') + '\n' + stateText(stateNow()));
+  var idb = left.length ? false : await KemuriBackup.clearRestoreCopy();   /* 段階0・案A：IndexedDB の控えも消す */
+  put('wipe', (left.length ? '⚠️ 消せなかったもの：' + left.map(label).join('、') : '✅ 消しました') + '（復元の控え（IndexedDB）：' + (idb ? '消しました' : '消していません') + '）\n' + stateText(stateNow()));
 }
 
 function copyAll(){

@@ -231,8 +231,8 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261027s0"></script>
-<script src="kemuri-backup.js?v=20261027s0"></script>
+<script src="kemuri-core.js?v=20261109a1"></script>
+<script src="kemuri-backup.js?v=20261109a1"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
 <script src="kemuri-data.js?v=20261106s0"></script>
@@ -708,6 +708,7 @@ if(EDIT_CH) EDIT_CH.onmessage = function(e){
 /* 画面A：頼まれたので、保存を止めて、版を知らせてから手放す */
 function releaseForHandover(id, to){
   if(EDITOR.mode !== 'editor') return;
+  if(RESTORING) return;                        /* 段階0・案A：復元の途中は引き継がない（頼んだ側は時間切れで知らせる） */
   EDITOR.mode = 'releasing';                  /* ここから先の保存は断る（save は editor 以外を断る） */
   try{ closeSheet(); }catch(e){}
   const sum = storedSummary();
@@ -812,6 +813,7 @@ function autoLog(s){ AUTO.log.push(nowISO().slice(11, 23) + ' ' + s); if(AUTO.lo
 /* 裏に回った：保存を止めてから鍵を手放す（何度呼ばれても1回だけ効く） */
 function goDormant(why){
   if(EDITOR.mode !== 'editor') return;
+  if(RESTORING){ AUTO.dormantPending = why; return; }   /* 段階0・案A：復元が終わってから手放す */
   EDITOR.mode = 'dormant';                     /* ここから先の保存は断る（save は editor 以外を断る） */
   AUTO.dormantRaw = SAVED_RAW;                 /* 手放したときの保存データ（戻ったときの比較に使う） */
   EDITOR.dormantAt = nowISO();
@@ -3516,6 +3518,15 @@ function bkSkipLines(box, keys, now){
   return KemuriBackup.summary(box).filter(x=>keys.indexOf(x.key) < 0)
     .map(x=>'・' + x.label + '（' + (now[x.key] ? 'いまの ' + now[x.key] + ' のまま残ります' : 'いまは無いまま。入りません') + '）');
 }
+/* 段階0・案A：この復元で一時的に使う保存場所の見込み（iPhone の上限 5MB に対して）。表示だけ */
+function bkSpaceLine(box, keys){
+  let e = null; try{ e = KemuriBackup.estimate(box, keys); }catch(err){}
+  if(!e || !e.peak) return '';
+  const mb = b=>(b / 1000000).toFixed(1) + 'MB';
+  return '一時的に使う保存場所の見込み：約' + mb(e.peak) + '（iPhoneの上限 約5.2MB の ' + e.pct + '%）'
+       + (e.pct >= 100 ? '\n⚠️ iPhoneでは足りない見込みです。読み込むと途中で失敗し、読み込む前の中身に戻ります（データは消えません）'
+          : e.pct >= 90 ? '\n（上限に近いです。失敗したときは、読み込む前の中身に戻ります）' : '');
+}
 /* 段階0（D）：串焼き・発注・串打ち前の在庫を読み込むときの案内。表示だけ（復元の処理は変えない） */
 function bkOtherNote(keys){
   const out = [];
@@ -3557,13 +3568,16 @@ function drawBk(){
   if(skip.length) h += '<div class="warn gap" id="bkskip"><b>読み込まないもの：</b><br>' + skip.map(esc).join('<br>') + '</div>';
   const note = bkOtherNote(Object.keys(BK.pick).filter(k=>BK.pick[k]));
   if(note.length) h += '<div class="warn gap" id="bknote">' + note.map(esc).join('<br>') + '</div>';
+  const space = bkSpaceLine(BK.box, Object.keys(BK.pick).filter(k=>BK.pick[k]));
+  if(space) h += '<div class="muted gap" id="bkspace">' + esc(space).replace(/\n/g, '<br>') + '</div>';
   h += '<div class="muted gap">選ばなかったものは、いまのまま残ります。</div>'
      + '<div class="two"><button class="btn btn-gray" onclick="closeSheet()">やめる</button>'
      + '<button class="btn btn-primary" ' + (n?'':'disabled') + ' onclick="bkApply()">'
      + (n ? n + '件を読み込む' : '選んでください') + '</button></div>';
   openSheet(h);
 }
-function bkApply(){
+var RESTORING = false;   /* 段階0・案A：復元の途中（IndexedDB を待つあいだも）は編集権を手放さない */
+async function bkApply(){
   const box = BK.box; if(!box) return;
   const keys = Object.keys(BK.pick).filter(k=>BK.pick[k]);
   if(!keys.length) return;
@@ -3578,7 +3592,15 @@ function bkApply(){
   const chk = KemuriBackup.validate(box, keys);
   if(!chk.ok){ alert('このバックアップは読み込めません。\n\n' + chk.problems.map(p=>'・' + p.label + '：' + p.why).join('\n') + '\n\n何も読み込んでいません。'); return; }
   /* 安全な復元：控え → 1つずつ書いて読み直す → 失敗したら全部戻す（この画面が編集権を持っている） */
-  const res = KemuriBackup.applySafe(box, keys, { who:'reitou' });
+  RESTORING = true;
+  let res;
+  try{ res = await KemuriBackup.applySafe(box, keys, { who:'reitou' }); }
+  catch(e){ res = { ok:false, why:'復元の途中でエラーが起きました（' + (e && e.message || e) + '）' }; }
+  finally{
+    RESTORING = false;
+    /* 復元のあいだに裏に回っていたら、いまから手放す */
+    if(AUTO.dormantPending){ const w = AUTO.dormantPending; AUTO.dormantPending = null; if(isHidden()) setTimeout(()=>goDormant(w), 0); }
+  }
   closeSheet();
   /* 在庫アプリぶんを読み直す。後から足した項目はここで埋まる */
   const rs = readStored();
@@ -3619,19 +3641,41 @@ function viewRestoreLock(){
   h += '<button class="btn btn-gray gap" onclick="restoreExportR()">📤 控え（復元する前の中身）を書き出す</button></div></div>';
   return h;
 }
-function restoreResolveR(how){
+async function restoreResolveR(how){
   if(EDITOR.mode !== 'editor'){ alert(viewOnlyMsg()); return; }
-  if(!confirm(how === 'back' ? '復元する前の中身に戻します。よいですか？' : '復元した中身をこのまま使います。よいですか？')) return;
-  const r = KemuriBackup.resolveRestore(how);
-  if(!r.ok){ alert('⚠️ できませんでした。\n' + r.why); render(); return; }
+  if(how !== 'drop' && !confirm(how === 'back' ? '復元する前の中身に戻します。よいですか？' : '復元した中身をこのまま使います。よいですか？')) return;
+  RESTORING = true;
+  let r;
+  try{ r = await KemuriBackup.resolveRestore(how); }
+  catch(e){ r = { ok:false, why:'エラーが起きました（' + (e && e.message || e) + '）' }; }
+  finally{
+    RESTORING = false;
+    if(AUTO.dormantPending){ const w = AUTO.dormantPending; AUTO.dormantPending = null; if(isHidden()) setTimeout(()=>goDormant(w), 0); }
+  }
+  if(!r.ok){
+    alert('⚠️ できませんでした。\n' + r.why); render();
+    /* 段階0・案A：控えが見つからないときは、印を片付けて同じバックアップを読み込み直してもらう */
+    if(r.noCopy && how === 'back'
+       && confirm('控えが見つからないため、読み込む前の中身には戻せません。\n\n'
+                + '«復元中の印» を片付けて、同じバックアップファイルをもう一度読み込み、最後まで入れ直しますか？\n'
+                + '（いまの中身は、一部だけ入れかわった状態のままです）')){
+      const d = await KemuriBackup.resolveRestore('drop');
+      if(!d.ok){ alert('⚠️ できませんでした。\n' + d.why); return; }
+      DATA_LOCK = null; SAVED_RAW = null;
+      try{ KemuriCore.sales.reload && KemuriCore.sales.reload(); }catch(e){}
+      becomeEditor();
+      alert('印を片付けました。\n続けて「設定」の «バックアップから戻す» で、同じバックアップを読み込んでください。');
+    }
+    return;
+  }
   DATA_LOCK = null;
   try{ KemuriCore.sales.reload && KemuriCore.sales.reload(); }catch(e){}
   SAVED_RAW = null;
   becomeEditor();
   if(!DATA_LOCK) toast(how === 'back' ? '復元する前の中身に戻しました' : '片付けました');
 }
-function restoreExportR(){
-  const t = KemuriBackup.restoreMarkText();
+async function restoreExportR(){
+  const t = await KemuriBackup.restoreCopyText();
   if(t == null){ toast('控えがありません'); return; }
   const name = KemuriBackup.filename('restore-mark');
   const url = URL.createObjectURL(new Blob([t], { type:'application/json' })), a = document.createElement('a');

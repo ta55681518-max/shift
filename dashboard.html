@@ -155,8 +155,8 @@
 <input type="file" id="bkfile" accept=".json,application/json,text/plain" onchange="bkPick(this)">
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
-<script src="kemuri-core.js?v=20261027s0"></script>
-<script src="kemuri-backup.js?v=20261027s0"></script>
+<script src="kemuri-core.js?v=20261109a1"></script>
+<script src="kemuri-backup.js?v=20261109a1"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <script src="kemuri-data.js?v=20261106s0"></script>
 
@@ -1011,10 +1011,12 @@ async function bkApply(){
     .map(x=>'・' + x.label + '：' + (now[x.key] ? 'いま ' + now[x.key] : 'いまは無し') + ' → ' + x.detail);
   const skip = bkSkipLines(box, keys, now);
   const note = bkOtherNote(keys);
+  const space = bkSpaceLine(box, keys);
   if(!confirm('次のデータを、バックアップ（' + (box.at ? fmtAt(box.at) : '日時不明') + '）の中身に置きかえます。\n\n'
             + lines.join('\n')
             + (skip.length ? '\n\n読み込まないもの：\n' + skip.join('\n') : '')
             + (note.length ? '\n\n' + note.join('\n') : '')
+            + (space ? '\n\n' + space : '')
             + '\n\n選ばなかったものは変えません。\n置きかえてよいですか？')) return;
   const r = await KemuriGuard.withEditor(()=> KemuriBackup.applySafe(box, keys, { who:'dashboard' }));
   if(r.unsupported){ alert('この開き方では在庫アプリとの調整ができないため、ここからは復元できません。\n在庫アプリの「バックアップから戻す」を使ってください。\n\n何も変えていません。'); return; }
@@ -1030,6 +1032,15 @@ async function bkApply(){
   else alert('⚠️ 読み込めませんでした。\n' + res.why);
 }
 
+/* 段階0・案A：この復元で一時的に使う保存場所の見込み（iPhone の上限 5MB に対して）。表示だけ */
+function bkSpaceLine(box, keys){
+  let e = null; try{ e = KemuriBackup.estimate(box, keys); }catch(err){}
+  if(!e || !e.peak) return '';
+  const mb = b=>(b / 1000000).toFixed(1) + 'MB';
+  return '一時的に使う保存場所の見込み：約' + mb(e.peak) + '（iPhoneの上限 約5.2MB の ' + e.pct + '%）'
+       + (e.pct >= 100 ? '\n⚠️ iPhoneでは足りない見込みです。読み込むと途中で失敗し、読み込む前の中身に戻ります（データは消えません）'
+          : e.pct >= 90 ? '\n（上限に近いです。失敗したときは、読み込む前の中身に戻ります）' : '');
+}
 /* 途中で止まった復元（印が残っている）。自動では戻さず、人に選んでもらう */
 function restoreCard(){
   const p = KemuriBackup.pendingRestore(); if(!p) return '';
@@ -1041,6 +1052,7 @@ function restoreCard(){
     h += '<div class="muted">始めた日時：' + esc(fmtAt(p.at)) + (p.who ? '（' + esc(({ dashboard:'ダッシュボードから', reitou:'在庫アプリから' })[p.who] || p.who) + '）' : '') + '</div>'
        + '<div class="muted">入り終わっていたもの：' + esc(p.done.map(lab).join('、') || 'なし') + '</div>'
        + '<div class="muted">入っていないもの：' + esc(p.rest.map(lab).join('、') || 'なし') + '</div>'
+       + '<div class="muted">控え（復元する前の中身）の置き場所：' + (p.copy === 'idb' ? 'IndexedDB' : 'この印の中（旧形式）') + '</div>'
        + '<div class="muted gap">在庫アプリは、これを片付けるまで編集を止めています。</div>'
        + '<button class="btn btn-primary gap" onclick="restoreResolve(\'back\')">復元する前の中身に戻す</button>'
        + (p.rest.length ? '' : '<button class="btn btn-gray gap" onclick="restoreResolve(\'keep\')">全部入っているので、このまま使う</button>');
@@ -1056,11 +1068,25 @@ async function restoreResolve(how){
   if(r.unsupported){ alert('この開き方では片付けられません。在庫アプリから行ってください。'); return; }
   const res = r.value || { ok:false, why:'エラーが起きました' };
   KemuriData.reloadAll(); refresh(); render();
-  if(res.ok) toast(how === 'back' ? '復元する前の中身に戻しました' : '片付けました');
+  if(res.ok){ toast(how === 'back' ? '復元する前の中身に戻しました' : how === 'drop' ? '印を片付けました' : '片付けました'); return; }
+  alert('⚠️ できませんでした。\n' + res.why);
+  /* 段階0・案A：控えが見つからないときは戻せない。印を片付けて、同じバックアップを読み込み直してもらう */
+  if(res.noCopy && how === 'back'
+     && confirm('控えが見つからないため、読み込む前の中身には戻せません。\n\n'
+              + '«復元中の印» を片付けて、同じバックアップファイルをもう一度読み込み、最後まで入れ直しますか？\n'
+              + '（いまの中身は、一部だけ入れかわった状態のままです。読み込み直すまで、在庫アプリは使わないでください）'))
+    return restoreResolveDrop();
+}
+async function restoreResolveDrop(){
+  const r = await KemuriGuard.withEditor(()=> KemuriBackup.resolveRestore('drop'));
+  if(r.busy){ alert('在庫アプリ（冷凍在庫）が別の画面で開いています。閉じてから、もう一度押してください。'); return; }
+  const res = r.value || { ok:false, why:'エラーが起きました' };
+  KemuriData.reloadAll(); refresh(); render();
+  if(res.ok) alert('印を片付けました。\n続けて「設定」の「バックアップのファイルを選ぶ」から、同じバックアップを読み込んでください。');
   else alert('⚠️ できませんでした。\n' + res.why);
 }
-function restoreExport(){
-  const t = KemuriBackup.restoreMarkText();
+async function restoreExport(){
+  const t = await KemuriBackup.restoreCopyText();
   if(t == null){ toast('控えがありません'); return; }
   dlText(t, KemuriBackup.filename('restore-mark'));
 }

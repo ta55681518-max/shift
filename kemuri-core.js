@@ -487,8 +487,14 @@
       var out = { ok: false };
       return navigator.locks.request(EDIT_LOCK, { ifAvailable: true }, function (lock) {
         if (!lock) { out.busy = true; return; }
-        try { out.value = fn(); out.ok = true; }
-        catch (e) { out.error = e; }
+        var v;
+        try { v = fn(); }
+        catch (e) { out.error = e; return; }
+        /* 段階0・案A：処理が Promise を返すとき（IndexedDB を待つ復元など）は、終わるまで鍵を持つ */
+        if (v && typeof v.then === 'function') {
+          return v.then(function (x) { out.value = x; out.ok = true; }, function (e) { out.error = e; });
+        }
+        out.value = v; out.ok = true;
       }).then(function () {
         if (!out.busy) Guard.announceFree();
         return out;

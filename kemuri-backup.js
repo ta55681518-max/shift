@@ -24,9 +24,13 @@
    ・第1形式（v:1）のファイルもそのまま読める（検査値が無いので形だけ確かめる）
 
    安全な復元（applySafe・段階0：第2-B・E7）
-   ・呼ぶ側が編集権（鍵 kemuri-reitou-editor）を持っている間だけ使う
-   ・① 先に «復元中の印»（kemuri_restore_v1）に、置きかえる前の中身を控える
-       → 控えが書けなければ（容量不足など）何も変えずにやめる
+   ・呼ぶ側が編集権（鍵 kemuri-reitou-editor）を持っている間だけ使う。戻り値は Promise
+   ・① 置きかえる前の中身（控え）を IndexedDB（kemuri-safety）に書き、読み直して完全に
+       一致することを確かめてから、localStorage に小さな «復元中の印»（kemuri_restore_v1・v:2）
+       を書く。控えを localStorage に置かないので、復元に要る容量が «データの約2倍» から
+       «約1倍» になる（iPhone の localStorage は約5MB しかない）
+       → IndexedDB が使えないときだけ、これまでどおり印の中に控えを入れる（v:1）。
+         それも書けなければ（容量不足など）何も変えずにやめる
      ② キーを1つずつ書いて、読み直して一致を確かめる
      ③ どれか1つでも失敗したら、書いたぶんを控えから元に戻す（巻き戻し）
      ④ 全部入ったら印を消す
@@ -183,6 +187,53 @@
     }
   }
 
+  /* ===== 復元の控えの置き場所：IndexedDB（段階0・案A） =====
+     データベース kemuri-safety ／ 入れ物 restore ／ 名前 current に1件だけ置く。
+     { v:2, id, at, keys, prev:{ key: 置きかえる前の文字列 または null } } */
+  var IDB_NAME = 'kemuri-safety', IDB_STORE = 'restore', IDB_KEY = 'current', IDB_WAIT = 8000;
+  function withTimeout(p, ms) {
+    return new Promise(function (res, rej) {
+      var t = setTimeout(function () { rej(new Error('IndexedDB が応答しません')); }, ms || IDB_WAIT);
+      p.then(function (v) { clearTimeout(t); res(v); }, function (e) { clearTimeout(t); rej(e); });
+    });
+  }
+  function idbOpen() {
+    return new Promise(function (res, rej) {
+      var f = null; try { f = global.indexedDB; } catch (e) {}
+      if (!f) return rej(new Error('IndexedDB が使えません'));
+      var rq; try { rq = f.open(IDB_NAME, 1); } catch (e) { return rej(e); }
+      rq.onupgradeneeded = function () { try { var db = rq.result; if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE); } catch (e) {} };
+      rq.onsuccess = function () { res(rq.result); };
+      rq.onerror = function () { rej(rq.error || new Error('IndexedDB を開けません')); };
+      rq.onblocked = function () { rej(new Error('IndexedDB をほかの画面が使っています')); };
+    });
+  }
+  /* 1つの取引で読み書きし、取引が終わってから結果を返す（書いたつもりで終わらない） */
+  function idbDo(mode, fn) {
+    return withTimeout(idbOpen().then(function (db) {
+      return new Promise(function (res, rej) {
+        var tx, out;
+        try {
+          tx = db.transaction(IDB_STORE, mode);
+          var rq = fn(tx.objectStore(IDB_STORE));
+          if (rq) rq.onsuccess = function () { out = rq.result; };
+        } catch (e) { try { db.close(); } catch (e2) {} return rej(e); }
+        tx.oncomplete = function () { try { db.close(); } catch (e) {} res(out); };
+        tx.onerror = tx.onabort = function () { try { db.close(); } catch (e) {} rej(tx.error || new Error('IndexedDB に書けません')); };
+      });
+    }));
+  }
+  function idbPut(v) { return idbDo('readwrite', function (st) { return st.put(v, IDB_KEY); }); }
+  function idbGet() { return idbDo('readonly', function (st) { return st.get(IDB_KEY); }); }
+  function idbDel() { return idbDo('readwrite', function (st) { return st['delete'](IDB_KEY); }); }
+  function quiet(p) { return p.then(function () { return true; }, function () { return false; }); }
+
+  /* 保存場所の量（iPhone の数え方）：Latin-1 の外の文字を1つでも含む文字列は1文字2バイト、
+     そうでなければ1文字1バイト。iPhone の上限は 5MB（5,242,880バイト）で、実機の測定と一致した */
+  var QUOTA_GUESS = 5242880;
+  function wideStr(t) { return /[^\u0000-\u00ff]/.test(t); }
+  function lsBytes(k, v) { if (v == null) return 0; return (wideStr(k) ? 2 : 1) * k.length + (wideStr(v) ? 2 : 1) * v.length; }
+
   var Backup = {
     KEYS: KEYS,
     MARK: MARK,
@@ -293,13 +344,15 @@
        opts.stopAfter … テスト用：このキーを書いたところで止める（途中で落ちた状態を作る）
        戻り値 { ok, written:[キー], why, failedKey, rolledBack, markLeft } */
     applySafe: function (box, keys, opts) {
+      var self = this;
+      return (async function () {
       opts = opts || {};
       var s = ls();
-      var res = { ok: false, written: [], why: '', failedKey: '', rolledBack: false, markLeft: false };
+      var res = { ok: false, written: [], why: '', failedKey: '', rolledBack: false, markLeft: false, copyIn: '', idbWhy: '' };
       if (!s) { res.why = '端末の保存場所が使えません'; return res; }
       var list = KEYS.filter(function (k) { return keys.indexOf(k) >= 0 && box && box.data && box.data[k] !== undefined; });
       if (!list.length) { res.why = '入れるものがありません'; return res; }
-      var chk = this.validate(box, list);
+      var chk = self.validate(box, list);
       if (!chk.ok) { res.why = chk.problems.map(function (p) { return p.label + '：' + p.why; }).join('\n'); return res; }
       try { if (s.getItem(MARK) != null) { res.why = '前の復元が途中で止まったままです。先にその確認をしてください'; return res; } }
       catch (e) { res.why = '端末から読み出せませんでした'; return res; }
@@ -322,19 +375,45 @@
         }
         want[k] = w;
       }
-      /* ① 置きかえる前の中身を印に控える。書けなければ何も変えずにやめる */
-      var mark = { v: 1, at: new Date().toISOString(), who: opts.who || '', from: box.at || '',
-                   keys: list, prev: prev, want: {} };
-      list.forEach(function (k) { mark.want[k] = hash(want[k]); });
+      var wantHash = {}, sum = {};
+      list.forEach(function (k) { wantHash[k] = hash(want[k]); sum[k] = prev[k] == null ? null : hash(prev[k]); });
+      var at = new Date().toISOString(), id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+      /* ① 控えを IndexedDB に書いて、読み直して完全に一致するか確かめる。
+         前の復元の控えが残っていても（印が無い＝もう要らない）ここで置きかわる */
+      var useIdb = !opts.noIdb;
+      if (useIdb) {
+        try {
+          await idbPut({ v: 2, id: id, at: at, keys: list, prev: prev });
+          var back = await idbGet();
+          var same = !!back && back.id === id && isObj(back.prev) && list.every(function (k) { return back.prev[k] === prev[k]; });
+          if (!same) throw new Error('控えを読み直したら中身が一致しませんでした');
+        } catch (e) {
+          useIdb = false; res.idbWhy = String(e && e.message || e);
+          await quiet(idbDel());
+        }
+      }
+      /* 印：IndexedDB に控えがあるときは小さい印（v:2）。無いときはこれまでどおり印に控えを入れる（v:1） */
+      var mark = useIdb
+        ? { v: 2, copy: 'idb', id: id, at: at, who: opts.who || '', from: box.at || '', keys: list, sum: sum, want: wantHash }
+        : { v: 1, at: at, who: opts.who || '', from: box.at || '', keys: list, prev: prev, want: wantHash };
       var ms;
       try { ms = JSON.stringify(mark); s.setItem(MARK, ms); }
       catch (e) {
         try { s.removeItem(MARK); } catch (e2) {}
-        res.why = '端末の空き容量が足りないため、元に戻せる控えを作れませんでした（何も変えていません）';
+        if (useIdb) await quiet(idbDel());
+        res.why = useIdb ? '復元中の印を書けませんでした（端末の空き容量が足りない可能性があります。何も変えていません）'
+                         : '端末の空き容量が足りないため、元に戻せる控えを作れませんでした（何も変えていません）'
+                           + (res.idbWhy ? '\n（IndexedDB に控えを置けませんでした：' + res.idbWhy + '）' : '');
         return res;
       }
       var mok = false; try { mok = s.getItem(MARK) === ms; } catch (e) {}
-      if (!mok) { try { s.removeItem(MARK); } catch (e) {} res.why = '控えを確かめられませんでした（何も変えていません）'; return res; }
+      if (!mok) {
+        try { s.removeItem(MARK); } catch (e) {}
+        if (useIdb) await quiet(idbDel());
+        res.why = '控えを確かめられませんでした（何も変えていません）'; return res;
+      }
+      res.copyIn = useIdb ? 'idb' : 'ls';
 
       /* ② 1つずつ書いて読み直す */
       for (var j = 0; j < list.length; j++) {
@@ -347,20 +426,53 @@
         if (!good) {
           res.failedKey = key;
           res.why = LABEL[key] + ' を書き込めませんでした（端末の空き容量が足りない可能性があります）';
-          /* ③ 巻き戻し（書いたぶん＋失敗したキーを、控えの中身に戻す） */
-          var back = this._rollback(prev, res.written.concat([key]));
-          res.rolledBack = back.ok;
-          if (back.ok) { try { s.removeItem(MARK); } catch (e) {} }
-          else res.markLeft = true;
+          /* ③ 巻き戻し（書いたぶん＋失敗したキーを、控えの中身に戻す。控えは手元にも持っている） */
+          var bk = self._rollback(prev, res.written.concat([key]));
+          res.rolledBack = bk.ok;
+          if (bk.ok) {
+            try { s.removeItem(MARK); } catch (e) {}
+            if (useIdb) await quiet(idbDel());
+          } else res.markLeft = true;
           return res;
         }
         res.written.push(key);
         if (opts.stopAfter === key) { res.why = 'test-stop'; res.markLeft = true; return res; }
       }
-      /* ④ 全部入った → 印を消す */
+      /* ④ 全部入った → 印を消してから控えを消す（逆だと、途中で落ちたときに印だけ残る） */
       try { s.removeItem(MARK); } catch (e) { res.markLeft = true; }
+      if (useIdb && !res.markLeft) await quiet(idbDel());
       res.ok = true;
       return res;
+      })();
+    },
+
+    /* この復元で一時的に使う保存場所の量の見込み（iPhone の数え方・バイト）。
+       { peak：案A（控えは IndexedDB）でいちばん多いとき, peakLs：控えも localStorage に置くとき,
+         after：終わったあと, quota：iPhone の上限, pct, pctLs } */
+    estimate: function (box, keys) {
+      var s = ls(), out = { peak: 0, peakLs: 0, after: 0, quota: QUOTA_GUESS, pct: 0, pctLs: 0 };
+      if (!s || !box || !box.data) return out;
+      var list = KEYS.filter(function (k) { return keys.indexOf(k) >= 0 && box.data[k] !== undefined; });
+      var cur = {}, others = 0, want = {};
+      try {
+        for (var i = 0; i < s.length; i++) {
+          var k = s.key(i), v = s.getItem(k);
+          if (list.indexOf(k) >= 0) cur[k] = v; else if (k !== MARK) others += lsBytes(k, v);
+        }
+      } catch (e) { return out; }
+      list.forEach(function (k) { want[k] = rawOf(box.data[k]) || ''; });
+      var small = 1200;   /* 小さい印（v:2）のぶん */
+      list.forEach(function (k, idx) {
+        var t = others + small;
+        list.forEach(function (kk, j) { t += lsBytes(kk, j <= idx ? want[kk] : (cur[kk] == null ? null : cur[kk])); });
+        if (t > out.peak) out.peak = t;
+      });
+      var markLs = JSON.stringify({ prev: cur });
+      out.peakLs = out.peak - small + lsBytes(MARK, markLs);
+      out.after = others; list.forEach(function (k) { out.after += lsBytes(k, want[k]); });
+      out.pct = Math.round(out.peak / QUOTA_GUESS * 100);
+      out.pctLs = Math.round(out.peakLs / QUOTA_GUESS * 100);
+      return out;
     },
 
     /* 控えの中身に戻す（無かったキーは消す）。全部戻せたら ok */
@@ -387,39 +499,96 @@
       try { raw = s.getItem(MARK); } catch (e) { return { broken: true, why: '端末から読み出せませんでした', keys: [], done: [], rest: [] }; }
       if (raw == null) return null;
       var m; try { m = JSON.parse(raw); } catch (e) { m = null; }
-      if (!isObj(m) || !Array.isArray(m.keys) || !isObj(m.prev) || !isObj(m.want))
+      /* v:2 は控えが IndexedDB（印には検査値 sum だけ）、v:1（旧形式）は印の中に控え（prev） */
+      var v2 = isObj(m) && m.copy === 'idb';
+      if (!isObj(m) || !Array.isArray(m.keys) || !(v2 ? isObj(m.sum) : isObj(m.prev)) || !isObj(m.want))
         return { broken: true, why: '復元中の印が壊れています', keys: [], done: [], rest: [] };
       var done = [], rest = [];
       m.keys.forEach(function (k) {
         var cur = null; try { cur = s.getItem(k); } catch (e) {}
         if (cur != null && hash(cur) === m.want[k]) done.push(k); else rest.push(k);
       });
-      return { at: m.at, who: m.who, from: m.from, keys: m.keys, done: done, rest: rest };
+      return { at: m.at, who: m.who, from: m.from, keys: m.keys, done: done, rest: rest, copy: v2 ? 'idb' : 'ls' };
     },
 
-    /* 途中で止まった復元を片付ける。呼ぶ側が編集権を持っている間に呼ぶ。
-       how … 'back'：復元前の中身に戻す（控えから）
+    /* 途中で止まった復元を片付ける。呼ぶ側が編集権を持っている間に呼ぶ。戻り値は Promise
+       how … 'back'：復元前の中身に戻す（控えから。v:2 は IndexedDB の控えを読み、印の検査値と
+                     合うことを確かめてから戻す）
              'keep'：全部入り終わっていたときだけ、印を消してそのまま使う
-       戻り値 { ok, why } */
+             'drop'：控えが見つからず戻せないときだけ使う。印と控えを片付ける（中身はそのまま。
+                     このあと同じバックアップを読み込み直して、最後まで入れる）
+       戻り値 { ok, why, noCopy } */
     resolveRestore: function (how) {
+      var self = this;
+      return (async function () {
       var s = ls(), raw = null;
       try { raw = s.getItem(MARK); } catch (e) { return { ok: false, why: '端末から読み出せませんでした' }; }
-      if (raw == null) return { ok: true, why: '' };
+      if (raw == null) { await quiet(idbDel()); return { ok: true, why: '' }; }
       var m; try { m = JSON.parse(raw); } catch (e) { m = null; }
+      var v2 = isObj(m) && m.copy === 'idb';
       if (how === 'keep') {
-        var p = this.pendingRestore();
+        var p = self.pendingRestore();
         if (!p || p.broken || p.rest.length) return { ok: false, why: '入り終わっていないデータがあるため、このままにはできません' };
         try { s.removeItem(MARK); } catch (e) { return { ok: false, why: '印を消せませんでした' }; }
+        if (v2) await quiet(idbDel());
+        return { ok: true, why: '' };
+      }
+      if (how === 'drop') {
+        try { s.removeItem(MARK); } catch (e) { return { ok: false, why: '印を消せませんでした' }; }
+        await quiet(idbDel());
         return { ok: true, why: '' };
       }
       if (how === 'back') {
-        if (!isObj(m) || !Array.isArray(m.keys) || !isObj(m.prev)) return { ok: false, why: '控えが壊れているため戻せません' };
-        var back = this._rollback(m.prev, m.keys);
+        if (!isObj(m) || !Array.isArray(m.keys)) return { ok: false, why: '控えが壊れているため戻せません' };
+        var prev = null;
+        if (v2) {
+          var rec = null, err = '';
+          try { rec = await idbGet(); } catch (e) { err = String(e && e.message || e); }
+          if (!rec || rec.id !== m.id || !isObj(rec.prev))
+            return { ok: false, noCopy: true, why: '控え（復元する前の中身）が見つかりません' + (err ? '（' + err + '）' : '') + '。\n戻せないため、何も変えていません' };
+          var bad = m.keys.filter(function (k) { return (rec.prev[k] == null ? null : hash(rec.prev[k])) !== (m.sum[k] == null ? null : m.sum[k]); });
+          if (bad.length)
+            return { ok: false, noCopy: true, why: '控えの中身が印と合いません（' + bad.map(function (k) { return LABEL[k] || k; }).join('、') + '）。\n別の中身に戻すおそれがあるため、何も変えていません' };
+          prev = rec.prev;
+        } else {
+          if (!isObj(m.prev)) return { ok: false, why: '控えが壊れているため戻せません' };
+          prev = m.prev;
+        }
+        var back = self._rollback(prev, m.keys);
         if (!back.ok) return { ok: false, why: '戻せなかったデータがあります（' + back.bad.map(function (k) { return LABEL[k] || k; }).join('、') + '）' };
         try { s.removeItem(MARK); } catch (e) {}
+        if (v2) await quiet(idbDel());
         return { ok: true, why: '' };
       }
       return { ok: false, why: '' };
+      })();
+    },
+
+    /* 控え（復元する前の中身）を、書き出し用の文字にする（v:2 は IndexedDB から読んで、
+       旧形式と同じ «prev 入り» の形にする）。戻り値は Promise（無ければ null） */
+    restoreCopyText: function () {
+      return (async function () {
+        var raw = null; try { raw = ls().getItem(MARK); } catch (e) { return null; }
+        if (raw == null) return null;
+        var m; try { m = JSON.parse(raw); } catch (e) { return raw; }
+        if (!isObj(m) || m.copy !== 'idb') return raw;
+        var rec = null; try { rec = await idbGet(); } catch (e) {}
+        var o = {}; for (var x in m) o[x] = m[x];
+        o.prev = rec && rec.id === m.id ? rec.prev : null;
+        if (!o.prev) o.note = '控え（IndexedDB）が見つかりませんでした';
+        return JSON.stringify(o);
+      })();
+    },
+    /* IndexedDB の控えを消す（試験データを消すとき用）。印が残っているときは消さない */
+    clearRestoreCopy: function () {
+      var raw = null; try { raw = ls().getItem(MARK); } catch (e) {}
+      if (raw != null) return Promise.resolve(false);
+      return quiet(idbDel());
+    },
+    /* IndexedDB の控えがあるか（試験・確かめる用）。Promise<{ has, id, keys }> */
+    restoreCopyInfo: function () {
+      return idbGet().then(function (r) { return r ? { has: true, id: r.id, keys: r.keys || [] } : { has: false }; },
+                           function (e) { return { has: false, error: String(e && e.message || e) }; });
     },
 
     /* 印の中の «復元前の中身» を、そのままファイルにするための文字（調べる・相談する用） */
