@@ -1,0 +1,46 @@
+name: Bot名義のPRを作成
+on:
+  push:
+    branches: [codex/bot-pr-bootstrap-20261112]
+permissions:
+  contents: read
+  pull-requests: write
+concurrency:
+  group: bot-pr-bootstrap-20261112
+  cancel-in-progress: false
+jobs:
+  create-pr:
+    name: 検証済みの変更をBotのPRとして提出
+    if: github.actor == 'ta55681518-max'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            if (owner !== 'ta55681518-max' || repo !== 'shift' || context.actor !== owner || context.eventName !== 'push' || context.ref !== 'refs/heads/codex/bot-pr-bootstrap-20261112') {
+              throw new Error('許可されたリポジトリと実行者ではありません');
+            }
+            const head = 'bot/automation-safety-20261112';
+            const base = 'develop';
+            const source = await github.rest.repos.getBranch({owner, repo, branch: head});
+            if (source.data.commit.sha !== 'd6919eb57d341df4841ba68d4894393d3b23e308') throw new Error('送信する変更が検証時から変わっています');
+            const target = await github.rest.repos.getBranch({owner, repo, branch: base});
+            if (target.data.commit.sha !== '69d2c7fe321f57eecd468e5db7e243bf6667632a') throw new Error('PRの反映先が検証時から変わっています');
+            const existing = await github.rest.pulls.list({owner, repo, head: `${owner}:${head}`, base, state: 'open'});
+            if (existing.data.length) {
+              if (existing.data[0].user.login !== 'github-actions[bot]') throw new Error('同じブランチのPRが別の作成者により作成されています');
+              core.info(existing.data[0].html_url);
+              return;
+            }
+            const pr = await github.rest.pulls.create({
+              owner, repo, head, base,
+              title: '【Bot作成】自動テストと承認必須の開発フローを導入',
+              body: 'GitHub標準Botが、検証済みの変更をPRとして提出しました。\n\n元のPR #59とファイル内容は同じです。人の承認と手動マージが必要です。Botによる承認・自動マージ・mainへの反映は行いません。\n\nローカル検証: 220件成功、失敗0件、既知のTODO13件。元のPRでGitHubの5チェックも成功済みです。このPRのCIも確認します。\n\nSecrets変更・AIの課金実行・本番公開は行っていません。',
+              draft: false,
+              maintainer_can_modify: false
+            });
+            if (pr.data.user.login !== 'github-actions[bot]') throw new Error('想定していたBot名義ではありません');
+            core.info(pr.data.html_url);
+            await core.summary.addHeading('Bot名義のPRを作成しました').addLink('作成したPR', pr.data.html_url).write();
