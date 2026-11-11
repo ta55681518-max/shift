@@ -1,0 +1,64 @@
+{
+  "_comment": [
+    "変更ファイルのパスから「自動マージしてよいか」を決めるポリシー。",
+    "blocked > review > low の順に強い（1つでも blocked に当たれば PR 全体が blocked）。",
+    "自動開発ワークフローはここを読んで、触ってよい範囲を判断する。",
+    "このファイル自体の変更は blocked（AIが自分の制約を緩められないようにする）。"
+  ],
+
+  "blocked": {
+    "_why": "壊れるとオーナーの実データ（売上・在庫・原価・レシピ）が失われる、または安全装置そのもの。専用テストが揃うまで自動公開しない。",
+    "patterns": [
+      "kemuri-core.js",
+      "kemuri-backup.js",
+      "pos-source.js",
+      "reitou.html",
+      "kushiyaki.html",
+      "netlify.toml",
+      "netlify/**",
+      ".github/**",
+      "automation/risk-policy.json",
+      "CODEOWNERS",
+      ".gitignore",
+      "package.json",
+      "order-gas.gs",
+      "reitou-bm.js",
+      "reitou-bm-source.js"
+    ]
+  },
+
+  "review": {
+    "_why": "表示や計算に影響するが、保存形式は変えない。人が差分を見てからマージする。",
+    "patterns": [
+      "kemuri-data.js",
+      "dashboard.html",
+      "hacchu.html",
+      "index.html",
+      "order.html"
+    ]
+  },
+
+  "low": {
+    "_why": "テスト・ドキュメント・お知らせ帯・ブックマーク案内。壊れても実データに影響しない。",
+    "patterns": [
+      "tests/**",
+      "automation/backlog.md",
+      "automation/serve.mjs",
+      "automation/classify-risk.mjs",
+      "site-notice.js",
+      "reitou-button.html",
+      "reitou-bookmark.html",
+      "HANDOFF.md",
+      "AUTOMATION.md",
+      "README.md",
+      "docs/**"
+    ]
+  },
+
+  "limits": {
+    "_why": "1回の自動開発で触れる範囲の上限。大きすぎる変更は人が見る。",
+    "maxChangedFiles": 8,
+    "maxAddedLines": 600,
+    "maxDeletedLines": 300
+  }
+}

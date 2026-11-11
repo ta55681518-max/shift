@@ -1,0 +1,224 @@
+name: 毎日の自動開発
+
+# 毎日 日本時間 朝6時（UTC 21:00）に1回だけ走る。
+# 手動実行もできる（Actions タブ → Run workflow。iPhone の GitHub アプリからも可）。
+on:
+  schedule:
+    - cron: '0 21 * * *'
+  workflow_dispatch:
+    inputs:
+      task:
+        description: '作業内容（空ならバックログの先頭を取る）'
+        required: false
+        type: string
+      model:
+        description: 'モデル'
+        required: false
+        default: claude-sonnet-5
+        type: choice
+        options: [claude-sonnet-5, claude-opus-5]
+
+# 同時に2本走らせない（費用と競合の防止）
+concurrency:
+  group: claude-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: write         # ブランチ作成・コミット（main への push はブランチ保護で禁止）
+  pull-requests: write    # PR 作成
+  issues: write           # 結果の記録
+  actions: read           # 実行回数の確認に使う（write は渡さない）
+  id-token: write
+
+env:
+  # 1か月あたりの自動実行の上限。超えたら走らない（費用の歯止め）
+  MONTHLY_RUN_LIMIT: 40
+  BASE_BRANCH: develop
+
+jobs:
+  # ── 1. 実行してよいかの事前確認 ──────────────────────────
+  guard:
+    name: 実行前の歯止め
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      proceed: ${{ steps.check.outputs.proceed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: develop ブランチが存在するか
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${BASE_BRANCH}" >/dev/null 2>&1; then
+            echo "::error::ブランチ '${BASE_BRANCH}' がありません。先に作成してください。"
+            exit 1
+          fi
+
+      - name: 今月の実行回数が上限内か
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SINCE=$(date -u +%Y-%m-01)
+          COUNT=$(gh run list \
+            --workflow "${{ github.workflow }}" \
+            --limit 200 \
+            --json createdAt \
+            --jq "[.[] | select(.createdAt >= \"${SINCE}\")] | length")
+          echo "今月の実行回数: ${COUNT} / 上限 ${MONTHLY_RUN_LIMIT}"
+          echo "今月の実行回数: **${COUNT} / ${MONTHLY_RUN_LIMIT}**" >> $GITHUB_STEP_SUMMARY
+          if [ "$COUNT" -gt "${MONTHLY_RUN_LIMIT}" ]; then
+            echo "::warning::今月の上限に達したので実行しません"
+            echo "proceed=false" >> $GITHUB_OUTPUT
+          else
+            echo "proceed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 実行前のテストが緑か（赤なら自動開発を始めない）
+        if: steps.check.outputs.proceed == 'true'
+        run: |
+          git fetch origin "${BASE_BRANCH}"
+          git checkout "origin/${BASE_BRANCH}"
+          node --test "tests/**/*.test.mjs"
+
+  # ── 2. Claude による開発 ────────────────────────────────
+  develop:
+    name: Claude が1項目だけ進める
+    needs: guard
+    if: needs.guard.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          base_branch: develop
+          branch_prefix: claude/auto-
+          claude_args: |
+            --model ${{ inputs.model || 'claude-sonnet-5' }}
+            --max-turns 30
+            --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm test),Bash(node --test*),Bash(node automation/*),Bash(git status*),Bash(git diff*),Bash(git log*)
+            --disallowedTools WebSearch,WebFetch
+          prompt: |
+            あなたは串焼KEMURI屋の経営管理アプリを保守する開発者です。
+            このリポジトリは、実店舗が毎日使っている業務アプリです。
+
+            ## 最重要の前提
+
+            オーナーの売上・在庫・原価・レシピのデータは、**オーナーの端末のブラウザの
+            localStorage の中にしか存在しません**。コードのロールバックでは戻りません。
+            壊したら取り返しがつきません。迷ったら「何もしない」を選んでください。
+
+            ## 今回の作業
+
+            ${{ inputs.task && format('オーナーからの指示: {0}', inputs.task) || '`automation/backlog.md` を読み、上から順に最初の未完了項目を **1つだけ** 選んで作業してください。' }}
+
+            ## 必ず守ること
+
+            1. **`automation/risk-policy.json` の blocked に載っているファイルは絶対に編集しない。**
+               作業に必要なら、コードは変更せず「やるべきこと・差分案・懸念」をまとめた
+               Issue を1つ作って終了してください。これは失敗ではなく、正しい結果です。
+            2. **1回の実行で1項目だけ**。まとめて複数直さない。
+            3. localStorage のキー名・保存されるデータの構造は変更しない。
+            4. `npm test` が緑になるまで直す。どうしても緑にできないなら、
+               変更をすべて捨てて、原因を Issue に書いて終了してください。
+            5. 作業後に `node automation/classify-risk.mjs origin/develop` を実行し、
+               `blocked` が出たら触ってはいけないファイルを触っています。その変更を取り消してください。
+            6. `tests/known-gaps.test.mjs` の該当項目を直したら、その `todo` を外して緑にしてください。
+               これが「本当に直った」ことの証明になります。
+            7. `main` ブランチには一切触らない。PR は必ず `develop` 向けに作る。
+            8. `.github/` 以下、`netlify.toml`、`netlify/`、`CODEOWNERS`、`package.json`、
+               `automation/risk-policy.json` は**自分の制約そのもの**なので編集しない。
+            9. API キー・合言葉・トークンをコードやログに書かない。
+               新しい外部サービスへの通信先を追加しない。
+
+            ## PR の書き方
+
+            - タイトル: `[自動] <バックログ番号> <何をしたか>`
+            - 本文に次を必ず入れる:
+              - **何を変えたか**（ファイルごとに1行）
+              - **なぜ**（backlog のどの項目か）
+              - **テスト結果**（`npm test` の pass/fail/todo の数）
+              - **リスク区分**（`classify-risk.mjs` の出力）
+              - **オーナーが確認すべき点**（あれば）
+            - 日本語で書いてください。
+
+  # ── 3. 結果の記録（iPhone から見られるように Issue に残す）──
+  record:
+    name: 結果を記録
+    needs: [guard, develop]
+    if: always() && needs.guard.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 進捗を Issue に追記
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.develop.result }}
+        run: |
+          set -euo pipefail
+          TITLE="🤖 自動開発の進捗ログ"
+          # 進捗ログ用の Issue を1つだけ使い回す
+          NUM=$(gh issue list --state open --search "$TITLE in:title" --json number --jq '.[0].number // empty')
+          if [ -z "$NUM" ]; then
+            NUM=$(gh issue create --title "$TITLE" \
+              --body "自動開発の実行結果がここに追記されます。iPhone の GitHub アプリで通知を受け取れます。" \
+              --label automation 2>/dev/null \
+              || gh issue create --title "$TITLE" --body "自動開発の実行結果がここに追記されます。")
+            NUM=$(echo "$NUM" | grep -oE '[0-9]+$')
+          fi
+
+          case "$RESULT" in
+            success) ICON="✅"; MSG="完了" ;;
+            failure) ICON="❌"; MSG="失敗（テストが緑にならなかった可能性があります）" ;;
+            cancelled) ICON="⏹"; MSG="中断" ;;
+            *) ICON="⚠️"; MSG="$RESULT" ;;
+          esac
+
+          PRS=$(gh pr list --base develop --state open --json number,title \
+            --jq '.[] | "- #\(.number) \(.title)"' | head -5)
+
+          gh issue comment "$NUM" --body "$(cat <<EOF
+          ${ICON} **$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M') の自動開発：${MSG}**
+
+          - 実行ログ: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          **develop に出ている未マージのPR**
+          ${PRS:-（なし）}
+          EOF
+          )"
+
+      - name: 失敗したら通知用の Issue を立てる
+        if: needs.develop.result == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "❌ 自動開発が失敗しました（$(TZ=Asia/Tokyo date '+%m/%d')）" \
+            --body "$(cat <<EOF
+          自動開発ワークフローが失敗しました。**本番には何も反映されていません。**
+
+          - ログ: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          次にやること:
+          1. ログを見て、テストが落ちたのかツールが落ちたのかを確認
+          2. テストが落ちていた場合、\`automation/backlog.md\` の該当項目を 🔴 に移すか、手で直す
+          3. 続けて自動実行してよければ、このIssueを閉じる
+          EOF
+          )" || true

@@ -1,0 +1,210 @@
+name: テスト
+
+# PR と develop への push で必ず走る。これが緑でないものは何もマージしない。
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+# 同じブランチで走っているものは打ち切る（費用と待ち時間の節約）
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: 構文・ロジック・バックアップ往復
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # アプリ本体は依存ゼロ。npm install を必要としないことを確認する
+      - name: 本番コードに依存が無いことを確認
+        run: |
+          if [ -d node_modules ]; then
+            echo "::error::node_modules がコミットされています"
+            exit 1
+          fi
+          if node -e "const p=require('./package.json'); process.exit(p.dependencies ? 1 : 0)"; then
+            echo "dependencies なし（OK）"
+          else
+            echo "::error::package.json に dependencies が追加されています（アプリは素のHTML/JSのまま保つ）"
+            exit 1
+          fi
+
+      - name: テスト実行
+        run: node --test "tests/**/*.test.mjs"
+
+  gate0:
+    name: Gate 0（バックアップの往復）
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # 単独で走らせて、落ちたときに何が原因か一目で分かるようにする
+      - name: バックアップの書き出し→読み込みが完全一致するか
+        run: node --test tests/backup-roundtrip.test.mjs
+
+  risk:
+    name: リスク区分の判定
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      risk: ${{ steps.classify.outputs.risk }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 変更ファイルからリスクを判定
+        id: classify
+        continue-on-error: true
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: node automation/classify-risk.mjs "origin/${{ github.base_ref }}"
+
+      - name: 判定結果を表示
+        run: |
+          echo "### リスク区分: \`${{ steps.classify.outputs.risk }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.classify.outputs.reason }}" >> $GITHUB_STEP_SUMMARY
+
+  protected-paths:
+    name: 保護パスのガード
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # blocked のファイルが変わっている PR は、オーナーが
+      # ラベル `approved-protected-change` を付けるまで赤のままにする。
+      # AI は自分でラベルを付けられない（issues: write を渡していない）。
+      - name: 保護パスの変更にオーナー承認があるか
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "変更ファイル:"; echo "$CHANGED" | sed 's/^/  /'
+
+          PROTECTED=$(echo "$CHANGED" | grep -E '^(\.github/|netlify/|netlify\.toml|CODEOWNERS|\.gitignore|package\.json|automation/risk-policy\.json|kemuri-core\.js|kemuri-backup\.js|pos-source\.js|reitou\.html|kushiyaki\.html|order-gas\.gs|reitou-bm.*\.js)' || true)
+
+          if [ -z "$PROTECTED" ]; then
+            echo "保護パスの変更はありません（OK）"
+            exit 0
+          fi
+
+          echo "::warning::保護パスが変更されています:"; echo "$PROTECTED" | sed 's/^/  /'
+
+          case ",$LABELS," in
+            *,approved-protected-change,*)
+              echo "オーナーのラベル approved-protected-change があります（OK）"
+              ;;
+            *)
+              echo "::error::保護パスの変更には、オーナーがラベル 'approved-protected-change' を付ける必要があります"
+              echo "対象: $PROTECTED"
+              exit 1
+              ;;
+          esac
+
+  summary:
+    name: 全体の合否
+    needs: [unit, gate0]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 失敗があれば止める
+        run: |
+          if [ "${{ needs.unit.result }}" != "success" ] || [ "${{ needs.gate0.result }}" != "success" ]; then
+            echo "::error::テストが失敗しています。マージも自動開発の続行もしません。"
+            exit 1
+          fi
+          echo "すべて合格"
+
+  # 低リスクの自動PRだけ、develop への自動マージを有効化する。
+  # ・main 向けPRは対象外（本番公開はオーナーの手動マージのみ）
+  # ・risk が low 以外、テストが赤、保護パスを触っている → 何もしない
+  automerge:
+    name: 低リスクのみ自動マージ
+    needs: [unit, gate0, risk, protected-paths]
+    if: |
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'develop' &&
+      needs.risk.outputs.risk == 'low' &&
+      startsWith(github.head_ref, 'claude/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: 自動マージを有効化
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          echo "リスク区分: low / 理由: ${{ needs.risk.outputs.reason }}"
+          if gh pr merge "$PR" --squash --auto --repo "${{ github.repository }}"; then
+            echo "自動マージを有効化しました（必須チェックが揃い次第マージされます）"
+            gh pr comment "$PR" --body "🟢 低リスクの変更のため、テスト合格後に develop へ自動マージされます。
+          判定理由: ${{ needs.risk.outputs.reason }}"
+          else
+            echo "::warning::自動マージを有効化できませんでした（リポジトリ設定で Allow auto-merge が無効な可能性）"
+            gh pr edit "$PR" --add-label "ready-to-merge" || true
+            gh pr comment "$PR" --body "🟢 低リスク判定ですが、自動マージが有効化できませんでした。手動でマージしてください。
+          判定理由: ${{ needs.risk.outputs.reason }}"
+          fi
+
+  # 自動マージ対象外だった理由を PR に書き残す（なぜ止まったのかが分かるように）
+  explain-hold:
+    name: 自動マージしない理由の明示
+    needs: [risk]
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.risk.outputs.risk != 'low'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - name: PR にコメント
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          ICON="🟡"; TXT="人のレビューが必要です"
+          if [ "${{ needs.risk.outputs.risk }}" = "blocked" ]; then
+            ICON="🔴"; TXT="自動マージ禁止の区分です。オーナーの承認が必要です"
+          fi
+          gh pr comment "$PR" --body "${ICON} **${TXT}**
+          判定理由: ${{ needs.risk.outputs.reason }}
+
+          保護パスを含む場合は、確認のうえ \`approved-protected-change\` ラベルを付けてください。" || true
