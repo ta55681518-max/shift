@@ -13,15 +13,24 @@
 
 ## 🟢 いますぐ自動で進めてよい（低リスク）
 
-- [ ] **A-1** `tests/` のカバレッジを増やす。`hacchu.html`（発注）のロジックに単体テストが無い。
+- [x] **A-1** `tests/` のカバレッジを増やす。`hacchu.html`（発注）のロジックに単体テストが無い。
       `S.order` / `changeQty` / `missingItems` / `buildOrderText` を `tests/hacchu.test.mjs` として起こす。
       ※ `hacchu.html` 本体は触らない。テストを足すだけ。
-- [ ] **A-2** `tests/` に `order.html`（オードブル予約）の `validate()` 相当のテストを足す。
+      → **完了（2026-11-10）**：`tests/hacchu.test.mjs` 30件。HTML の中のアプリを画面なしで動かす
+      足場 `tests/helpers/html-app.mjs` を併せて追加。`hacchu.html` は無変更。
+- [x] **A-2** `tests/` に `order.html`（オードブル予約）の `validate()` 相当のテストを足す。
       電話番号10〜11桁・数量上限20個・合計金額の計算を固定する。
-- [ ] **A-3** `HANDOFF.md` に「テストの走らせ方」と「リスク区分の読み方」の節を追記する。
-- [ ] **A-4** `site-notice.js` の `?v=` 不一致を解消する（`tests/known-gaps.test.mjs` の **P2-1**）。
+      → **完了（2026-11-10）**：`tests/order.test.mjs` 33件。受付の開け閉め（しめきり・上限・手動停止）、
+      予約番号の発行、送信失敗時にボタンが戻ることまで含む。`order.html` は無変更。
+- [x] **A-3** `HANDOFF.md` に「テストの走らせ方」と「リスク区分の読み方」の節を追記する。
+      → **完了（2026-11-10）**
+- [x] **A-4** `site-notice.js` の `?v=` 不一致を解消する（`tests/known-gaps.test.mjs` の **P2-1**）。
       ※ `site-notice.js` 自体は low。ただし `?v=` を書き換える先の HTML は review/blocked なので、
       **HTML 側の変更が必要なら Issue にまとめるだけ**にする。
+      → **Issue 案まで完了（2026-11-10）**：`docs/issue-P2-1-site-notice-version.md`。
+      **コードはまだ直していない。** 調べた結果、遅れているのは `index.html` / `order.html` / `hacchu.html` の
+      3ファイル（いずれも **review**）だけで、**blocked のファイルには触らずに直せる**。
+      1行ずつ `20261012b` に揃えれば P2-1 は緑になる。人のレビュー待ち。
 
 ## 🟡 人のレビュー付きで進める（review）
 
