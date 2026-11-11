@@ -3,7 +3,7 @@ on:
   push:
     branches: [codex/bot-pr-bootstrap-20261112]
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 concurrency:
   group: bot-pr-bootstrap-20261112
@@ -22,10 +22,8 @@ jobs:
             if (owner !== 'ta55681518-max' || repo !== 'shift' || context.actor !== owner || context.eventName !== 'push' || context.ref !== 'refs/heads/codex/bot-pr-bootstrap-20261112') {
               throw new Error('許可されたリポジトリと実行者ではありません');
             }
-            const head = 'bot/automation-safety-20261112';
+            const head = 'bot/automation-safety-20261112-v2';
             const base = 'develop';
-            const source = await github.rest.repos.getBranch({owner, repo, branch: head});
-            if (source.data.commit.sha !== 'd6919eb57d341df4841ba68d4894393d3b23e308') throw new Error('送信する変更が検証時から変わっています');
             const target = await github.rest.repos.getBranch({owner, repo, branch: base});
             if (target.data.commit.sha !== '69d2c7fe321f57eecd468e5db7e243bf6667632a') throw new Error('PRの反映先が検証時から変わっています');
             const existing = await github.rest.pulls.list({owner, repo, head: `${owner}:${head}`, base, state: 'open'});
@@ -34,6 +32,13 @@ jobs:
               core.info(existing.data[0].html_url);
               return;
             }
+            const commit = await github.rest.git.getCommit({owner, repo, commit_sha: 'd6919eb57d341df4841ba68d4894393d3b23e308'});
+            if (commit.data.tree.sha !== 'e97b1c791ae53218ebf9c88afa0061276a8e6d32') throw new Error('送信する内容が検証した内容と一致しません');
+            // Bot自身が新しい開発用ブランチを作り、検証済みコミットへ通常の前進更新を行う。
+            await github.rest.git.createRef({owner, repo, ref: `refs/heads/${head}`, sha: target.data.commit.sha});
+            await github.rest.git.updateRef({owner, repo, ref: `heads/${head}`, sha: 'd6919eb57d341df4841ba68d4894393d3b23e308', force: false});
+            const source = await github.rest.repos.getBranch({owner, repo, branch: head});
+            if (source.data.commit.sha !== 'd6919eb57d341df4841ba68d4894393d3b23e308') throw new Error('Botによる送信結果が一致しません');
             const pr = await github.rest.pulls.create({
               owner, repo, head, base,
               title: '【Bot作成】自動テストと承認必須の開発フローを導入',
