@@ -155,10 +155,10 @@ describe('安全条件：本番への自動反映をしていない', () => {
     }
   });
 
-  test('自動マージの対象が develop に限定されている', () => {
-    const t = load('test.yml');
-    assert.match(t, /github\.base_ref == 'develop'/, '自動マージが develop 限定になっていない');
-    assert.match(t, /gh pr merge/, '自動マージの処理が無い');
+  test('自動マージと自己承認の処理がない', () => {
+    for (const f of FILES) {
+      assert.doesNotMatch(load(f), /gh pr (merge|review[^\n]*--approve)/);
+    }
   });
 
   test('Netlify へのデプロイコマンドを自動実行していない', () => {
@@ -203,7 +203,8 @@ describe('安全条件：費用と回数の上限', () => {
 
   test('@claude の起動が書き込み権限者に限定されている', () => {
     const t = load('claude-mention.yml');
-    assert.match(t, /author_association == 'OWNER'/, 'オーナー限定の条件が無い');
+    assert.match(t, /github\.actor == 'ta55681518-max'/, 'イベント実行者がオーナーに限定されていない');
+    assert.doesNotMatch(t, /github\.event\.issue\.author_association/, 'Issueの作成者をコメント実行者の代わりに信用している');
     /* 入力キーとして使われていないこと（コメント内の言及は許す） */
     assert.doesNotMatch(t, /^\s*allowed_non_write_users:/m,
       '書き込み権限の無い人に開放する設定が入っている');

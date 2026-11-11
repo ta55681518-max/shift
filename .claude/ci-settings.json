@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "disableBypassPermissionsMode": "disable",
+    "disableAutoMode": "disable",
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git -C * push*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh pr review*)",
+      "Bash(gh secret *)",
+      "Bash(gh api *)",
+      "Bash(gh repo edit*)",
+      "Bash(gh workflow run*)",
+      "Bash(netlify*)",
+      "Bash(npx netlify*)",
+      "Read(./.env*)",
+      "Read(./**/*.key)",
+      "Read(./**/*.pem)",
+      "Edit(./.github/**)",
+      "Edit(./.claude/**)",
+      "Edit(./automation/classify-risk.mjs)",
+      "Edit(./automation/check-risk.mjs)",
+      "Edit(./automation/risk-policy.json)",
+      "Edit(./AGENTS.md)",
+      "Edit(./CLAUDE.md)",
+      "Edit(./CODEOWNERS)",
+      "Edit(./netlify.toml)",
+      "Edit(./netlify/**)",
+      "Edit(./package.json)"
+    ]
+  }
+}

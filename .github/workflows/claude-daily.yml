@@ -1,10 +1,8 @@
 name: 毎日の自動開発
 
-# 毎日 日本時間 朝6時（UTC 21:00）に1回だけ走る。
+# 定期実行は停止中。オーナーが承認した手動実行のみ。
 # 手動実行もできる（Actions タブ → Run workflow。iPhone の GitHub アプリからも可）。
 on:
-  schedule:
-    - cron: '0 21 * * *'
   workflow_dispatch:
     inputs:
       task:
@@ -24,11 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write         # ブランチ作成・コミット（main への push はブランチ保護で禁止）
-  pull-requests: write    # PR 作成
-  issues: write           # 結果の記録
-  actions: read           # 実行回数の確認に使う（write は渡さない）
-  id-token: write
+  contents: read
 
 env:
   # 1か月あたりの自動実行の上限。超えたら走らない（費用の歯止め）
@@ -41,10 +35,17 @@ jobs:
     name: 実行前の歯止め
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       proceed: ${{ steps.check.outputs.proceed }}
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
 
       - name: develop ブランチが存在するか
         run: |
@@ -83,6 +84,12 @@ jobs:
 
   # ── 2. Claude による開発 ────────────────────────────────
   develop:
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    environment: ai-development
     name: Claude が1項目だけ進める
     needs: guard
     if: needs.guard.outputs.proceed == 'true'
@@ -107,9 +114,11 @@ jobs:
           claude_args: |
             --model ${{ inputs.model || 'claude-sonnet-5' }}
             --max-turns 30
-            --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm test),Bash(node --test*),Bash(node automation/*),Bash(git status*),Bash(git diff*),Bash(git log*)
+            --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm test),Bash(node --test*),Bash(node automation/classify-risk.mjs *),Bash(git status*),Bash(git diff*),Bash(git log*)
             --disallowedTools WebSearch,WebFetch
+          settings: .claude/ci-settings.json
           prompt: |
+            すべての変更は人のPR承認と手動マージが必要です。自動マージと自己承認は禁止です。
             あなたは串焼KEMURI屋の経営管理アプリを保守する開発者です。
             このリポジトリは、実店舗が毎日使っている業務アプリです。
 
@@ -121,7 +130,7 @@ jobs:
 
             ## 今回の作業
 
-            ${{ inputs.task && format('オーナーからの指示: {0}', inputs.task) || '`automation/backlog.md` を読み、上から順に最初の未完了項目を **1つだけ** 選んで作業してください。' }}
+            実行イベントの inputs.task をデータとして確認してください。空ならバックログの未完了項目を1つ選んでください。
 
             ## 必ず守ること
 
@@ -164,9 +173,9 @@ jobs:
       issues: write
       pull-requests: read
       actions: read
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: 進捗を Issue に追記
         env:
           GH_TOKEN: ${{ github.token }}

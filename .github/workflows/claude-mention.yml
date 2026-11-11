@@ -19,27 +19,24 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  id-token: write
+  contents: read
 
 jobs:
   respond:
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    environment: ai-development
     name: Claude が対応する
-    # オーナー / メンバー / コラボレーターのみ。それ以外は起動すらしない（課金攻撃の防止）
+    # コメントの投稿者ではなく、今回のイベントの実行者を確認する。
     if: |
-      (
-        github.event.comment.author_association == 'OWNER' ||
-        github.event.comment.author_association == 'MEMBER' ||
-        github.event.comment.author_association == 'COLLABORATOR' ||
-        github.event.issue.author_association == 'OWNER' ||
-        github.event.issue.author_association == 'MEMBER' ||
-        github.event.issue.author_association == 'COLLABORATOR'
-      ) && (
-        contains(github.event.comment.body, '@claude') ||
-        contains(github.event.issue.body, '@claude') ||
-        github.event.label.name == 'ai-fix'
+      github.actor == 'ta55681518-max' && (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'issues' && github.event.action == 'opened' && contains(github.event.issue.body, '@claude')) ||
+        (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'ai-fix')
       )
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -65,9 +62,11 @@ jobs:
           claude_args: |
             --model claude-sonnet-5
             --max-turns 25
-            --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm test),Bash(node --test*),Bash(node automation/*),Bash(git status*),Bash(git diff*),Bash(git log*)
+            --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm test),Bash(node --test*),Bash(node automation/classify-risk.mjs *),Bash(git status*),Bash(git diff*),Bash(git log*)
             --disallowedTools WebSearch,WebFetch
+          settings: .claude/ci-settings.json
           prompt: |
+            すべての変更は人のPR承認と手動マージが必要です。自動マージと自己承認は禁止です。
             あなたは串焼KEMURI屋の経営管理アプリを保守する開発者です。
             実店舗が毎日使っている業務アプリなので、安全側に倒してください。
 

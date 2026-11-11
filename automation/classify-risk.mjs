@@ -17,7 +17,7 @@
    ============================================================ */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 const REPO = path.resolve(import.meta.dirname, '..');
 const policy = JSON.parse(fs.readFileSync(path.join(REPO, 'automation', 'risk-policy.json'), 'utf8'));
@@ -58,9 +58,10 @@ function changedFiles(args) {
   if (i >= 0) return args.slice(i + 1).filter(a => !a.startsWith('--'));
 
   const base = args.find(a => !a.startsWith('--')) || process.env.BASE_REF || 'origin/develop';
+  if (!/^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(base)) return null;
   try {
-    const out = execSync(`git diff --name-only ${base}...HEAD`, { cwd: REPO, encoding: 'utf8' });
-    return out.split('\n').map(s => s.trim()).filter(Boolean);
+    const out = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', `${base}...HEAD`, '--'], { cwd: REPO, encoding: 'utf8' });
+    return out.split('\0').filter(Boolean);
   } catch {
     return null;   // 判定できない
   }
@@ -69,7 +70,7 @@ function changedFiles(args) {
 /* ---- 変更量 ---- */
 function diffStat(base) {
   try {
-    const out = execSync(`git diff --numstat ${base}...HEAD`, { cwd: REPO, encoding: 'utf8' });
+    const out = execFileSync('git', ['diff', '--no-renames', '--numstat', `${base}...HEAD`, '--'], { cwd: REPO, encoding: 'utf8' });
     let added = 0, deleted = 0;
     for (const line of out.split('\n')) {
       const [a, d] = line.split('\t');
@@ -100,7 +101,7 @@ function finish(risk, reason, code) {
   }
   if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT,
-      `risk=${risk}\nreason=${reason.replace(/\n/g, ' ')}\nfile_count=${files ? files.length : 0}\n`);
+      `risk=${risk}\nreason=${reason.replace(/[\r\n]/g, ' ')}\nfile_count=${files ? files.length : 0}\n`);
   }
   process.exit(code);
 }
@@ -123,6 +124,9 @@ const lim = policy.limits;
 const base = args.find(a => !a.startsWith('--')) || process.env.BASE_REF || 'origin/develop';
 const stat = args.includes('--files') ? null : diffStat(base);
 
+if (!args.includes('--files') && !stat) {
+  finish('blocked', '変更量を取得できないため判定を停止しました', 3);
+}
 if (detail.blocked.length) {
   finish('blocked', `自動マージ禁止のファイルが含まれています: ${detail.blocked.join(', ')}`, 2);
 } else if (detail.unknown.length) {

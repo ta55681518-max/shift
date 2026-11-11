@@ -24,9 +24,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '24']
+        node: ['24']
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -74,6 +76,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -81,16 +84,17 @@ jobs:
 
       - name: 変更ファイルからリスクを判定
         id: classify
-        continue-on-error: true
         env:
           BASE_REF: origin/${{ github.base_ref }}
-        run: node automation/classify-risk.mjs "origin/${{ github.base_ref }}"
+        run: |
+          node automation/check-risk.mjs "$BASE_REF"
 
       - name: 判定結果を表示
+        env:
+          RISK: ${{ steps.classify.outputs.risk }}
+          REASON: ${{ steps.classify.outputs.reason }}
         run: |
-          echo "### リスク区分: \`${{ steps.classify.outputs.risk }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.classify.outputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          printf '%s\n' "リスク区分: $RISK" "$REASON" >> "$GITHUB_STEP_SUMMARY"
 
   protected-paths:
     name: 保護パスのガード
@@ -101,41 +105,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      # blocked のファイルが変わっている PR は、オーナーが
-      # ラベル `approved-protected-change` を付けるまで赤のままにする。
-      # AI は自分でラベルを付けられない（issues: write を渡していない）。
-      - name: 保護パスの変更にオーナー承認があるか
+      # ラベルは承認の代用にしない。承認はGitHubのルールセットで強制する。
+      - name: 保護パスを確認
         env:
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE_REF: origin/${{ github.base_ref }}
         run: |
-          set -euo pipefail
-          CHANGED=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-          echo "変更ファイル:"; echo "$CHANGED" | sed 's/^/  /'
-
-          PROTECTED=$(echo "$CHANGED" | grep -E '^(\.github/|netlify/|netlify\.toml|CODEOWNERS|\.gitignore|package\.json|automation/risk-policy\.json|kemuri-core\.js|kemuri-backup\.js|pos-source\.js|reitou\.html|kushiyaki\.html|order-gas\.gs|reitou-bm.*\.js)' || true)
-
-          if [ -z "$PROTECTED" ]; then
-            echo "保護パスの変更はありません（OK）"
-            exit 0
-          fi
-
-          echo "::warning::保護パスが変更されています:"; echo "$PROTECTED" | sed 's/^/  /'
-
-          case ",$LABELS," in
-            *,approved-protected-change,*)
-              echo "オーナーのラベル approved-protected-change があります（OK）"
-              ;;
-            *)
-              echo "::error::保護パスの変更には、オーナーがラベル 'approved-protected-change' を付ける必要があります"
-              echo "対象: $PROTECTED"
-              exit 1
-              ;;
-          esac
+          node automation/check-risk.mjs "$BASE_REF"
+          echo "保護パスを含む変更も、人のPR承認が必要です" >> "$GITHUB_STEP_SUMMARY"
 
   summary:
     name: 全体の合否
-    needs: [unit, gate0]
+    needs: [unit, gate0, risk, protected-paths]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -146,65 +128,10 @@ jobs:
             echo "::error::テストが失敗しています。マージも自動開発の続行もしません。"
             exit 1
           fi
-          echo "すべて合格"
-
-  # 低リスクの自動PRだけ、develop への自動マージを有効化する。
-  # ・main 向けPRは対象外（本番公開はオーナーの手動マージのみ）
-  # ・risk が low 以外、テストが赤、保護パスを触っている → 何もしない
-  automerge:
-    name: 低リスクのみ自動マージ
-    needs: [unit, gate0, risk, protected-paths]
-    if: |
-      github.event_name == 'pull_request' &&
-      github.base_ref == 'develop' &&
-      needs.risk.outputs.risk == 'low' &&
-      startsWith(github.head_ref, 'claude/')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: 自動マージを有効化
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -uo pipefail
-          echo "リスク区分: low / 理由: ${{ needs.risk.outputs.reason }}"
-          if gh pr merge "$PR" --squash --auto --repo "${{ github.repository }}"; then
-            echo "自動マージを有効化しました（必須チェックが揃い次第マージされます）"
-            gh pr comment "$PR" --body "🟢 低リスクの変更のため、テスト合格後に develop へ自動マージされます。
-          判定理由: ${{ needs.risk.outputs.reason }}"
-          else
-            echo "::warning::自動マージを有効化できませんでした（リポジトリ設定で Allow auto-merge が無効な可能性）"
-            gh pr edit "$PR" --add-label "ready-to-merge" || true
-            gh pr comment "$PR" --body "🟢 低リスク判定ですが、自動マージが有効化できませんでした。手動でマージしてください。
-          判定理由: ${{ needs.risk.outputs.reason }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.risk.result }}" != "success" ] || [ "${{ needs.protected-paths.result }}" != "success" ]; then
+              echo "::error::リスク判定または保護パスの確認が失敗しました"
+              exit 1
+            fi
           fi
-
-  # 自動マージ対象外だった理由を PR に書き残す（なぜ止まったのかが分かるように）
-  explain-hold:
-    name: 自動マージしない理由の明示
-    needs: [risk]
-    if: |
-      github.event_name == 'pull_request' &&
-      needs.risk.outputs.risk != 'low'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      pull-requests: write
-    steps:
-      - name: PR にコメント
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          ICON="🟡"; TXT="人のレビューが必要です"
-          if [ "${{ needs.risk.outputs.risk }}" = "blocked" ]; then
-            ICON="🔴"; TXT="自動マージ禁止の区分です。オーナーの承認が必要です"
-          fi
-          gh pr comment "$PR" --body "${ICON} **${TXT}**
-          判定理由: ${{ needs.risk.outputs.reason }}
-
-          保護パスを含む場合は、確認のうえ \`approved-protected-change\` ラベルを付けてください。" || true
+          echo "すべて合格。リスク区分にかかわらず人のPR承認と手動マージが必要です"
