@@ -21,8 +21,8 @@ jobs:
             if(owner!=='ta55681518-max'||repo!=='shift'||context.actor!==owner||context.eventName!=='push'||context.ref!=='refs/heads/codex/bot-pr-bootstrap-20261112')throw Error('許可されていない実行です');
             const branch='bot/automation-safety-20261112-v2';
             const current=await github.rest.repos.getBranch({owner,repo,branch});
-            if(current.data.commit.sha!=='d6919eb57d341df4841ba68d4894393d3b23e308')throw Error('PR側に別の変更があります');
-            const commit=await github.rest.git.getCommit({owner,repo,commit_sha:'5fdc174589aac437683e67d8151dc6a0d006afeb'});
-            if(commit.data.tree.sha!=='f7c9a282103c522b58be84648a4155ba60dcf2f7'||commit.data.parents.length!==1||commit.data.parents[0].sha!==current.data.commit.sha)throw Error('検証した修正と一致しません');
-            await github.rest.git.updateRef({owner,repo,ref:'heads/'+branch,sha:'5fdc174589aac437683e67d8151dc6a0d006afeb',force:false});
+            if(current.data.commit.sha!=='5fdc174589aac437683e67d8151dc6a0d006afeb')throw Error('PR側に別の変更があります');
+            const commit=await github.rest.git.getCommit({owner,repo,commit_sha:'b3fe91c4554c00b3a44e54d509b41745f494cc20'});
+            if(commit.data.tree.sha!=='7857d4a08d19e0dc0a1800e0aeea18d239ea6973'||commit.data.parents.length!==1||commit.data.parents[0].sha!==current.data.commit.sha)throw Error('検証した修正と一致しません');
+            await github.rest.git.updateRef({owner,repo,ref:'heads/'+branch,sha:'b3fe91c4554c00b3a44e54d509b41745f494cc20',force:false});
             core.info('検証済みの修正をBot名義でPR #61へ送信しました');
