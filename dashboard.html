@@ -1664,6 +1664,18 @@ function wipeSame(raw, ent){
   if('j' in ent){ try{ return JSON.stringify(ent.j) === JSON.stringify(JSON.parse(raw)); }catch(e){ return false; } }
   return ent.s === raw;
 }
+/* 4回目レビュー指摘17：控えに写すと null になってしまう数値（1e400 など、表せない大きさ）が入っていないか */
+function wipeOdd(raw){
+  if(raw == null) return false;
+  let v; try{ v = JSON.parse(raw); }catch(e){ return false; }   /* 読めない保存値は文字列のまま控えに入る */
+  const st = [v];
+  while(st.length){
+    const x = st.pop();
+    if(typeof x === 'number'){ if(!isFinite(x)) return true; }
+    else if(x && typeof x === 'object'){ for(const k in x) st.push(x[k]); }
+  }
+  return false;
+}
 async function wipeSave(){
   if(!WIPE) return;
   /* 再レビュー指摘12・15：控えの本文と指紋を、同じ保存値にひも付ける。
@@ -1675,6 +1687,10 @@ async function wipeSave(){
   const wkey = w0.kind === 'sales' ? KemuriCore.SALES_KEY : 'kemuri_daily_v1';
   let raw0 = null;
   try{ raw0 = localStorage.getItem(wkey); }catch(e){ toast('データを読めませんでした。もう一度試してください'); return; }
+  if(wipeOdd(raw0)){
+    alert('このデータには、控えに正しく写せない数値が入っています（大きすぎる数）。\nこのままでは控えから元に戻せないため、ここからは消せません。\n\n何も消していません。');
+    return;
+  }
   const fp0 = raw0 == null ? 'none' : KemuriBackup.hash(raw0);
   const box = KemuriBackup.collect();
   const text = JSON.stringify(box);
