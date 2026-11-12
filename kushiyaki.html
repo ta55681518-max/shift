@@ -140,7 +140,7 @@
 <!-- 共通の土台。POSの出数（売上履歴）・レシピ・原価マスタはここから読む。
      冷凍在庫アプリでPOSを取り込むと売上履歴にたまり、串在庫はそれを読んで串を引く。 -->
 <script src="kemuri-core.js?v=20261109a1"></script>
-<script src="kemuri-data.js?v=20261106s0"></script>
+<script src="kemuri-data.js?v=20261112r1"></script>
 </head>
 <body>
 
@@ -474,8 +474,16 @@ function save() {
   if (why) { if (!K_LOADING) { kReload(); holdToast(kStopMsg(why)); } return false; }
   if (!kFresh()) { kReload('別の画面で串在庫が変わったので読み直したさ。いまの操作は保存していないよ。もう一度やってね'); return false; }
   const s = JSON.stringify(KDB);
-  try { localStorage.setItem(KKEY, s); KBASE = s; }
-  catch (e) { toast('保存できんかったさ…'); }
+  /* 段階0（レビュー指摘8）：書いて読み直し、一致したときだけ成功。失敗したら保存済みの中身に戻し、
+     共有にも上げない（端末に無い変更を、ほかの端末や串打ち前の在庫に広げない） */
+  let wrote = false;
+  try { localStorage.setItem(KKEY, s); wrote = localStorage.getItem(KKEY) === s; } catch (e) { wrote = false; }
+  if (!wrote) {
+    kReload();
+    holdToast('保存できんかったさ…（端末の空きが足りないかも）。いまの操作は保存していないよ');
+    return false;
+  }
+  KBASE = s;
   schedulePush();
   return true;
 }
@@ -515,10 +523,20 @@ async function pullShared(opts) {
   if (kStopWhy()) return;   /* 段階0：復元が途中・データが読めないあいだは共有から書き込まない */
   if (!opts.force && (SHARE.pushing || SHARE.dirty)) return;   // ローカル未保存を上書きしない
   if (PULLING) return; PULLING = true;
+  const baseRaw = kRaw(), baseUrl = SHARE.url;   /* 段階0（レビュー指摘3）：頼んだときの端末の中身と共有先 */
   try {
     const res = await fetch(SHARE.url);
     const r = await res.json();
     if (!r.ok) throw new Error(r.error || '読み込みに失敗');
+    /* 返事を待っているあいだに、復元が始まった・終わった／ほかの画面や自分が変えた／共有先が変わった
+       → この返事は古いので使わない（端末の中身を上書きしない） */
+    const stale = kStopWhy() || !shareOn() || SHARE.url !== baseUrl
+               || (!opts.force && (SHARE.pushing || SHARE.dirty)) || kRaw() !== baseRaw;
+    if (stale) {
+      if (!kStopWhy() && !kFresh()) kReload();
+      PULLING = false; updateShareStatus();
+      return;
+    }
     if (r.data && (opts.force || r.rev !== SHARE.rev)) {
       KDB = Object.assign(blank(), r.data);
       normalizeItems();

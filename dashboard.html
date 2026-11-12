@@ -156,9 +156,9 @@
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <script src="kemuri-core.js?v=20261109a1"></script>
-<script src="kemuri-backup.js?v=20261109a1"></script>
+<script src="kemuri-backup.js?v=20261112r1"></script>
 <script src="pos-source.js?v=20261012b"></script>
-<script src="kemuri-data.js?v=20261106s0"></script>
+<script src="kemuri-data.js?v=20261112r1"></script>
 
 <script>
 "use strict";
@@ -1053,7 +1053,7 @@ function restoreCard(){
        + '<div class="muted">入り終わっていたもの：' + esc(p.done.map(lab).join('、') || 'なし') + '</div>'
        + '<div class="muted">入っていないもの：' + esc(p.rest.map(lab).join('、') || 'なし') + '</div>'
        + '<div class="muted">控え（復元する前の中身）の置き場所：' + (p.copy === 'idb' ? 'IndexedDB' : 'この印の中（旧形式）') + '</div>'
-       + '<div class="muted gap">在庫アプリは、これを片付けるまで編集を止めています。</div>'
+       + '<div class="muted gap">在庫アプリは、これを片付けるまで編集を止めています。<b>仕入原価・レシピ・日別売上も、片付けるまで保存できません。</b></div>'
        + '<button class="btn btn-primary gap" onclick="restoreResolve(\'back\')">復元する前の中身に戻す</button>'
        + (p.rest.length ? '' : '<button class="btn btn-gray gap" onclick="restoreResolve(\'keep\')">全部入っているので、このまま使う</button>');
   }
@@ -1650,6 +1650,13 @@ function wipeCheck(){
   if(!el || !b || !WIPE) return;
   b.disabled = !(WIPE.saved && el.value.trim() === WIPE_WORD[WIPE.kind]);
 }
+/* 段階0（レビュー指摘6）：消す対象の、いまの中身の指紋（検査値＋長さ）。控えを作ったあとに
+   別の画面で足されたものを、控えに無いまま消さないため */
+function wipeFp(kind){
+  const key = kind === 'sales' ? KemuriCore.SALES_KEY : 'kemuri_daily_v1';
+  let raw = null; try{ raw = localStorage.getItem(key); }catch(e){ return '?'; }
+  return raw == null ? 'none' : KemuriBackup.hash(raw);
+}
 async function wipeSave(){
   if(!WIPE) return;
   const name = KemuriBackup.filename('before-wipe');
@@ -1659,6 +1666,7 @@ async function wipeSave(){
     if(navigator.canShare && navigator.canShare({ files:[file] })) await navigator.share({ files:[file], title:'消す前の控え' });
     else dlText(text, name);
     WIPE.saved = true;
+    WIPE.fp = wipeFp(WIPE.kind);   /* 段階0（レビュー指摘6）：控えを作ったときの中身の指紋 */
   }catch(e){
     if(!(e && e.name === 'AbortError')) toast('保存できませんでした。もう一度試してください');
   }
@@ -1673,15 +1681,25 @@ async function wipeGo(){
   if(KemuriBackup.pendingRestore()){ alert('復元が途中で止まったままです。先にその確認をしてください。\n\n何も消していません。'); return; }
   const key = w.kind === 'sales' ? KemuriCore.SALES_KEY : 'kemuri_daily_v1';
   const r = await KemuriGuard.withEditor(()=>{
+    /* 鍵を持ってから、もう一度確かめる：復元が途中でないか・控えを作ったときの中身のままか */
+    if(KemuriBackup.pendingRestore()) return 'halted';
+    if(w.fp !== wipeFp(w.kind)) return 'changed';
     if(w.kind === 'sales') KemuriCore.sales.clear(); else KemuriData.daily.clear();
     let left = null; try{ left = localStorage.getItem(key); }catch(e){ left = '?'; }
     return left === null;
   });
   if(r.unsupported){ alert('この開き方では在庫アプリとの調整ができないため、ここからは消せません。\n\n何も消していません。'); return; }
   if(r.busy){ alert('在庫アプリ（冷凍在庫）が別の画面で開いています。\n在庫アプリの画面・タブをすべて閉じてから、もう一度押してください。\n\n何も消していません。'); return; }
+  if(r.ok && r.value === 'halted'){ alert('復元が途中で止まったままです。先にその確認をしてください。\n\n何も消していません。'); render(); return; }
+  if(r.ok && r.value === 'changed'){
+    w.saved = false; w.fp = null;
+    KemuriData.reloadAll(); refresh(); render();
+    alert('控えを保存したあとに、別の画面でデータが変わりました。\nいまの控えには、その変更が入っていません。\n\n何も消していません。もう一度「控えを保存する」からやり直してください。');
+    return;
+  }
   WIPE = null;
   KemuriData.reloadAll(); refresh(); render();
-  if(r.ok && r.value) toast('消しました');
+  if(r.ok && r.value === true) toast('消しました');
   else alert('⚠️ 消せませんでした（端末に残っています）。');
 }
 

@@ -42,6 +42,22 @@
      ・保存の直前に端末の中身が _raw のままか確かめる。違えば書かず、手元の中身を捨てる
        （次に読むときは最新。古い入力を勝手に保存し直さない）
      ・書いたあと読み直して一致したときだけ成功。失敗の理由は self.why に入れる */
+  /* 段階0（レビュー指摘7）：中の形も確かめる。トップがオブジェクトでも、一覧（items・days）が
+     オブジェクトでない・行がオブジェクトでないものは «壊れている» として保存を止める
+     （空に直して上書きしない）。一覧そのものが無いのは古い形・はじめての形なので許す */
+  function shapeBad(key, o) {
+    var name = key === DAILY_KEY ? 'days' : 'items';
+    var box = o[name];
+    if (box === undefined || box === null) return '';
+    if (typeof box !== 'object' || Array.isArray(box)) return '一覧（' + name + '）の形が壊れています';
+    for (var k in box) if (Object.prototype.hasOwnProperty.call(box, k)) {
+      var row = box[k];
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return '一覧の中に、形が壊れている行があります';
+    }
+    return '';
+  }
+  var RESTORE_MARK = 'kemuri_restore_v1';
+  function restoreHalted() { try { return global.localStorage.getItem(RESTORE_MARK) != null; } catch (e) { return true; } }
   function loadStore(self, key, blankFn) {
     var raw;
     try { raw = global.localStorage.getItem(key); } catch (e) { raw = undefined; }
@@ -50,7 +66,12 @@
     if (raw == null || raw === '') return blankFn();
     try {
       var o = JSON.parse(raw);
-      if (o && typeof o === 'object' && !Array.isArray(o)) return o;
+      if (o && typeof o === 'object' && !Array.isArray(o)) {
+        var bad = shapeBad(key, o);
+        if (!bad) return o;
+        self.broken = '保存データが壊れています（' + bad + '）';
+        return blankFn();
+      }
     } catch (e) {}
     self.broken = '保存データが壊れていて読めません';
     return blankFn();
@@ -58,6 +79,13 @@
   function saveStore(self, key) {
     self.why = ''; self.conflict = false;
     if (self.broken) { self.why = self.broken + '（上書きしないよう、保存を止めています）'; return false; }
+    /* 段階0（レビュー指摘2）：復元が途中で止まっているあいだは保存しない
+       （保存しても、«復元する前の中身に戻す» で消えてしまうため） */
+    if (restoreHalted()) {
+      self.halted = true; self._db = null;
+      self.why = '復元が途中で止まっているため、保存を止めています（ダッシュボードの «復元が途中で止まっています» を先に片付けてください）';
+      return false;
+    }
     var d = self._db;
     if (!d) { self.why = '保存する中身がありません'; return false; }
     var cur;
@@ -1303,7 +1331,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-11-06s0',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-11-12r1',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     changedAny: changedAny,
     brokenList: brokenList,
