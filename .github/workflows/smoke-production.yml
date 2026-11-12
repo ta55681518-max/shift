@@ -91,6 +91,8 @@ jobs:
 
   notify:
     name: 異常なら通知
+    env:
+      GH_REPO: ${{ github.repository }}
     needs: smoke
     if: failure()
     runs-on: ubuntu-latest
