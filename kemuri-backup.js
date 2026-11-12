@@ -196,7 +196,17 @@
         for (var f = 0; f < ik.length; f++) {
           var row2 = o.items[ik[f]];
           if (!isObj(row2)) return '一覧の中に、形が不正な行があります';
-          if (key === 'kemuri_recipes_v1' && !arrOrNone(row2.parts)) return '「' + String(row2.name || ik[f]).slice(0, 20) + '」の材料（parts）の形が不正です';
+          if (key === 'kemuri_recipes_v1') {
+            /* 再レビュー指摘13：材料（parts）は必ず配列で、1つずつが «名前つきの材料» であること
+               （画面の原価計算が材料の名前・数量をそのまま読むため） */
+            var rn = '「' + String(row2.name || ik[f]).slice(0, 20) + '」';
+            if (!Array.isArray(row2.parts)) return rn + 'の材料（parts）の形が不正です';
+            for (var q = 0; q < row2.parts.length; q++) {
+              var pt = row2.parts[q];
+              if (!isObj(pt) || typeof pt.name !== 'string') return rn + 'の' + (q + 1) + '番目の材料の形が不正です';
+              if (!numOrNone(pt.qty)) return rn + 'の' + (q + 1) + '番目の材料の数量が数字ではありません';
+            }
+          }
         }
         return '';
       }
@@ -229,6 +239,8 @@
         for (var p1 = 0; p1 < o.products.length; p1++) if (!isObj(o.products[p1])) return (p1 + 1) + '番目の商品の形が不正です';
         var ho = ['order', 'done', 'sentToday', 'supDates'];
         for (var m3 = 0; m3 < ho.length; m3++) if (!objOrNone(o[ho[m3]])) return ho[m3] + ' の形が不正です';
+        if (!arrOrNone(o.history)) return 'history の形が不正です';
+        for (var h1 = 0; h1 < (o.history || []).length; h1++) if (!isObj(o.history[h1])) return '履歴の' + (h1 + 1) + '番目の形が不正です';
         return '';
       }
       case 'kemuri_zaiko_v1': {
@@ -289,8 +301,26 @@
   function idbGet(id) { return idbDo('readonly', function (st) { return st.get(id); }); }
   function idbDel(id) { return idbDo('readwrite', function (st) { return st['delete'](id); }); }
   function idbKeys() { return idbDo('readonly', function (st) { return st.getAllKeys(); }); }
-  /* 印が無いとき（＝どの復元も途中でない）にだけ呼ぶ：残っている控えを全部消す */
-  function idbClear() { return idbDo('readwrite', function (st) { return st.clear(); }); }
+  /* 古い控えの掃除（再レビュー指摘11）。全部は消さない。
+     1つの取引の中で、その時点の «復元中の印» を読み直し、印が指している id の控えは残して、
+     それ以外だけを消す。印を読むのは接続が開いたあと（取引の中）なので、開くのを待っているあいだに
+     始まった復元の控えを、印を置いたあとに消すことはない。印を置く前の控えを消してしまった場合は、
+     復元の側が «印を置いたあとの読み直し» で気づいて、何も書かずにやめる */
+  function idbSweep() {
+    return idbDo('readwrite', function (st) {
+      var keep = null;
+      try { var raw = ls().getItem(MARK); if (raw != null) { var m = JSON.parse(raw); if (isObj(m) && m.copy === 'idb') keep = m.id; } } catch (e) { return null; }
+      var rq = st.getAllKeys();
+      rq.onsuccess = function () {
+        (rq.result || []).forEach(function (k) {
+          if (keep != null && (k === keep || k === IDB_OLD_KEY)) return;   /* 印の控え（旧い置き方も）は残す */
+          st['delete'](k);
+        });
+      };
+      return null;
+    });
+  }
+  var RUNNING = false;   /* 同じ画面で、復元・片付けを二重に動かさない（再レビュー指摘11） */
   /* 印の id に合う控えを読む。前の版（名前 current に1件だけ置いていた）で止まった復元にも対応 */
   function idbFind(id) {
     return idbGet(id).then(function (rec) {
@@ -420,6 +450,12 @@
        戻り値 { ok, written:[キー], why, failedKey, rolledBack, markLeft } */
     applySafe: function (box, keys, opts) {
       var self = this;
+      if (RUNNING) return Promise.resolve({ ok: false, written: [], why: '別の読み込み・片付けが動いています。終わってから、もう一度押してください（何も変えていません）', busy: true });
+      RUNNING = true;
+      return self._applySafe(box, keys, opts).then(function (r) { RUNNING = false; return r; }, function (e) { RUNNING = false; throw e; });
+    },
+    _applySafe: function (box, keys, opts) {
+      var self = this;
       return (async function () {
       opts = opts || {};
       var s = ls();
@@ -459,7 +495,6 @@
       var useIdb = !opts.noIdb;
       if (useIdb) {
         try {
-          await quiet(idbClear());
           await idbPut(id, { v: 2, id: id, at: at, keys: list, prev: prev });
           var back = await idbGet(id);
           var same = !!back && back.id === id && isObj(back.prev) && list.every(function (k) { return back.prev[k] === prev[k]; });
@@ -505,6 +540,18 @@
         if (useIdb && markGone()) await quiet(idbDel(id));
         res.why = '控えを確かめられませんでした（何も変えていません）'; return res;
       }
+      /* 再レビュー指摘11：印を置いたあとに、控えがまだあるかをもう一度読む（ほかの画面の掃除が、
+         印を置く前のすき間に消していないか）。無ければ、まだ何も書いていないので印を外してやめる */
+      if (useIdb) {
+        var still = null; try { still = await idbGet(id); } catch (e) {}
+        if (!still || still.id !== id) {
+          try { s.removeItem(MARK); } catch (e) {}
+          res.conflict = true;
+          res.why = '控えを確かめられませんでした（ほかの画面の片付けと重なった可能性があります）。何も変えていません。もう一度やり直してください';
+          if (!markGone()) res.markLeft = true;
+          return res;
+        }
+      }
       res.copyIn = useIdb ? 'idb' : 'ls';
 
       /* ② 1つずつ書いて読み直す */
@@ -546,7 +593,7 @@
       /* ④ 全部入った → 印を消してから控えを消す（逆だと、途中で落ちたときに印だけ残る） */
       try { s.removeItem(MARK); } catch (e) {}
       if (!markGone()) res.markLeft = true;
-      if (useIdb && !res.markLeft) await quiet(idbDel(id));
+      if (useIdb && !res.markLeft) { await quiet(idbDel(id)); await quiet(idbSweep()); }
       res.ok = true;
       return res;
       })();
@@ -626,10 +673,16 @@
        戻り値 { ok, why, noCopy } */
     resolveRestore: function (how) {
       var self = this;
+      if (RUNNING) return Promise.resolve({ ok: false, why: '別の読み込み・片付けが動いています。終わってから、もう一度押してください（何も変えていません）', busy: true });
+      RUNNING = true;
+      return self._resolveRestore(how).then(function (r) { RUNNING = false; return r; }, function (e) { RUNNING = false; throw e; });
+    },
+    _resolveRestore: function (how) {
+      var self = this;
       return (async function () {
       var s = ls(), raw = null;
       try { raw = s.getItem(MARK); } catch (e) { return { ok: false, why: '端末から読み出せませんでした' }; }
-      if (raw == null) { await quiet(idbClear()); return { ok: true, why: '' }; }
+      if (raw == null) { await quiet(idbSweep()); return { ok: true, why: '' }; }
       var m; try { m = JSON.parse(raw); } catch (e) { m = null; }
       var v2 = isObj(m) && m.copy === 'idb';
       if (how === 'keep') {
@@ -637,13 +690,13 @@
         if (!p || p.broken || p.rest.length) return { ok: false, why: '入り終わっていないデータがあるため、このままにはできません' };
         try { s.removeItem(MARK); } catch (e) {}
         if (!markGone()) return { ok: false, why: '印を消せませんでした' };
-        if (v2) await quiet(idbClear());
+        if (v2) await quiet(idbSweep());
         return { ok: true, why: '' };
       }
       if (how === 'drop') {
         try { s.removeItem(MARK); } catch (e) {}
         if (!markGone()) return { ok: false, why: '印を消せませんでした' };
-        await quiet(idbClear());
+        await quiet(idbSweep());
         return { ok: true, why: '' };
       }
       if (how === 'back') {
@@ -667,7 +720,7 @@
         try { s.removeItem(MARK); } catch (e) {}
         /* 中身は戻せている。印が消えたのを確かめてから控えを消す（消せなければ控えを残して知らせる） */
         if (!markGone()) return { ok: false, why: '中身は元に戻しましたが、復元中の印を消せませんでした。もう一度押してください' };
-        if (v2) await quiet(idbClear());
+        if (v2) await quiet(idbSweep());
         return { ok: true, why: '' };
       }
       return { ok: false, why: '' };
@@ -693,7 +746,7 @@
     clearRestoreCopy: function () {
       var raw = null; try { raw = ls().getItem(MARK); } catch (e) {}
       if (raw != null) return Promise.resolve(false);
-      return quiet(idbClear());
+      return quiet(idbSweep());
     },
     /* IndexedDB の控えがあるか（試験・確かめる用）。Promise<{ has, id, keys }> */
     restoreCopyInfo: function () {

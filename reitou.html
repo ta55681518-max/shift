@@ -232,10 +232,10 @@
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
 <script src="kemuri-core.js?v=20261109a1"></script>
-<script src="kemuri-backup.js?v=20261112r1"></script>
+<script src="kemuri-backup.js?v=20261112r2"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
-<script src="kemuri-data.js?v=20261112r1"></script>
+<script src="kemuri-data.js?v=20261112r2"></script>
 
 <script>
 /* ============================================================
@@ -3578,6 +3578,7 @@ function drawBk(){
 }
 var RESTORING = false;   /* 段階0・案A：復元の途中（IndexedDB を待つあいだも）は編集権を手放さない */
 async function bkApply(){
+  if(RESTORING) return;   /* 再レビュー指摘11：読み込みの二重押しを受け付けない */
   const box = BK.box; if(!box) return;
   const keys = Object.keys(BK.pick).filter(k=>BK.pick[k]);
   if(!keys.length) return;

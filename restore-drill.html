@@ -66,7 +66,7 @@
 <section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
 </main>
 <script src="kemuri-core.js?v=20261109a1"></script>
-<script src="kemuri-backup.js?v=20261112r1"></script>
+<script src="kemuri-backup.js?v=20261112r2"></script>
 <script src="kemuri-errlog.js?v=20261027a1"></script>
 <script>
 'use strict';
@@ -571,15 +571,17 @@ function drillStop(){ return drillRun({ stopAfter: 'kemuri_reitou_v1' }, '途中
 /* ---------- 試験データを消す（このURLの8種類と印だけ） ---------- */
 async function wipeTest(){
   if (!confirm('このテストのURLの、在庫・売上履歴などの試験データ（8種類）と «復元中の印» を消します。\n本番には影響しません。よいですか？')) return;
-  var r = await KemuriGuard.withEditor(function(){
+  var idb = false;
+  var r = await KemuriGuard.withEditor(async function(){
     var left = [];
     KEYS.concat([MARK]).forEach(function(k){ try { localStorage.removeItem(k); if (localStorage.getItem(k) != null) left.push(k); } catch (e) { left.push(k); } });
+    /* 再レビュー指摘11：控えの掃除も、編集権を持っているあいだに行う（別の画面の復元と重ならない） */
+    if (!left.length) idb = await KemuriBackup.clearRestoreCopy();
     return left;
   });
   if (r.unsupported) { put('wipe', 'Web Locks が使えないため消しませんでした'); return; }
   if (r.busy) { put('wipe', '在庫アプリが開いています。閉じてから、もう一度押してください（何も消していません）'); return; }
   var left = r.value || [];
-  var idb = left.length ? false : await KemuriBackup.clearRestoreCopy();   /* 段階0・案A：IndexedDB の控えも消す */
   put('wipe', (left.length ? '⚠️ 消せなかったもの：' + left.map(label).join('、') : '✅ 消しました') + '（復元の控え（IndexedDB）：' + (idb ? '消しました' : '消していません') + '）\n' + stateText(stateNow()));
 }
 

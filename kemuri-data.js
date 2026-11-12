@@ -53,6 +53,14 @@
     for (var k in box) if (Object.prototype.hasOwnProperty.call(box, k)) {
       var row = box[k];
       if (!row || typeof row !== 'object' || Array.isArray(row)) return '一覧の中に、形が壊れている行があります';
+      /* 再レビュー指摘13：レシピは、材料（parts）が配列で、1つずつが名前つきの材料であること */
+      if (key === RECIPE_KEY) {
+        if (!Array.isArray(row.parts)) return 'レシピの材料の形が壊れています';
+        for (var i = 0; i < row.parts.length; i++) {
+          var pt = row.parts[i];
+          if (!pt || typeof pt !== 'object' || Array.isArray(pt) || typeof pt.name !== 'string') return 'レシピの材料の形が壊れています';
+        }
+      }
     }
     return '';
   }
@@ -1331,7 +1339,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-11-12r1',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-11-12r2',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     changedAny: changedAny,
     brokenList: brokenList,

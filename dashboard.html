@@ -156,9 +156,9 @@
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <script src="kemuri-core.js?v=20261109a1"></script>
-<script src="kemuri-backup.js?v=20261112r1"></script>
+<script src="kemuri-backup.js?v=20261112r2"></script>
 <script src="pos-source.js?v=20261012b"></script>
-<script src="kemuri-data.js?v=20261112r1"></script>
+<script src="kemuri-data.js?v=20261112r2"></script>
 
 <script>
 "use strict";
@@ -1659,14 +1659,17 @@ function wipeFp(kind){
 }
 async function wipeSave(){
   if(!WIPE) return;
+  /* 再レビュー指摘12：控えの本文と指紋を、同じ時点で取る（保存の画面を開いているあいだに
+     別の画面で足されたものを «控えに入っている» ことにしない） */
+  const w0 = WIPE;
   const name = KemuriBackup.filename('before-wipe');
   const text = KemuriBackup.text();
+  const fp0 = wipeFp(w0.kind);
   try{
     const file = new File([text], name, { type:'application/json' });
     if(navigator.canShare && navigator.canShare({ files:[file] })) await navigator.share({ files:[file], title:'消す前の控え' });
     else dlText(text, name);
-    WIPE.saved = true;
-    WIPE.fp = wipeFp(WIPE.kind);   /* 段階0（レビュー指摘6）：控えを作ったときの中身の指紋 */
+    if(WIPE === w0){ w0.saved = true; w0.fp = fp0; }   /* 控えを作った時点の指紋。別の操作に変わっていたら何もしない */
   }catch(e){
     if(!(e && e.name === 'AbortError')) toast('保存できませんでした。もう一度試してください');
   }
