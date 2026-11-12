@@ -1,0 +1,54 @@
+name: 🤖 AIに作業を頼む
+description: Claude に修正や追加を頼みます（iPhone からも使えます）
+title: '[AI] '
+labels: [ai-fix]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ラベル `ai-fix` が付くと、Claude が自動で作業を始めて `develop` 向けの Pull Request を作ります。
+        **本番には自動で反映されません。** 公開はオーナーが `develop` → `main` をマージしたときだけです。
+
+  - type: textarea
+    id: what
+    attributes:
+      label: してほしいこと
+      description: できるだけ具体的に。「どの画面の」「何が」「どうなってほしいか」。
+      placeholder: |
+        例）冷凍在庫アプリの発注タブで、未入荷の件数が0のときにカードが出てしまう。
+            0件のときは出さないようにしてほしい。
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: 再現のしかた（不具合のとき）
+      placeholder: |
+        1. 冷凍在庫アプリを開く
+        2. 発注タブを押す
+        3. 未入荷が0なのにカードが出ている
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 触ってよい範囲
+      description: 迷ったら「AIに判断させる」を選んでください（リスク区分に従って安全側に動きます）
+      options:
+        - AIに判断させる
+        - 表示・文言だけ直してほしい
+        - ロジックも直してよい
+        - まず調査だけしてほしい（コードは変えない）
+      default: 0
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 確認
+      options:
+        - label: 売上・在庫・原価・レシピのデータ構造を変える必要はない（または分からない）
+          required: false

@@ -1,0 +1,36 @@
+# ============================================================
+# コードオーナー
+# ------------------------------------------------------------
+# ここに挙げたパスの変更は、オーナー本人のレビューが必須。
+# GitHub の Rulesets で「Require review from Code Owners」を
+# 有効にして初めて強制されます（AUTOMATION.md の手順4を参照）。
+#
+# 目的：AI が «自分の制約» と «実データに関わる部分» を
+#       勝手に変更できないようにする。
+# ============================================================
+
+# 既定：すべてオーナー
+*                           @ta55681518-max
+
+# --- 自動化と権限そのもの（AIに触らせない）---
+/.github/                   @ta55681518-max
+/CODEOWNERS                 @ta55681518-max
+/automation/risk-policy.json @ta55681518-max
+/package.json               @ta55681518-max
+/.gitignore                 @ta55681518-max
+
+# --- 配信・サーバ設定（本番公開に直結）---
+/netlify.toml               @ta55681518-max
+/netlify/                   @ta55681518-max
+
+# --- 実データを扱う中核（壊すと取り返しがつかない）---
+/kemuri-core.js             @ta55681518-max
+/kemuri-backup.js           @ta55681518-max
+/pos-source.js              @ta55681518-max
+/reitou.html                @ta55681518-max
+/kushiyaki.html             @ta55681518-max
+
+# --- 外部に送信するもの ---
+/order-gas.gs               @ta55681518-max
+/reitou-bm.js               @ta55681518-max
+/reitou-bm-source.js        @ta55681518-max

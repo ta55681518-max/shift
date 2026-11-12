@@ -1,0 +1,137 @@
+name: テスト
+
+# PR と develop への push で必ず走る。これが緑でないものは何もマージしない。
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+# 同じブランチで走っているものは打ち切る（費用と待ち時間の節約）
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: 構文・ロジック・バックアップ往復
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # アプリ本体は依存ゼロ。npm install を必要としないことを確認する
+      - name: 本番コードに依存が無いことを確認
+        run: |
+          if [ -d node_modules ]; then
+            echo "::error::node_modules がコミットされています"
+            exit 1
+          fi
+          if node -e "const p=require('./package.json'); process.exit(p.dependencies ? 1 : 0)"; then
+            echo "dependencies なし（OK）"
+          else
+            echo "::error::package.json に dependencies が追加されています（アプリは素のHTML/JSのまま保つ）"
+            exit 1
+          fi
+
+      - name: テスト実行
+        run: node --test "tests/**/*.test.mjs"
+
+  gate0:
+    name: Gate 0（バックアップの往復）
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # 単独で走らせて、落ちたときに何が原因か一目で分かるようにする
+      - name: バックアップの書き出し→読み込みが完全一致するか
+        run: node --test tests/backup-roundtrip.test.mjs
+
+  risk:
+    name: リスク区分の判定
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      risk: ${{ steps.classify.outputs.risk }}
+      reason: ${{ steps.classify.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: 変更ファイルからリスクを判定
+        id: classify
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          node automation/check-risk.mjs "$BASE_REF"
+
+      - name: 判定結果を表示
+        env:
+          RISK: ${{ steps.classify.outputs.risk }}
+          REASON: ${{ steps.classify.outputs.reason }}
+        run: |
+          printf '%s\n' "リスク区分: $RISK" "$REASON" >> "$GITHUB_STEP_SUMMARY"
+
+  protected-paths:
+    name: 保護パスのガード
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # ラベルは承認の代用にしない。承認はGitHubのルールセットで強制する。
+      - name: 保護パスを確認
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          node automation/check-risk.mjs "$BASE_REF"
+          echo "保護パスを含む変更も、人のPR承認が必要です" >> "$GITHUB_STEP_SUMMARY"
+
+  summary:
+    name: 全体の合否
+    needs: [unit, gate0, risk, protected-paths]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 失敗があれば止める
+        run: |
+          if [ "${{ needs.unit.result }}" != "success" ] || [ "${{ needs.gate0.result }}" != "success" ]; then
+            echo "::error::テストが失敗しています。マージも自動開発の続行もしません。"
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.risk.result }}" != "success" ] || [ "${{ needs.protected-paths.result }}" != "success" ]; then
+              echo "::error::リスク判定または保護パスの確認が失敗しました"
+              exit 1
+            fi
+          fi
+          echo "すべて合格。リスク区分にかかわらず人のPR承認と手動マージが必要です"

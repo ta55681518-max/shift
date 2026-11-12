@@ -1,0 +1,10 @@
+node_modules/
+test-results/
+playwright-report/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+/.claude/settings.json
+/.claude/settings.local.json
