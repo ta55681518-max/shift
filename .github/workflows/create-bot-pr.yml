@@ -1,16 +1,15 @@
-name: Bot名義のPRを作成
+name: Codexレビュー指摘の修正を送信
 on:
   push:
     branches: [codex/bot-pr-bootstrap-20261112]
 permissions:
   contents: write
-  pull-requests: write
 concurrency:
-  group: bot-pr-bootstrap-20261112
+  group: bot-review-fix-publisher
   cancel-in-progress: false
 jobs:
-  create-pr:
-    name: 検証済みの変更をBotのPRとして提出
+  publish:
+    name: 検証済みの修正だけをBotから送信
     if: github.actor == 'ta55681518-max'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -18,34 +17,12 @@ jobs:
       - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           script: |
-            const {owner, repo} = context.repo;
-            if (owner !== 'ta55681518-max' || repo !== 'shift' || context.actor !== owner || context.eventName !== 'push' || context.ref !== 'refs/heads/codex/bot-pr-bootstrap-20261112') {
-              throw new Error('許可されたリポジトリと実行者ではありません');
-            }
-            const head = 'bot/automation-safety-20261112-v2';
-            const base = 'develop';
-            const target = await github.rest.repos.getBranch({owner, repo, branch: base});
-            if (target.data.commit.sha !== '69d2c7fe321f57eecd468e5db7e243bf6667632a') throw new Error('PRの反映先が検証時から変わっています');
-            const existing = await github.rest.pulls.list({owner, repo, head: `${owner}:${head}`, base, state: 'open'});
-            if (existing.data.length) {
-              if (existing.data[0].user.login !== 'github-actions[bot]') throw new Error('同じブランチのPRが別の作成者により作成されています');
-              core.info(existing.data[0].html_url);
-              return;
-            }
-            const commit = await github.rest.git.getCommit({owner, repo, commit_sha: 'd6919eb57d341df4841ba68d4894393d3b23e308'});
-            if (commit.data.tree.sha !== 'e97b1c791ae53218ebf9c88afa0061276a8e6d32') throw new Error('送信する内容が検証した内容と一致しません');
-            // Bot自身が新しい開発用ブランチを作り、検証済みコミットへ通常の前進更新を行う。
-            await github.rest.git.createRef({owner, repo, ref: `refs/heads/${head}`, sha: target.data.commit.sha});
-            await github.rest.git.updateRef({owner, repo, ref: `heads/${head}`, sha: 'd6919eb57d341df4841ba68d4894393d3b23e308', force: false});
-            const source = await github.rest.repos.getBranch({owner, repo, branch: head});
-            if (source.data.commit.sha !== 'd6919eb57d341df4841ba68d4894393d3b23e308') throw new Error('Botによる送信結果が一致しません');
-            const pr = await github.rest.pulls.create({
-              owner, repo, head, base,
-              title: '【Bot作成】自動テストと承認必須の開発フローを導入',
-              body: 'GitHub標準Botが、検証済みの変更をPRとして提出しました。\n\n元のPR #59とファイル内容は同じです。人の承認と手動マージが必要です。Botによる承認・自動マージ・mainへの反映は行いません。\n\nローカル検証: 220件成功、失敗0件、既知のTODO13件。元のPRでGitHubの5チェックも成功済みです。このPRのCIも確認します。\n\nSecrets変更・AIの課金実行・本番公開は行っていません。',
-              draft: false,
-              maintainer_can_modify: false
-            });
-            if (pr.data.user.login !== 'github-actions[bot]') throw new Error('想定していたBot名義ではありません');
-            core.info(pr.data.html_url);
-            await core.summary.addHeading('Bot名義のPRを作成しました').addLink('作成したPR', pr.data.html_url).write();
+            const {owner,repo}=context.repo;
+            if(owner!=='ta55681518-max'||repo!=='shift'||context.actor!==owner||context.eventName!=='push'||context.ref!=='refs/heads/codex/bot-pr-bootstrap-20261112')throw Error('許可されていない実行です');
+            const branch='bot/automation-safety-20261112-v2';
+            const current=await github.rest.repos.getBranch({owner,repo,branch});
+            if(current.data.commit.sha!=='d6919eb57d341df4841ba68d4894393d3b23e308')throw Error('PR側に別の変更があります');
+            const commit=await github.rest.git.getCommit({owner,repo,commit_sha:'5fdc174589aac437683e67d8151dc6a0d006afeb'});
+            if(commit.data.tree.sha!=='f7c9a282103c522b58be84648a4155ba60dcf2f7'||commit.data.parents.length!==1||commit.data.parents[0].sha!==current.data.commit.sha)throw Error('検証した修正と一致しません');
+            await github.rest.git.updateRef({owner,repo,ref:'heads/'+branch,sha:'5fdc174589aac437683e67d8151dc6a0d006afeb',force:false});
+            core.info('検証済みの修正をBot名義でPR #61へ送信しました');
