@@ -243,12 +243,29 @@ async function exportBig(n){
 }
 
 /* 端末の中身と «大きいダミー» を1文字ずつ比べる。在庫アプリは復元のたびに変わる保存の番号（rev・wid）だけ除く */
+/* 項目の並び順をそろえた文字（オブジェクトの項目名を並べかえる。配列の順番はそのまま＝履歴の順番の違いは «違う»） */
+function canon(v){
+  if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(function(k){ return JSON.stringify(k) + ':' + canon(v[k]); }).join(',') + '}';
+  return JSON.stringify(v);
+}
 function sameAsBig(k, raw, exp){
   if (raw == null) return { ok: false, why: '端末に無い' };
   var want = JSON.stringify(exp[k]);
   if (k === 'kemuri_reitou_v1') {
-    try { var a = JSON.parse(raw), b = JSON.parse(want); delete a.rev; delete a.wid; delete b.rev; delete b.wid; raw = JSON.stringify(a); want = JSON.stringify(b); }
-    catch (e) { return { ok: false, why: '読めない' }; }
+    /* 在庫アプリ：項目名と値で比べる（段階0）。在庫アプリから復元すると、復元のあとに在庫アプリが
+       自分の形で保存し直すため、中身が同じでも項目の並び順が変わる。rev・wid は従来どおり除く */
+    var a, b;
+    try { a = JSON.parse(raw); b = JSON.parse(want); } catch (e) { return { ok: false, why: '読めない' }; }
+    if (!a || typeof a !== 'object' || Array.isArray(a)) return { ok: false, why: '形が違う' };
+    delete a.rev; delete a.wid; delete b.rev; delete b.wid;
+    if (JSON.stringify(a) === JSON.stringify(b)) return { ok: true };
+    if (canon(a) === canon(b)) return { ok: true, order: true };
+    var d = ddiff(dnorm(k, b), dnorm(k, a), [], []);
+    if (!d.length) d = ddiff(b, a, [], []);   /* 違いが保存時刻・引っ越しの印などだけのときも、場所を出す */
+    return { ok: false, why: '中身が違う（' + d.length + (d.length >= 200 ? ' か所以上' : ' か所') + '）'
+      + d.slice(0, 3).map(function(x){ return '\n   ・' + pathText(x.path) + '：ダミーは ' + valText(x.from) + ' → いまは ' + valText(x.to); }).join('')
+      + (d.length > 3 ? '\n   ・ほか ' + (d.length - 3) + ' か所' : '') };
   }
   if (raw === want) return { ok: true };
   var i = 0, m = Math.min(raw.length, want.length); while (i < m && raw.charCodeAt(i) === want.charCodeAt(i)) i++;
@@ -271,7 +288,7 @@ async function verifyBig(n){
   KEYS.forEach(function(k){
     var raw = localStorage.getItem(k), r = sameAsBig(k, raw, exp);
     if (!r.ok) bad++;
-    lines.push((r.ok ? '✅ ' : '❌ ') + label(k) + '：' + (r.ok ? '完全に一致（' + kchars(raw.length) + '）' : r.why));
+    lines.push((r.ok ? '✅ ' : '❌ ') + label(k) + '：' + (r.ok ? (r.order ? '中身は完全に一致（項目の並び順だけ違う：在庫アプリが復元のあとに保存し直したため）（' : '完全に一致（') + kchars(raw.length) + '）' : r.why));
   });
   var mk = localStorage.getItem(MARK) != null, sc = storageChars();
   lines.push('復元中の印：' + (mk ? 'あり ⚠️（ダッシュボードで片付けてください）' : 'なし'));
