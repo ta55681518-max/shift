@@ -57,20 +57,13 @@ jobs:
       - name: AIの窓口が «認証付きで» 生きているか
         run: |
           set -uo pipefail
-          # 合言葉なしで POST → 401（または 500/setup）が返るのが正しい。
-          # 200 が返ったら認証が外れているので異常。
+          # 合言葉なしのPOSTは401だけを正常とし、障害や設定不足も通知する。
           CODE=$(curl -s -o /tmp/ai.json -w '%{http_code}' --max-time 20 \
             -X POST "${SITE}/api/ai" \
             -H 'Content-Type: application/json' \
             -d '{"task":"ping"}' || echo 000)
           echo "  /api/ai → HTTP ${CODE}"
-          case "$CODE" in
-            401) echo "  OK   合言葉なしは拒否されている" ;;
-            500) echo "  注意 サーバ側の環境変数が未設定の可能性（本文: $(head -c 200 /tmp/ai.json)）" ;;
-            200) echo "::error::合言葉なしで通ってしまった（認証が外れている）"; exit 1 ;;
-            404) echo "::error::/api/ai が見つからない（Functions が配備されていない）"; exit 1 ;;
-            *)   echo "::warning::想定外の応答 ${CODE}" ;;
-          esac
+          node automation/check-ai-smoke-status.mjs "$CODE"
 
       - name: 版表示がリポジトリと一致しているか
         run: |

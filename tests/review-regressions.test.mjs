@@ -17,3 +17,11 @@ test('本番異常の通知先は作業フォルダーに依存しない',()=>{
   const notify=workflow.slice(workflow.indexOf('  notify:'));
   assert.match(notify,/GH_REPO:\s*\$\{\{\s*github.repository\s*\}\}/,'checkoutのない通知ジョブで送信先が指定されていない');
 });
+
+for(const status of ['401','500','502','503','000','200','404','','401000']) {
+  test(`AI窓口の監視：${status || '空の応答'}を正しく扱う`,()=>{
+    const result=spawnSync(process.execPath,[path.join(REPO,'automation/check-ai-smoke-status.mjs'),status],{encoding:'utf8'});
+    assert.ifError(result.error);
+    assert.equal(result.status,status==='401'?0:1,result.stderr);
+  });
+}
