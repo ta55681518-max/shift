@@ -264,9 +264,16 @@
       if (!f) return rej(new Error('IndexedDB が使えません'));
       var rq; try { rq = f.open(IDB_NAME, 1); } catch (e) { return rej(e); }
       rq.onupgradeneeded = function () { try { var db = rq.result; if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE); } catch (e) {} };
-      rq.onsuccess = function () { res(rq.result); };
-      rq.onerror = function () { rej(rq.error || new Error('IndexedDB を開けません')); };
-      rq.onblocked = function () { rej(new Error('IndexedDB をほかの画面が使っています')); };
+      /* 再レビュー指摘16：«ほかの画面が使用中» などで失敗扱いにしたあとに接続が開いたら、使わずに閉じる */
+      var gone = false;
+      rq.onsuccess = function () {
+        var db = rq.result;
+        if (gone) { try { db.close(); } catch (e) {} return; }
+        try { db.onversionchange = function () { try { db.close(); } catch (e) {} }; } catch (e) {}
+        res(db);
+      };
+      rq.onerror = function () { gone = true; rej(rq.error || new Error('IndexedDB を開けません')); };
+      rq.onblocked = function () { gone = true; rej(new Error('IndexedDB をほかの画面が使っています')); };
     });
   }
   /* 1つの取引で読み書きし、取引が終わってから結果を返す（書いたつもりで終わらない）。

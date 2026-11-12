@@ -156,7 +156,7 @@
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <script src="kemuri-core.js?v=20261109a1"></script>
-<script src="kemuri-backup.js?v=20261112r2"></script>
+<script src="kemuri-backup.js?v=20261112r3"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <script src="kemuri-data.js?v=20261112r2"></script>
 
@@ -1657,14 +1657,31 @@ function wipeFp(kind){
   let raw = null; try{ raw = localStorage.getItem(key); }catch(e){ return '?'; }
   return raw == null ? 'none' : KemuriBackup.hash(raw);
 }
+/* 控えの中の1項目（ent）が、保存値（raw）と同じ中身か */
+function wipeSame(raw, ent){
+  if(raw == null) return ent === undefined;
+  if(!ent || typeof ent !== 'object') return false;
+  if('j' in ent){ try{ return JSON.stringify(ent.j) === JSON.stringify(JSON.parse(raw)); }catch(e){ return false; } }
+  return ent.s === raw;
+}
 async function wipeSave(){
   if(!WIPE) return;
-  /* 再レビュー指摘12：控えの本文と指紋を、同じ時点で取る（保存の画面を開いているあいだに
-     別の画面で足されたものを «控えに入っている» ことにしない） */
+  /* 再レビュー指摘12・15：控えの本文と指紋を、同じ保存値にひも付ける。
+     消す対象の保存値（生の文字列）を先に1回だけ読み、指紋はその文字列から作る。
+     そのあとで作った控えの本文に、同じ中身が入っているかを照合し、ちがえば «保存済み» にしない
+     （読み取りのあいだに別の画面で足されたものを «控えに入っている» ことにしない） */
   const w0 = WIPE;
   const name = KemuriBackup.filename('before-wipe');
-  const text = KemuriBackup.text();
-  const fp0 = wipeFp(w0.kind);
+  const wkey = w0.kind === 'sales' ? KemuriCore.SALES_KEY : 'kemuri_daily_v1';
+  let raw0 = null;
+  try{ raw0 = localStorage.getItem(wkey); }catch(e){ toast('データを読めませんでした。もう一度試してください'); return; }
+  const fp0 = raw0 == null ? 'none' : KemuriBackup.hash(raw0);
+  const box = KemuriBackup.collect();
+  const text = JSON.stringify(box);
+  if(!wipeSame(raw0, box && box.data ? box.data[wkey] : undefined)){
+    toast('控えを作っているあいだにデータが変わりました。もう一度「控えを保存する」を押してください');
+    return;
+  }
   try{
     const file = new File([text], name, { type:'application/json' });
     if(navigator.canShare && navigator.canShare({ files:[file] })) await navigator.share({ files:[file], title:'消す前の控え' });
