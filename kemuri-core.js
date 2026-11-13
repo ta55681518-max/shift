@@ -460,6 +460,7 @@
        ・Web Locks が使えない → 何もしない（{ unsupported:true }）
      ============================================================ */
   var EDIT_LOCK = 'kemuri-reitou-editor';
+  var SAVE_LOCK = 'kemuri-save';
   function quickHash(str) {
     var h = 2166136261 >>> 0;
     for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
@@ -500,6 +501,39 @@
         return out;
       }, function (e) { out.error = e; return out; });
     },
+    /* ============================================================
+       段階1（Codex 指摘14）：保存の短い鍵
+       ------------------------------------------------------------
+       保存は «端末の中身が、読んだときのままか確かめる → 書く» の2手順。別の画面の保存が
+       このあいだに入ると、確認をすり抜けて、先に保存したほうが黙って消える
+       （画面ごとに localStorage の写しを持つので、同時だと相手の書き込みがまだ見えない）。
+       そこで、保存をする処理は全部この鍵（Web Locks «kemuri-save»）の中で動かし、
+       画面をまたいで1つずつ順番にする。鍵の中では、先の画面の書き込みが見えてから確かめる。
+         ・fn は «同期の処理» だけ（待ちを挟まない）。鍵を持つのは一瞬
+         ・戻り値は Promise（fn の戻り値で解決。fn が投げたら reject）
+         ・鍵の中からもう一度呼んでも止まらない（そのまま実行）
+         ・Web Locks が無い開き方では、これまでどおりそのまま実行（鍵なし）
+       在庫アプリ本体・売上履歴は «編集できる画面は1つ»（kemuri-reitou-editor）で守っているので対象外 */
+    inSave: false,
+    withSave: function (fn) {
+      var run = function () {
+        var was = Guard.inSave; Guard.inSave = true;
+        try { return fn(); } finally { Guard.inSave = was; }
+      };
+      if (Guard.inSave || !Guard.supported()) {
+        try { return Promise.resolve(run()); } catch (e) { return Promise.reject(e); }
+      }
+      var box = {};
+      return navigator.locks.request(SAVE_LOCK, function () { box.v = run(); })
+        .then(function () { return box.v; });
+    },
+    /* 鍵なしで保存しようとした所を記録する（呼ぶ側の直し忘れを見つけるため。保存は止めない） */
+    noteUnlocked: function (what) {
+      if (Guard.inSave || !Guard.supported()) return;
+      Guard.unlocked.push(what);
+      try { if (global.KemuriErr && global.KemuriErr.record) global.KemuriErr.record({ where: 'save-lock', msg: '鍵なしの保存：' + what }); } catch (e) {}
+    },
+    unlocked: [],
     /* 在庫アプリの画面に «鍵が空いた» を知らせる（表示中の画面は取りにいく） */
     announceFree: function () {
       try {

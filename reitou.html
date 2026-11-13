@@ -231,11 +231,11 @@
 <input type="file" id="dayfile" multiple accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
-<script src="kemuri-core.js?v=20261109a1"></script>
-<script src="kemuri-backup.js?v=20261112r3"></script>
+<script src="kemuri-core.js?v=20261114s1"></script>
+<script src="kemuri-backup.js?v=20261114s1"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
-<script src="kemuri-data.js?v=20261112r2"></script>
+<script src="kemuri-data.js?v=20261114s1"></script>
 
 <script>
 /* ============================================================
@@ -286,7 +286,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-11-12r2';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-11-14s1';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
@@ -2213,11 +2213,12 @@ function readDailyCsv(){
   }
   render();
 }
-function saveDailyCsv(){
+async function saveDailyCsv(){
   const r = DAY.res;
   if(!r || !r.rows.length) return;
   if(EDITOR.mode !== 'editor'){ alert(viewOnlyMsg()); return; }
-  const res = KemuriData.daily.importRows(r.rows);
+  /* 段階1（指摘14）：日別売上はダッシュボードからも保存するので、保存の鍵の中で書く */
+  const res = await KemuriGuard.withSave(() => KemuriData.daily.importRows(r.rows));
   /* 保存できなかったら、成功の表示を出さずに知らせる（E2）。
      読み込んだ内容は画面に残すので、空きを作ってからもう一度押せる */
   if(res && res.saved === false){

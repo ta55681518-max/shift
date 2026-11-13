@@ -514,36 +514,46 @@
       /* 段階0（レビュー指摘1）：控えを作って待っているあいだに、ほかの画面が保存していないか・
          別の復元が始まっていないかを、印を置く直前にもう一度確かめる。変わっていたら何も書かずにやめる
          （控えが最新でないまま上書きしない） */
-      var changed = [], markNow = null, readErr = false;
-      try {
-        markNow = s.getItem(MARK);
-        list.forEach(function (k) { if (s.getItem(k) !== prev[k]) changed.push(k); });
-      } catch (e) { readErr = true; }
-      if (readErr || markNow != null || changed.length) {
-        if (useIdb) await quiet(idbDel(id));
-        res.conflict = true;
-        res.why = readErr ? '端末から読み出せませんでした（何も変えていません）'
-          : markNow != null ? '別の復元が始まっていました（何も変えていません）。先にその確認をしてください'
-          : '読み込みの準備をしているあいだに、別の画面でデータが変わりました（' + changed.map(function (k) { return LABEL[k] || k; }).join('、') + '）。\n何も変えていません。もう一度、ファイルを選ぶところからやり直してください';
-        return res;
-      }
-      /* 印：IndexedDB に控えがあるときは小さい印（v:2）。無いときはこれまでどおり印に控えを入れる（v:1） */
+      /* 段階1（Codex 指摘14）：«確かめる → 印を置く» を、保存の短い鍵（kemuri-save）の中で続けて行う。
+         ほかの画面の保存は、この前（＝下の確認で気づく）か、この後（＝印を見て保存をやめる）の
+         どちらかになり、あいだには入らない。鍵の中は同期の処理だけ */
       var mark = useIdb
         ? { v: 2, copy: 'idb', id: id, at: at, who: opts.who || '', from: box.at || '', keys: list, sum: sum, want: wantHash }
         : { v: 1, at: at, who: opts.who || '', from: box.at || '', keys: list, prev: prev, want: wantHash };
-      var ms;
-      try { ms = JSON.stringify(mark); s.setItem(MARK, ms); }
-      catch (e) {
-        try { s.removeItem(MARK); } catch (e2) {}
+      var stepMark = function () {
+        var changed = [], markNow = null, readErr = false;
+        try {
+          markNow = s.getItem(MARK);
+          list.forEach(function (k) { if (s.getItem(k) !== prev[k]) changed.push(k); });
+        } catch (e) { readErr = true; }
+        if (readErr || markNow != null || changed.length) return { st: 'conflict', readErr: readErr, markNow: markNow, changed: changed };
+        /* 印：IndexedDB に控えがあるときは小さい印（v:2）。無いときはこれまでどおり印に控えを入れる（v:1） */
+        var ms;
+        try { ms = JSON.stringify(mark); s.setItem(MARK, ms); }
+        catch (e) { try { s.removeItem(MARK); } catch (e2) {} return { st: 'markfail' }; }
+        var mok = false; try { mok = s.getItem(MARK) === ms; } catch (e) {}
+        if (!mok) { try { s.removeItem(MARK); } catch (e) {} return { st: 'markverify' }; }
+        return { st: 'ok' };
+      };
+      var G = global.KemuriGuard, sm;
+      if (opts.beforeMark) { try { await opts.beforeMark(); } catch (e) {} }   /* 試験用：鍵を取る直前に割り込む */
+      if (G && G.withSave) sm = await G.withSave(stepMark); else sm = stepMark();
+      if (sm.st === 'conflict') {
+        if (useIdb) await quiet(idbDel(id));
+        res.conflict = true;
+        res.why = sm.readErr ? '端末から読み出せませんでした（何も変えていません）'
+          : sm.markNow != null ? '別の復元が始まっていました（何も変えていません）。先にその確認をしてください'
+          : '読み込みの準備をしているあいだに、別の画面でデータが変わりました（' + sm.changed.map(function (k) { return LABEL[k] || k; }).join('、') + '）。\n何も変えていません。もう一度、ファイルを選ぶところからやり直してください';
+        return res;
+      }
+      if (sm.st === 'markfail') {
         if (useIdb && markGone()) await quiet(idbDel(id));
         res.why = useIdb ? '復元中の印を書けませんでした（端末の空き容量が足りない可能性があります。何も変えていません）'
                          : '端末の空き容量が足りないため、元に戻せる控えを作れませんでした（何も変えていません）'
                            + (res.idbWhy ? '\n（IndexedDB に控えを置けませんでした：' + res.idbWhy + '）' : '');
         return res;
       }
-      var mok = false; try { mok = s.getItem(MARK) === ms; } catch (e) {}
-      if (!mok) {
-        try { s.removeItem(MARK); } catch (e) {}
+      if (sm.st === 'markverify') {
         if (useIdb && markGone()) await quiet(idbDel(id));
         res.why = '控えを確かめられませんでした（何も変えていません）'; return res;
       }

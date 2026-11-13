@@ -86,6 +86,8 @@
   }
   function saveStore(self, key) {
     self.why = ''; self.conflict = false;
+    /* 段階1（指摘14）：保存は KemuriGuard.withSave の中から呼ぶ。外から呼ばれたら記録だけ残す（保存は止めない） */
+    try { if (global.KemuriGuard && global.KemuriGuard.noteUnlocked) global.KemuriGuard.noteUnlocked(key); } catch (e) {}
     if (self.broken) { self.why = self.broken + '（上書きしないよう、保存を止めています）'; return false; }
     /* 段階0（レビュー指摘2）：復元が途中で止まっているあいだは保存しない
        （保存しても、«復元する前の中身に戻す» で消えてしまうため） */
@@ -869,6 +871,7 @@
     },
 
     clear: function () {
+      try { if (global.KemuriGuard && global.KemuriGuard.noteUnlocked) global.KemuriGuard.noteUnlocked(DAILY_KEY + '（消去）'); } catch (e) {}
       this._db = blankDaily();
       try { global.localStorage.removeItem(DAILY_KEY); } catch (e) {}
       this._raw = null; this.broken = '';   /* 段階0：消したあとは «空» を知っている状態 */
@@ -1339,7 +1342,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-11-12r2',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-11-14s1',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     changedAny: changedAny,
     brokenList: brokenList,
