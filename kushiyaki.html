@@ -411,6 +411,40 @@ let KHALT_SEEN = false;
 let TOAST_HOLD = 0;    // 保存しなかった知らせを、ほかの知らせで消さない
 let K_LOADING = false; // 補いの途中（補いの保存が止められても、読み直しをくり返さない）
 let K_RELOADING = false; // ほかの画面の変更を読み直している途中：補いだけでは保存しない（共有に勝手に上げない）
+/* ===== 段階1（Codex 指摘14）：保存を «短い鍵» の中で書く =====
+   これまでは «端末の中身が変わっていないか確かめる → 書く» を続けて行っていたが、別の画面の保存が
+   同時だと、相手の書き込みがまだ見えずに確認をすり抜け、片方が黙って消えた。
+   save() は «書く予定»（KPEND）を置いて、共通の鍵 kemuri-save（KemuriGuard.withSave）の中で
+   確かめてから書く。鍵は画面をまたいで1つずつ順番なので、あいだに別の保存は入らない。
+     ・続けて何度 save() しても、書くのは最後の中身を1回（base は最初に読んだときの中身）
+     ・鍵の中で «別の画面で変わっていた» と分かったら、書かずに読み直して知らせる
+     ・串打ち前の在庫への反映・スタッフ共有への送信は、端末に書けたあとで行う
+     ・画面を閉じる／隠すときは、待たずにその場で書く（これまでと同じ確かめ方）
+     ・Web Locks が無い開き方では、これまでどおりその場で書く
+   データの形・共有の仕組みは変えない。 */
+let KPEND = null;      // { base:書く前にあるはずの中身, s:書く中身, z:[書けたあとの串打ち前の在庫への反映] }
+function kLockOn() { try { return !!(window.KemuriGuard && KemuriGuard.withSave && KemuriGuard.supported()); } catch (e) { return false; } }
+/* 書く予定を実際に書く（同期）。鍵の中、または画面を閉じる直前に呼ぶ */
+function kFlush() {
+  const p = KPEND; if (!p) return true;
+  KPEND = null;
+  const why = kStopWhy();
+  if (why) { kReload(); holdToast(kStopMsg(why)); return false; }
+  if (kRaw() !== p.base) { kReload('別の画面で串在庫が変わったので読み直したさ。いまの操作は保存していないよ。もう一度やってね'); return false; }
+  /* 段階0（レビュー指摘8）：書いて読み直し、一致したときだけ成功。失敗したら保存済みの中身に戻し、
+     共有にも上げない（端末に無い変更を、ほかの端末や串打ち前の在庫に広げない） */
+  let wrote = false;
+  try { localStorage.setItem(KKEY, p.s); wrote = localStorage.getItem(KKEY) === p.s; } catch (e) { wrote = false; }
+  if (!wrote) {
+    kReload();
+    holdToast('保存できんかったさ…（端末の空きが足りないかも）。いまの操作は保存していないよ');
+    return false;
+  }
+  KBASE = p.s;
+  schedulePush();
+  p.z.forEach(a => { try { zaikoWrite(a.reason, a.force); } catch (e) {} });
+  return true;
+}
 function kRaw() { try { return localStorage.getItem(KKEY); } catch (e) { return undefined; } }
 function kHalted() { try { return localStorage.getItem(RMARK) != null; } catch (e) { return true; } }
 function kStopWhy() { return KBROKEN ? 'broken' : kHalted() ? 'restore' : ''; }
@@ -422,6 +456,9 @@ function kStopMsg(why) {
 }
 /* 端末の保存データを読み直して描き直す */
 function kReload(msg) {
+  /* 段階1（指摘14）：まだ書いていない保存（鍵待ち）があれば捨てる。画面の中身を読み直すので、その操作は残らない */
+  const hadPend = !!KPEND; KPEND = null;
+  if (hadPend && !/保存していない/.test(msg || '')) msg = '別の画面で串在庫が変わったので読み直したさ。いまの操作は保存していないよ。もう一度やってね';
   KDB = loadK();
   K_LOADING = true; K_RELOADING = true; try { normalizeItems(); } finally { K_LOADING = false; K_RELOADING = false; }
   renderStopBar();
@@ -474,17 +511,11 @@ function save() {
   if (why) { if (!K_LOADING) { kReload(); holdToast(kStopMsg(why)); } return false; }
   if (!kFresh()) { kReload('別の画面で串在庫が変わったので読み直したさ。いまの操作は保存していないよ。もう一度やってね'); return false; }
   const s = JSON.stringify(KDB);
-  /* 段階0（レビュー指摘8）：書いて読み直し、一致したときだけ成功。失敗したら保存済みの中身に戻し、
-     共有にも上げない（端末に無い変更を、ほかの端末や串打ち前の在庫に広げない） */
-  let wrote = false;
-  try { localStorage.setItem(KKEY, s); wrote = localStorage.getItem(KKEY) === s; } catch (e) { wrote = false; }
-  if (!wrote) {
-    kReload();
-    holdToast('保存できんかったさ…（端末の空きが足りないかも）。いまの操作は保存していないよ');
-    return false;
-  }
-  KBASE = s;
-  schedulePush();
+  /* 段階1（指摘14）：書く予定を置いて、短い鍵の中で確かめてから書く（kFlush） */
+  if (KPEND) { KPEND.s = s; return true; }          /* まだ書いていない予定がある → 中身だけ新しくする */
+  KPEND = { base: KBASE, s: s, z: [] };
+  if (!kLockOn()) return kFlush();                   /* 鍵が使えない開き方 → これまでどおりその場で書く */
+  KemuriGuard.withSave(kFlush).catch(() => { if (KPEND) kFlush(); });
   return true;
 }
 function nextSeq() { return KDB.seq++; }
@@ -521,6 +552,9 @@ async function pullShared(opts) {
   opts = opts || {};
   if (!shareOn()) return;
   if (kStopWhy()) return;   /* 段階0：復元が途中・データが読めないあいだは共有から書き込まない */
+  /* 段階1（指摘14）：まだ書いていない保存（鍵待ち）があれば、書き終わるのを待ってから判断する
+     （これまでは save() の中で書き終わっていたので、同じ順番にそろえる） */
+  if (KPEND && kLockOn()) { try { await KemuriGuard.withSave(() => 0); } catch (e) {} if (!shareOn() || kStopWhy()) return; }
   if (!opts.force && (SHARE.pushing || SHARE.dirty)) return;   // ローカル未保存を上書きしない
   if (PULLING) return; PULLING = true;
   const baseRaw = kRaw(), baseUrl = SHARE.url;   /* 段階0（レビュー指摘3）：頼んだときの端末の中身と共有先 */
@@ -530,17 +564,25 @@ async function pullShared(opts) {
     if (!r.ok) throw new Error(r.error || '読み込みに失敗');
     /* 返事を待っているあいだに、復元が始まった・終わった／ほかの画面や自分が変えた／共有先が変わった
        → この返事は古いので使わない（端末の中身を上書きしない） */
-    const stale = kStopWhy() || !shareOn() || SHARE.url !== baseUrl
-               || (!opts.force && (SHARE.pushing || SHARE.dirty)) || kRaw() !== baseRaw;
+    const isStale = () => !!(kStopWhy() || !shareOn() || SHARE.url !== baseUrl || KPEND
+               || (!opts.force && (SHARE.pushing || SHARE.dirty)) || kRaw() !== baseRaw);
+    const stale = isStale();
     if (stale) {
       if (!kStopWhy() && !kFresh()) kReload();
       PULLING = false; updateShareStatus();
       return;
     }
     if (r.data && (opts.force || r.rev !== SHARE.rev)) {
-      KDB = Object.assign(blank(), r.data);
-      normalizeItems();
-      { const s = JSON.stringify(KDB); localStorage.setItem(KKEY, s); KBASE = s; }   // pushを起こさず直接保存（段階0：この画面が知っている中身も合わせる）
+      /* 段階1（指摘14）：«もう一度確かめる → 書く» を短い鍵の中で続けて行う（別の画面の保存と順番にする） */
+      const put = () => {
+        if (isStale()) return false;
+        KDB = Object.assign(blank(), r.data);
+        normalizeItems();
+        const s = JSON.stringify(KDB); localStorage.setItem(KKEY, s); KBASE = s;   // pushを起こさず直接保存（段階0：この画面が知っている中身も合わせる）
+        return true;
+      };
+      const putOk = kLockOn() ? await KemuriGuard.withSave(put) : put();
+      if (!putOk) { if (!kStopWhy() && !kFresh()) kReload(); PULLING = false; updateShareStatus(); return; }
       SHARE.rev = (r.rev != null ? r.rev : SHARE.rev);
       redrawAll();
       if (!document.getElementById('p-reflect').classList.contains('hide')) renderReflect();
@@ -962,6 +1004,13 @@ function zGenreGroups() {
 
 /* 串在庫の合計本数を zaiko の在庫（本数）へ書き戻す */
 function syncToZaiko(reason, force) {
+  /* 段階1（指摘14）：串在庫をまだ書いていない（鍵待ち）あいだは、書けたあとで反映する */
+  if (KPEND) { KPEND.z.push({ reason: reason, force: force }); return true; }
+  if (!kLockOn()) return zaikoWrite(reason, force);
+  KemuriGuard.withSave(() => zaikoWrite(reason, force)).catch(() => {});
+  return true;
+}
+function zaikoWrite(reason, force) {
   if (kStopWhy() || !kFresh()) return false;   /* 段階0：止めているとき・保存できなかったときは串打ち前の在庫に書かない */
   if (!force && !KDB.syncZaiko) return false;
   const z = liveZaiko();
@@ -1837,7 +1886,8 @@ function salesChanged() {
 window.addEventListener('storage', e => {
   if (e.key === KKEY || e.key === RMARK || e.key === null) kCheck();
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kCheck(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kCheck(); else if (KPEND) kFlush(); });
+window.addEventListener('pagehide', () => { if (KPEND) kFlush(); });   /* 段階1（指摘14）：閉じる直前は鍵を待たずに書く */
 window.addEventListener('pageshow', () => kCheck());
 window.addEventListener('storage', e => {
   if (!salesOk()) return;

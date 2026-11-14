@@ -258,7 +258,39 @@ function hHalted(){ try { return localStorage.getItem(RMARK) != null; } catch(e)
 function hStopWhy(){ return HBROKEN ? "broken" : hHalted() ? "restore" : ""; }
 function hFresh(){ return hRaw() === HBASE; }
 function holdToast(msg){ TOAST_HOLD = 0; toast(msg); TOAST_HOLD = Date.now() + 3000; }
+/* ===== 段階1（Codex 指摘14）：保存を «短い鍵» の中で書く =====
+   «変わっていないか確かめる → 書く» のあいだに別の画面の保存が入ると、片方が黙って消えた。
+   save() は «書く予定»（HPEND）を置き、ほかのアプリと共通の鍵 kemuri-save（Web Locks）の中で
+   確かめてから書く。続けて save() しても書くのは最後の中身を1回。鍵の中で «別の画面で変わっていた»
+   と分かったら、書かずに読み直して知らせる。画面を閉じる／隠すときは待たずにその場で書く。
+   Web Locks が無い開き方では、これまでどおりその場で書く。データの形は変えない。 */
+let HPEND = null;   // { base:書く前にあるはずの中身, s:書く中身 }
+function hLockOn(){ try { return !!(navigator.locks && navigator.locks.request); } catch(e){ return false; } }
+function hFlush(){
+  const p = HPEND; if (!p) return true;
+  HPEND = null;
+  const why = hStopWhy();
+  if (why) {
+    hReload();
+    holdToast(why === "restore" ? "復元が途中で止まっているので保存していないよ（ダッシュボードで復元を終わらせてね）"
+                                : "発注の保存データが読めないので、上書きしないよう保存を止めているよ");
+    return false;
+  }
+  if (hRaw() !== p.base) { hReload("別の画面で発注のデータが変わったので読み直したよ。いまの操作は保存していないので、もう一度やってね"); return false; }
+  let wrote = false;
+  try { localStorage.setItem(LS_KEY, p.s); wrote = localStorage.getItem(LS_KEY) === p.s; } catch(e){ wrote = false; }
+  if (!wrote) {
+    hReload();
+    holdToast("保存できなかったよ（端末の空きが足りないかも）。いまの操作は保存していないよ");
+    return false;
+  }
+  HBASE = p.s;
+  return true;
+}
 function hReload(msg){
+  /* 段階1（指摘14）：まだ書いていない保存（鍵待ち）があれば捨てる。読み直すので、その操作は残らない */
+  const hadPend = !!HPEND; HPEND = null;
+  if (hadPend && !/保存していない/.test(msg || "")) msg = "別の画面で発注のデータが変わったので読み直したよ。いまの操作は保存していないので、もう一度やってね";
   S = load(); closeModal(); renderHStop();
   try { render(); } catch(e){}
   if (msg) holdToast(msg);
@@ -369,8 +401,13 @@ function save(){
   }
   if (!hFresh()) { hReload("別の画面で発注のデータが変わったので読み直したよ。いまの操作は保存していないので、もう一度やってね"); return false; }
   const s = JSON.stringify(S);
-  try { localStorage.setItem(LS_KEY, s); HBASE = s; return true; }
-  catch(e){ holdToast("保存できなかったよ（端末の空きが足りないかも）。いまの変更は残らないかもしれません"); return false; }
+  /* 段階1（指摘14）：書く予定を置いて、短い鍵の中で確かめてから書く（hFlush） */
+  if (HPEND) { HPEND.s = s; return true; }
+  HPEND = { base: HBASE, s: s };
+  if (!hLockOn()) return hFlush();
+  let box = {};
+  navigator.locks.request("kemuri-save", () => { box.v = hFlush(); }).catch(() => { if (HPEND) hFlush(); });
+  return true;
 }
 
 /* order: { productId: qty }  done: { productId: true }  sentToday: { supplierId: 日付 } */
@@ -1162,7 +1199,8 @@ function renderTabbar(){
 render();
 renderHStop();   /* 段階0 */
 window.addEventListener("storage", e => { if (e.key === LS_KEY || e.key === RMARK || e.key === null) hCheck(); });
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") hCheck(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") hCheck(); else if (HPEND) hFlush(); });
+window.addEventListener("pagehide", () => { if (HPEND) hFlush(); });   /* 段階1（指摘14）：閉じる直前は鍵を待たずに書く */
 window.addEventListener("pageshow", () => hCheck());
 </script>
 </body>
