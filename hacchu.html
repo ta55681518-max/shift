@@ -262,13 +262,14 @@ function holdToast(msg){ TOAST_HOLD = 0; toast(msg); TOAST_HOLD = Date.now() + 3
    «変わっていないか確かめる → 書く» のあいだに別の画面の保存が入ると、片方が黙って消えた。
    save() は «書く予定»（HPEND）を置き、ほかのアプリと共通の鍵 kemuri-save（Web Locks）の中で
    確かめてから書く。続けて save() しても書くのは最後の中身を1回。鍵の中で «別の画面で変わっていた»
-   と分かったら、書かずに読み直して知らせる。画面を閉じる／隠すときは待たずにその場で書く。
+   と分かったら、書かずに読み直して知らせる。画面を閉じる／隠すときは、鍵なしで書かず控えに残す（hJournal）。
    Web Locks が無い開き方では、これまでどおりその場で書く。データの形は変えない。 */
 let HPEND = null;   // { base:書く前にあるはずの中身, s:書く中身 }
-function hLockOn(){ try { return !!(navigator.locks && navigator.locks.request); } catch(e){ return false; } }
+let H_NOLOCK = false;   // 鍵を頼んだら断られた開き方（めったにない）：これ以降は «鍵が無い開き方» と同じ扱い
+function hLockOn(){ if (H_NOLOCK) return false; try { return !!(navigator.locks && navigator.locks.request); } catch(e){ return false; } }
 function hFlush(){
   const p = HPEND; if (!p) return true;
-  HPEND = null;
+  HPEND = null; hJournalDrop();
   const why = hStopWhy();
   if (why) {
     hReload();
@@ -276,6 +277,7 @@ function hFlush(){
                                 : "発注の保存データが読めないので、上書きしないよう保存を止めているよ");
     return false;
   }
+  if (hRaw() === p.s && p.s !== p.base) { HBASE = p.s; return true; }   /* 閉じるときの控えから、もう入っている（hRecover） */
   if (hRaw() !== p.base) { hReload("別の画面で発注のデータが変わったので読み直したよ。いまの操作は保存していないので、もう一度やってね"); return false; }
   let wrote = false;
   try { localStorage.setItem(LS_KEY, p.s); wrote = localStorage.getItem(LS_KEY) === p.s; } catch(e){ wrote = false; }
@@ -287,9 +289,48 @@ function hFlush(){
   HBASE = p.s;
   return true;
 }
+/* ===== 段階1（Codex 指摘19）：鍵を待っているあいだに画面を閉じる／隠すとき =====
+   その場で鍵なしに書くと、別の画面の «鍵の中の保存» に割り込めてしまうので、データには書かず
+   «書く予定» を別の控え（この画面専用のキー）に残す。画面が生きていれば鍵が来たときにふつうに書き、
+   閉じられたら、次に発注を開いた画面が鍵の中で確かめて入れる（変わっていたら捨てて知らせる）。
+   控えのキーはバックアップ・復元の対象外 */
+const HJKEY = "kemuri_pend_hacchu_v1:";
+const HTAB = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+function hJournal(){
+  if (!HPEND) return;
+  try { localStorage.setItem(HJKEY + HTAB, JSON.stringify({ base: HPEND.base, s: HPEND.s, at: Date.now() })); } catch(e){}
+}
+function hJournalDrop(){ try { localStorage.removeItem(HJKEY + HTAB); } catch(e){} }
+function hRecoverNow(){
+  if (HPEND) return false;
+  const keys = [];
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.indexOf(HJKEY) === 0 && k !== HJKEY + HTAB) keys.push(k); } } catch(e){ return false; }
+  let applied = false, lost = false;
+  keys.forEach(k => {
+    const rm = () => { try { localStorage.removeItem(k); } catch(e){} };
+    let j = null; try { j = JSON.parse(localStorage.getItem(k)); } catch(e){}
+    if (!j || typeof j.s !== "string") { rm(); return; }
+    if (Date.now() - (Number(j.at) || 0) < 3000) return;   /* 作ったばかり：元の画面がまだ書くかもしれない */
+    if (hStopWhy()) return;                                 /* 止めているあいだは置いておく */
+    const raw = hRaw();
+    if (raw === j.s) { rm(); return; }
+    if (raw !== (j.base === undefined ? null : j.base)) { rm(); lost = true; return; }
+    let wrote = false;
+    try { localStorage.setItem(LS_KEY, j.s); wrote = localStorage.getItem(LS_KEY) === j.s; } catch(e){ wrote = false; }
+    if (!wrote) { try { if (raw == null) localStorage.removeItem(LS_KEY); else localStorage.setItem(LS_KEY, raw); } catch(e){} return; }
+    rm(); applied = true;
+  });
+  if (applied) hReload("前に画面を閉じたときの操作を、保存したよ");
+  else if (lost) { if (!hStopWhy() && !hFresh()) hReload(); holdToast("前に画面を閉じたときの操作は保存していないよ（別の画面で発注のデータが変わっていたため）。もう一度やってね"); }
+  return applied;
+}
+function hRecover(){
+  if (hLockOn()) navigator.locks.request("kemuri-save", () => { hRecoverNow(); }).catch(() => {});
+  else hRecoverNow();
+}
 function hReload(msg){
   /* 段階1（指摘14）：まだ書いていない保存（鍵待ち）があれば捨てる。読み直すので、その操作は残らない */
-  const hadPend = !!HPEND; HPEND = null;
+  const hadPend = !!HPEND; HPEND = null; if (hadPend) hJournalDrop();   /* 控え（閉じるときの書く予定）も一緒に捨てる */
   if (hadPend && !/保存していない/.test(msg || "")) msg = "別の画面で発注のデータが変わったので読み直したよ。いまの操作は保存していないので、もう一度やってね";
   S = load(); closeModal(); renderHStop();
   try { render(); } catch(e){}
@@ -406,7 +447,7 @@ function save(){
   HPEND = { base: HBASE, s: s };
   if (!hLockOn()) return hFlush();
   let box = {};
-  navigator.locks.request("kemuri-save", () => { box.v = hFlush(); }).catch(() => { if (HPEND) hFlush(); });
+  navigator.locks.request("kemuri-save", () => { box.v = hFlush(); }).catch(() => { H_NOLOCK = true; if (HPEND) hFlush(); });
   return true;
 }
 
@@ -1199,9 +1240,10 @@ function renderTabbar(){
 render();
 renderHStop();   /* 段階0 */
 window.addEventListener("storage", e => { if (e.key === LS_KEY || e.key === RMARK || e.key === null) hCheck(); });
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") hCheck(); else if (HPEND) hFlush(); });
-window.addEventListener("pagehide", () => { if (HPEND) hFlush(); });   /* 段階1（指摘14）：閉じる直前は鍵を待たずに書く */
-window.addEventListener("pageshow", () => hCheck());
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { hCheck(); hRecover(); } else if (HPEND) { if (hLockOn()) hJournal(); else hFlush(); } });
+window.addEventListener("pagehide", () => { if (HPEND) { if (hLockOn()) hJournal(); else hFlush(); } });   /* 段階1（指摘19）：閉じる直前は、鍵なしで書かずに控えに残す */
+window.addEventListener("pageshow", () => { hCheck(); hRecover(); });
+hRecover();   /* 段階1（指摘19）：前に閉じたときの «書く予定» が残っていれば、鍵の中で確かめて入れる */
 </script>
 </body>
 </html>
