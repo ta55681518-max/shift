@@ -72,7 +72,7 @@
   .calc.sat b{color:#2a6fdb;} .calc.sun b,.calc.hol b{color:#d92d20;}
   .calc u{text-decoration:none;font-size:8.5px;font-weight:800;color:#d92d20;line-height:1.15;min-height:11px;
           white-space:nowrap;overflow:hidden;letter-spacing:-.5px;}
-  .calc u.loc{color:#8a6100;}
+  .calc u.loc{color:#8a6100;} .calc u.wx{color:#1d4ed8;} .calc.l4 u.wx{color:#fff;}
   .calc span{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:auto;line-height:1.2;}
   .calc span.z{font-size:12px;color:#bbb;font-weight:700;}
   .calc i{position:absolute;right:2px;top:2px;font-style:normal;font-size:10px;line-height:1;}
@@ -191,7 +191,7 @@
 <script src="kemuri-backup.js?v=20261114s1"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <script src="kemuri-data.js?v=20261114s1"></script>
-<script src="kemuri-cal.js?v=20261115c1"></script><!-- 売上カレンダー（読むだけ） -->
+<script src="kemuri-cal.js?v=20261115c2"></script><!-- 売上カレンダー（読むだけ） -->
 
 <script>
 "use strict";
@@ -432,6 +432,23 @@ async function saveDailyCsv(){
    月曜はじまり。マスの数字は1日の売上（万円）。色は «その年の営業日の平均» とくらべた忙しさ。
    祝日は kemuri-cal.js が祝日法の決まりから求める。天気は POS の日別集計に入っていれば出す。 */
 let CAL = { open:false, ym:null, pick:null };
+/* 那覇の天気（気象庁の過去の気象データ）。/api/weather から月ごとに受け取り、画面の中だけで持つ。
+   端末には保存しない（バックアップにも入らない）。取れなくても、売上と祝日はそのまま出す */
+let CALW = {};   // { 'YYYY-MM': { st:'load'|'ok'|'err'|'none', days:{'01':{rain,wind,gust,day,night}}, why:'' } }
+function calWeather(ym){
+  const nowYm = KemuriCore.todayStr().slice(0,7);
+  if(CALW[ym]) return;
+  if(+ym.slice(0,4) < 2022 || ym > nowYm){ CALW[ym] = { st:'none', days:{} }; return; }   /* 先の月には天気は無い */
+  CALW[ym] = { st:'load', days:{} };
+  fetch('/api/weather?ym=' + ym).then(r => r.json().catch(() => null).then(j => ({ r, j })))
+    .then(o => {
+      if(o.r.ok && o.j && o.j.ok && o.j.days) CALW[ym] = { st:'ok', days:o.j.days, source:o.j.source || '' };
+      else CALW[ym] = { st:'err', days:{}, why:(o.j && o.j.why) || ('取得できませんでした（' + o.r.status + '）') };
+    })
+    .catch(() => { CALW[ym] = { st:'err', days:{}, why:'通信できませんでした' }; })
+    .then(() => { if(CAL.open && CAL.ym === ym && TAB === 'sum') render(); });
+}
+function calWeatherRetry(){ delete CALW[CAL.ym]; render(); }
 const CAL_DOW = ['日','月','火','水','木','金','土'];
 function calToggle(){
   CAL.open = !CAL.open;
@@ -454,6 +471,8 @@ function calHtml(){
   const days = KemuriData.daily.load().days || {};
   const m = KemuriCal.month(CAL.ym, days);
   const nowY = +KemuriCore.todayStr().slice(0,4);
+  calWeather(CAL.ym);
+  const wx = CALW[CAL.ym] || { st:'none', days:{} };
   /* 年のボタン：データがある年＋今年＋去年 */
   const ys = {}; ys[nowY] = 1; ys[nowY - 1] = 1; ys[m.year] = 1;
   Object.keys(days).forEach(d => { const y = +d.slice(0,4); if(y >= 2022) ys[y] = 1; });
@@ -474,10 +493,13 @@ function calHtml(){
       const mark = c.holiday || c.local;
       const cls = 'calc ' + (c.hasData ? c.level : 'none') + (c.holiday ? ' hol' : '')
                 + (c.dow === 6 ? ' sat' : c.dow === 0 ? ' sun' : '') + (CAL.pick === c.date ? ' pick' : '');
-      const wi = KemuriCal.weatherIcon(c.weather);
+      /* 天気：気象庁（那覇）が取れていればそれを、無ければ POS の天気を使う。荒れた日は印を出す */
+      const x = wx.days[c.date.slice(8,10)], xm = KemuriCal.wxMark(x);
+      const wi = xm ? xm.icon : (x && x.day ? KemuriCal.weatherIcon(x.day) : KemuriCal.weatherIcon(c.weather));
       return '<button class="' + cls + '" onclick="calPick(\'' + c.date + '\')">'
            + '<b>' + c.day + '</b>'
-           + '<u' + (!c.holiday && c.local ? ' class="loc"' : '') + '>' + esc(mark) + '</u>'
+           + (mark ? '<u' + (!c.holiday && c.local ? ' class="loc"' : '') + '>' + esc(mark) + '</u>'
+                   : '<u class="wx">' + (xm ? xm.label : '') + '</u>')
            + (wi ? '<i>' + wi + '</i>' : '')
            + (!c.hasData ? '<span class="z">—</span>'
               : c.gross > 0 ? '<span>' + (c.gross / 10000).toFixed(1) + '</span>' : '<span class="z">休</span>')
@@ -504,8 +526,19 @@ function calHtml(){
         h += '<div class="caldt"><span>客数</span><b>' + (gu ? gu + '人' + (gr ? '（' + gr + '組）' : '') : '—') + '</b></div>'
            + '<div class="caldt"><span>客単価</span><b>' + (gu ? yen(Math.round(g / gu)) : '—') + '</b></div>';
       }
-      h += '<div class="caldt"><span>天気</span><b>' + (r.weather ? KemuriCal.weatherIcon(r.weather) + ' ' + esc(r.weather) : '—') + '</b></div>';
+      if(r.weather) h += '<div class="caldt"><span>天気（POS）</span><b>' + KemuriCal.weatherIcon(r.weather) + ' ' + esc(r.weather) + '</b></div>';
     }
+    /* 那覇の天気（気象庁） */
+    const px = wx.days[d.slice(8,10)];
+    if(px){
+      const pm = KemuriCal.wxMark(px);
+      h += '<div class="caldt"><span>天気（昼）</span><b>' + (px.day ? KemuriCal.weatherIcon(px.day) + ' ' + esc(px.day) : '—') + '</b></div>'
+         + '<div class="caldt"><span>天気（夜）</span><b>' + (px.night ? KemuriCal.weatherIcon(px.night) + ' ' + esc(px.night) : '—') + '</b></div>'
+         + '<div class="caldt"><span>雨（1日の合計）</span><b>' + (px.rain == null ? '—' : px.rain > 0 ? px.rain + ' mm' : 'なし') + '</b></div>'
+         + '<div class="caldt"><span>最大風速</span><b>' + (px.wind == null ? '—' : px.wind + ' m/s' + (px.windDir ? '（' + esc(px.windDir) + '）' : '')) + '</b></div>'
+         + '<div class="caldt"><span>最大瞬間風速</span><b>' + (px.gust == null ? '—' : px.gust + ' m/s' + (px.gustDir ? '（' + esc(px.gustDir) + '）' : '')) + '</b></div>'
+         + (pm ? '<div class="warn gap" style="margin-bottom:0">' + pm.icon + ' <b>' + pm.label + '</b> の目安に当たる日です（台風かどうかは、この数字だけでは決められません）。</div>' : '');
+    }else if(wx.st === 'load') h += '<div class="muted">那覇の天気を読み込んでいます…</div>';
     /* ほかの年の «同じ曜日の並び» の日 */
     const py = +d.slice(0,4);
     /* 出すのは、今年・来年と、売上が入っている年だけ */
@@ -531,6 +564,11 @@ function calHtml(){
      + '色は ' + (m.yard.scope === 'year' ? m.year + '年の営業日の平均（' + yen(Math.round(m.yard.avg)) + '）' : m.yard.scope === 'all' ? '入っている全部の営業日の平均（' + yen(Math.round(m.yard.avg)) + '）' : '平均')
      + ' とくらべた忙しさです。売上0円の日は休みとして、平均から外しています。<br>'
      + '赤い日付は祝日・日曜（祝日は名前つき）。6/23 は慰霊の日の印を出します。'
+     + (wx.st === 'ok' ? '<br>天気は那覇の観測値です。青い «暴風»（最大風速 ' + KemuriCal.WX.storm + 'm/s以上）«強風»（' + KemuriCal.WX.strong + 'm/s以上）«大雨»（1日 ' + KemuriCal.WX.heavyRain + 'mm以上）は目安の印です。'
+          + '<br>出典：' + esc(wx.source || '気象庁ホームページ') + '。数値をもとに、このアプリで加工して表示しています。'
+        : wx.st === 'load' ? '<br>那覇の天気を読み込んでいます…'
+        : wx.st === 'err' ? '<br>那覇の天気は取れませんでした（' + esc(wx.why || '') + '）。売上と祝日はそのまま見られます。 <a href="#" onclick="calWeatherRetry();return false">もう一度</a>'
+        : '')
      + (KemuriCal.tentative(m.year, nowY) ? '<br>※ ' + m.year + '年の春分の日・秋分の日は、正式に決まる前の見込みです。' : '')
      + '</div>';
   return h;

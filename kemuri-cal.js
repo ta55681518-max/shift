@@ -74,17 +74,30 @@
   /* 春分・秋分が «見込み» の年か（正式な発表は前年2月） */
   function tentative(y, nowYear) { return +y > (+nowYear || new Date().getFullYear()) + 1; }
 
-  /* 天気の文字 → 絵文字（POSの書き方がまちまちなので、含まれる文字で決める） */
+  /* 天気の文字 → 絵文字。POS の書き方も、気象庁の天気概況（「晴後一時雨」など）も、
+     «いちばん先に出てくる天気» を主な天気として絵にする（台風・暴風の文字があればそれを優先） */
   function weatherIcon(w) {
     w = String(w || '');
     if (!w) return '';
     if (/台風|暴風/.test(w)) return '🌀';
-    if (/雪/.test(w)) return '⛄';
-    if (/雷/.test(w)) return '⚡';
-    if (/雨/.test(w)) return '☔';
-    if (/曇|くもり/.test(w)) return '☁️';
-    if (/晴/.test(w)) return '☀️';
-    return '';
+    var best = '', at = 1e9;
+    [['晴', '☀️'], ['曇', '☁️'], ['くもり', '☁️'], ['雨', '☔'], ['雪', '⛄'], ['霧', '🌫️']].forEach(function (p) {
+      var i = w.indexOf(p[0]);
+      if (i >= 0 && i < at) { at = i; best = p[1]; }
+    });
+    if (!best && /雷/.test(w)) return '⚡';
+    return best;
+  }
+  /* 気象庁の日ごとの値 → 荒れた日の印（目安。台風と言い切らない）
+     最大風速（10分間の平均の最大）20m/s以上＝暴風、15m/s以上＝強風。1日の雨 50mm以上＝大雨 */
+  var WX = { storm: 20, strong: 15, heavyRain: 50 };
+  function wxMark(x) {
+    if (!x) return null;
+    var wind = Number(x.wind), rain = Number(x.rain);
+    if (isFinite(wind) && x.wind != null && wind >= WX.storm) return { key: 'storm', label: '暴風', icon: '🌀' };
+    if (isFinite(rain) && x.rain != null && rain >= WX.heavyRain) return { key: 'rain', label: '大雨', icon: '☔' };
+    if (isFinite(wind) && x.wind != null && wind >= WX.strong) return { key: 'strong', label: '強風', icon: '💨' };
+    return null;
   }
 
   function num(v) { v = Number(v); return isFinite(v) ? v : 0; }
@@ -165,7 +178,7 @@
 
   global.KemuriCal = {
     holidays: holidays, holidayOf: holidayOf, localOf: localOf, tentative: tentative,
-    weatherIcon: weatherIcon, month: month, sameWeekday: sameWeekday, yardstick: yardstick,
+    weatherIcon: weatherIcon, wxMark: wxMark, WX: WX, month: month, sameWeekday: sameWeekday, yardstick: yardstick,
     addDays: addDays, dow: dow,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
