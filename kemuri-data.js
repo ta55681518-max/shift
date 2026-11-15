@@ -1342,7 +1342,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-11-14s1',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-11-16p1',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     changedAny: changedAny,
     brokenList: brokenList,
