@@ -455,7 +455,9 @@ function calWeather(ym){
       else CALW[ym] = { st:'err', days:{}, why:(o.j && o.j.why) || ('取得できませんでした（' + o.r.status + '）') };
     })
     .catch(() => { CALW[ym] = { st:'err', days:{}, why:'通信できませんでした' }; })
-    .then(() => { if(CAL.open && CAL.ym === ym && TAB === 'sum') render(); });
+    .then(() => { if(!(CAL.open && CAL.ym === ym && TAB === 'sum')) return;
+      if((document.activeElement || {}).id === 'cal-memo'){ CAL.later = true; return; }   /* メモの入力中は描き直さない（日本語入力が途切れるため）。入力を離れたら描く */
+      render(); });
 }
 function calWeatherRetry(){ delete CALW[CAL.ym]; render(); }
 const CAL_DOW = ['日','月','火','水','木','金','土'];
@@ -468,13 +470,22 @@ function calToggle(){
   render();
 }
 function calYm(y, m){ while(m < 1){ m += 12; y--; } while(m > 12){ m -= 12; y++; } return y + '-' + ('0' + m).slice(-2); }
+/* 書きかけ（保存していない印・メモ）があるときは、捨ててよいか確かめる */
+function calNoteLeave(){
+  if(!CAL.note) return true;
+  const m = document.getElementById('cal-memo'); if(m && m.value !== CAL.note.memo){ CAL.note.memo = m.value; CAL.note.dirty = true; }
+  if(!CAL.note.dirty) return true;
+  return confirm(calMd(CAL.note.day) + ' の印とメモを、まだ保存していません。\n保存せずに移りますか？（入力した内容は消えます）');
+}
 function calMove(n){
   const ym = calYm(+CAL.ym.slice(0,4), +CAL.ym.slice(5,7) + n);
   if(+ym.slice(0,4) < 2022 || +ym.slice(0,4) > 2099) return;
+  if(!calNoteLeave()) return;
   CAL.ym = ym; CAL.pick = null; CAL.note = null; render();
 }
-function calYear(y){ CAL.ym = y + CAL.ym.slice(4); CAL.pick = null; CAL.note = null; render(); }
+function calYear(y){ if(!calNoteLeave()) return; CAL.ym = y + CAL.ym.slice(4); CAL.pick = null; CAL.note = null; render(); }
 function calPick(d){
+  if(!calNoteLeave()) return;
   CAL.pick = (CAL.pick === d) ? null : d;
   CAL.note = CAL.pick ? Object.assign({ day: CAL.pick, dirty: false }, KemuriData.notes.get(CAL.pick)) : null;
   render();
@@ -487,13 +498,14 @@ function calNoteTag(t){
   if(i >= 0) CAL.note.tags.splice(i, 1); else CAL.note.tags.push(t);
   CAL.note.dirty = true; render();
 }
+function calNoteBlur(){ setTimeout(() => { if(CAL.later && (document.activeElement || {}).id !== 'cal-memo'){ CAL.later = false; render(); } }, 400); }
 function calNoteMemo(v){ if(CAL.note){ CAL.note.memo = v; CAL.note.dirty = true; } }
 async function calNoteSave(){
   if(!CAL.note) return;
   const m = document.getElementById('cal-memo'); if(m) CAL.note.memo = m.value;
   const day = CAL.note.day, v = { tags: CAL.note.tags.slice(), memo: CAL.note.memo };
   const ok = await KemuriGuard.withSave(() => KemuriData.notes.set(day, v));
-  if(!ok){ CAL.note = (CAL.pick === day) ? Object.assign({ day, dirty:false }, KemuriData.notes.get(day)) : null; saveNg('この日のメモ', KemuriData.notes.why); return; }
+  if(!ok){ saveNg('この日のメモ', KemuriData.notes.why + '。入力した印とメモは画面に残してあるので、もう一度 «メモを保存する» を押せます'); return; }   /* 入力は消さない（もう一度押せる） */
   if(CAL.pick === day) CAL.note = Object.assign({ day, dirty:false }, KemuriData.notes.get(day));
   render(); toast('メモを保存しました');
 }
@@ -579,8 +591,8 @@ function calHtml(){
       h += '<div class="sec">この日の印とメモ</div>'
          + '<div class="ntags">' + KemuriData.notes.TAGS.map(t =>
              '<button class="' + (CAL.note.tags.indexOf(t) >= 0 ? 'on' : '') + '" onclick="calNoteTag(\'' + t + '\')">' + esc(t) + '</button>').join('') + '</div>'
-         + '<input id="cal-memo" class="nmemo" type="text" maxlength="' + KemuriData.notes.MEMO_MAX + '" placeholder="一言メモ（例：台風で18時に閉店／20名の宴会）" value="' + esc(CAL.note.memo) + '" oninput="calNoteMemo(this.value)">'
-         + '<button class="btn gap" onclick="calNoteSave()">' + (CAL.note.dirty ? 'メモを保存する' : 'メモを保存する') + '</button>'
+         + '<input id="cal-memo" class="nmemo" type="text" maxlength="' + KemuriData.notes.MEMO_MAX + '" placeholder="一言メモ（例：台風で18時に閉店／20名の宴会）" value="' + esc(CAL.note.memo) + '" oninput="calNoteMemo(this.value)" onblur="calNoteBlur()">'
+         + '<button class="btn gap" onclick="calNoteSave()">メモを保存する</button>'
          + (KemuriData.notes.broken ? '<div class="warn gap">日ごとのメモの保存データが読めないため、保存を止めています。</div>' : '');
     }
     /* ほかの年の «同じ曜日の並び» の日 */
@@ -2042,7 +2054,9 @@ function dataCheck(){
   let sales = false;
   try{ const sl = KemuriCore.sales; sales = !!(sl._db && localStorage.getItem(KemuriCore.SALES_KEY) !== sl._raw); }catch(e){}
   if(!KemuriData.changedAny() && !sales) return;
-  KemuriData.reloadAll(); refresh(); render();
+  KemuriData.reloadAll(); refresh();
+  if(CAL.note && !CAL.note.dirty) CAL.note = Object.assign({ day: CAL.note.day, dirty: false }, KemuriData.notes.get(CAL.note.day));
+  render();
   toast('別の画面で変わったので、最新を読み直しました');
 }
 window.addEventListener('storage', e=>{
