@@ -66,7 +66,7 @@
 <section><h2>結果をまとめてコピー</h2><button onclick="copyAll()">コピー</button><pre id="all"></pre></section>
 </main>
 <script src="kemuri-core.js?v=20261114s1"></script>
-<script src="kemuri-backup.js?v=20261114s1"></script>
+<script src="kemuri-backup.js?v=20261115n1"></script>
 <script src="kemuri-errlog.js?v=20261027a1"></script>
 <script>
 'use strict';
@@ -84,7 +84,8 @@ if (STOP) {
   throw new Error('not test env');
 }
 var TAG = 'kemuri-backup-TEST';
-var KEYS = KemuriBackup.KEYS, MARK = KemuriBackup.MARK;
+/* 試験ページが扱うのは、はじめからある8種類。あとから増えた «日ごとのメモ»（kemuri_daynote_v1）は対象にしない */
+var KEYS = KemuriBackup.KEYS.filter(function(k){ return k !== 'kemuri_daynote_v1'; }), MARK = KemuriBackup.MARK;
 var LOG = {};
 function put(id, t){ document.getElementById(id).textContent = t; LOG[id] = t; }
 function add(id, t){ put(id, (LOG[id] ? LOG[id] + '\n' : '') + t); }

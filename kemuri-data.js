@@ -46,13 +46,18 @@
      オブジェクトでない・行がオブジェクトでないものは «壊れている» として保存を止める
      （空に直して上書きしない）。一覧そのものが無いのは古い形・はじめての形なので許す */
   function shapeBad(key, o) {
-    var name = key === DAILY_KEY ? 'days' : 'items';
+    var name = (key === DAILY_KEY || key === NOTE_KEY) ? 'days' : 'items';
     var box = o[name];
     if (box === undefined || box === null) return '';
     if (typeof box !== 'object' || Array.isArray(box)) return '一覧（' + name + '）の形が壊れています';
     for (var k in box) if (Object.prototype.hasOwnProperty.call(box, k)) {
       var row = box[k];
       if (!row || typeof row !== 'object' || Array.isArray(row)) return '一覧の中に、形が壊れている行があります';
+      /* 日ごとのメモ：印（tags）は文字の配列、メモ（memo）は文字 */
+      if (key === NOTE_KEY) {
+        if (row.tags != null && (!Array.isArray(row.tags) || row.tags.some(function (t) { return typeof t !== 'string'; }))) return '日ごとのメモの印の形が壊れています';
+        if (row.memo != null && typeof row.memo !== 'string') return '日ごとのメモの形が壊れています';
+      }
       /* 再レビュー指摘13：レシピは、材料（parts）が配列で、1つずつが名前つきの材料であること */
       if (key === RECIPE_KEY) {
         if (!Array.isArray(row.parts)) return 'レシピの材料の形が壊れています';
@@ -64,6 +69,7 @@
     }
     return '';
   }
+  var NOTE_KEY = 'kemuri_daynote_v1';     /* 日ごとの印とメモ（売上カレンダー）。9種類目のデータ */
   var RESTORE_MARK = 'kemuri_restore_v1';
   function restoreHalted() { try { return global.localStorage.getItem(RESTORE_MARK) != null; } catch (e) { return true; } }
   function loadStore(self, key, blankFn) {
@@ -1325,25 +1331,67 @@
     return out;
   }
 
+  /* ============================================================
+     日ごとの印とメモ（売上カレンダー）  kemuri_daynote_v1
+     ------------------------------------------------------------
+     その日に何があったか（台風・宴会・臨時休業…）を、手で残しておくところ。
+     日別売上とは別に持つので、POS の取り込み・売上の全消去では消えない。
+       { v:1, days: { 'YYYY-MM-DD': { tags:['台風','臨時休業'], memo:'…', at:'…' } }, updatedAt }
+     印もメモも空になった日は、行ごと消す。保存の作法は原価・レシピと同じ
+     （読んだときから変わっていたら書かない／壊れていたら上書きしない／復元の途中は止める）
+     ============================================================ */
+  var NOTE_TAGS = ['台風', '大雨', '宴会・団体', 'イベント', '臨時休業', 'その他'];
+  var NOTE_MEMO_MAX = 200;
+  var Notes = {
+    _db: null, _raw: null, broken: '', why: '', conflict: false,
+    TAGS: NOTE_TAGS, MEMO_MAX: NOTE_MEMO_MAX,
+    reload: function () { this._db = null; return this.load(); },
+    load: function () {
+      if (!this._db) this._db = loadStore(this, NOTE_KEY, function () { return { v: 1, days: {}, updatedAt: '' }; });
+      if (!this._db.days) this._db.days = {};
+      return this._db;
+    },
+    save: function () { this.load(); return saveStore(this, NOTE_KEY); },
+    changed: function () { return storeChanged(this, NOTE_KEY); },
+    get: function (day) { var r = this.load().days[day]; return r ? { tags: (r.tags || []).slice(), memo: r.memo || '' } : { tags: [], memo: '' }; },
+    count: function () { return Object.keys(this.load().days).length; },
+    /* 1日ぶんを入れる。印は決まった種類だけ（並びも決まった順）、メモは 200 文字まで。
+       戻り値 … 保存できたか（できなかった理由は why） */
+    set: function (day, o) {
+      this.why = '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day))) { this.why = '日付の形が正しくありません'; return false; }
+      o = o || {};
+      var want = Array.isArray(o.tags) ? o.tags : [];
+      var tags = NOTE_TAGS.filter(function (t) { return want.indexOf(t) >= 0; });
+      var memo = String(o.memo == null ? '' : o.memo).replace(/\s+/g, ' ').trim().slice(0, NOTE_MEMO_MAX);
+      var d = this.load();
+      if (!tags.length && !memo) { if (!d.days[day]) return true; delete d.days[day]; }
+      else d.days[day] = { tags: tags, memo: memo, at: new Date().toISOString() };
+      d.updatedAt = new Date().toISOString();
+      return this.save();
+    }
+  };
+
   /* バックアップを戻したあと、持ち回っている中身をぜんぶ読み直す。
      どれか1つでも古いままだと «入れたのに出てこない» になる。 */
   function reloadAll() {
     try { C.sales.reload && C.sales.reload(); } catch (e) {}
-    Costs.reload(); Recipes.reload(); Daily.reload();
+    Costs.reload(); Recipes.reload(); Daily.reload(); Notes.reload();
     /* Stock は毎回 localStorage から読むので、持ち回っていない */
   }
   /* 段階0：原価・レシピ・日別売上のどれかが、ほかの画面・復元で変わったか */
-  function changedAny() { return Costs.changed() || Recipes.changed() || Daily.changed(); }
+  function changedAny() { return Costs.changed() || Recipes.changed() || Daily.changed() || Notes.changed(); }
   /* 段階0：読めない保存データ（保存を止めているもの）の一覧 */
   function brokenList() {
     var out = [];
-    [['仕入原価', Costs], ['レシピ', Recipes], ['日別売上', Daily]].forEach(function (x) { x[1].load(); if (x[1].broken) out.push(x[0]); });
+    [['仕入原価', Costs], ['レシピ', Recipes], ['日別売上', Daily], ['日ごとのメモ', Notes]].forEach(function (x) { x[1].load(); if (x[1].broken) out.push(x[0]); });
     return out;
   }
 
   global.KemuriData = {
-    BUILD: '2026-11-14s1',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-11-15n1',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
+    notes: Notes,
     changedAny: changedAny,
     brokenList: brokenList,
     forecast: forecast,

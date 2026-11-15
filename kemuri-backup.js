@@ -50,12 +50,13 @@
     'kemuri_recipes_v1',    /* レシピ */
     'kemuri_zaiko_v1',      /* 串打ち前の在庫 */
     'kemuri_kushiyaki_v1',  /* 串焼き */
-    'kemuri_hacchu_v1'      /* 発注 */
+    'kemuri_hacchu_v1',     /* 発注 */
+    'kemuri_daynote_v1'     /* 日ごとの印とメモ（売上カレンダー）。2026-11 に追加。無いバックアップもそのまま読める */
   ];
   var LABEL = {
     kemuri_reitou_v1:'在庫アプリ', kemuri_sales_v1:'売上履歴', kemuri_daily_v1:'日別売上',
     kemuri_costs_v1:'仕入原価',   kemuri_recipes_v1:'レシピ',  kemuri_zaiko_v1:'串打ち前の在庫',
-    kemuri_kushiyaki_v1:'串焼き', kemuri_hacchu_v1:'発注'
+    kemuri_kushiyaki_v1:'串焼き', kemuri_hacchu_v1:'発注', kemuri_daynote_v1:'日ごとのメモ'
   };
   /* テスト環境（test-envブランチ）だけの設定：
      書き出すバックアップの印を本番と変える。本番の復元処理は印が
@@ -100,6 +101,7 @@
         return d.length ? d.length + '日ぶん（' + d[0] + '〜' + d[d.length - 1] + '）' : '0日';
       }
       case 'kemuri_daily_v1':   return n(v.days) + '日ぶん';
+      case 'kemuri_daynote_v1': return n(v.days) + '日ぶん';
       case 'kemuri_costs_v1':   return n(v.items) + '件';
       case 'kemuri_recipes_v1': return n(v.items) + '件';
       default:                  return 'あり';
@@ -118,6 +120,7 @@
         return { days: n(v.days), rows: rows, logs: n(v.logs) };
       }
       case 'kemuri_daily_v1':   return { days: n(v.days) };
+      case 'kemuri_daynote_v1': return { days: n(v.days) };
       case 'kemuri_costs_v1':   return { items: n(v.items) };
       case 'kemuri_recipes_v1': return { items: n(v.items) };
       default:                  return { keys: n(v) };
@@ -178,6 +181,18 @@
         var ks3 = ['spans', 'seen', 'closed', 'totals', 'logs'];
         for (var c = 0; c < ks3.length; c++) if (o[ks3[c]] != null && !isObj(o[ks3[c]])) return ks3[c] + ' の形が不正です';
         if (o.order != null && !Array.isArray(o.order)) return 'order の形が不正です';
+        return '';
+      }
+      case 'kemuri_daynote_v1': {
+        if (!isObj(o) || !isObj(o.days)) return '日ごとのメモ（days）の形が不正です';
+        var nd = Object.keys(o.days);
+        for (var ni = 0; ni < nd.length; ni++) {
+          var nr = o.days[nd[ni]];
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(nd[ni])) return '日付の形が不正です（' + nd[ni].slice(0, 20) + '）';
+          if (!isObj(nr)) return nd[ni] + ' のメモの形が不正です';
+          if (nr.tags != null && (!Array.isArray(nr.tags) || nr.tags.some(function (t) { return typeof t !== 'string'; }))) return nd[ni] + ' の印の形が不正です';
+          if (nr.memo != null && typeof nr.memo !== 'string') return nd[ni] + ' のメモの形が不正です';
+        }
         return '';
       }
       case 'kemuri_daily_v1': {

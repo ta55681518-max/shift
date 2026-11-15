@@ -73,6 +73,15 @@
   .calc u{text-decoration:none;font-size:8.5px;font-weight:800;color:#d92d20;line-height:1.15;min-height:11px;
           white-space:nowrap;overflow:hidden;letter-spacing:-.5px;}
   .calc u.loc{color:#8a6100;} .calc u.wx{color:#1d4ed8;} .calc.l4 u.wx{color:#fff;}
+  .calc u.nt{color:#7c3aed;} .calc.l4 u.nt{color:#fff;}
+  .calc.noted::after{content:'';position:absolute;left:4px;top:4px;width:6px;height:6px;border-radius:50%;background:#7c3aed;}
+  .calc.l4.noted::after{background:#fff;}
+  .ntags{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 10px;}
+  .ntags button{border:1.5px solid #e2e2e2;background:#fff;border-radius:999px;padding:9px 14px;font-size:15px;font-weight:700;color:#555;font-family:inherit;}
+  .ntags button.on{background:#f3ebff;border-color:#7c3aed;color:#5b21b6;}
+  .nmemo{width:100%;box-sizing:border-box;border:1.5px solid #e2e2e2;border-radius:12px;padding:12px;font-size:16px;font-family:inherit;}
+  .nlist{padding:9px 2px;border-bottom:1px solid #f2f2f2;font-size:14px;}
+  .nlist b{font-weight:800;margin-right:6px;} .nlist span{color:#5b21b6;font-weight:700;margin-right:6px;}
   .calc span{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;margin-top:auto;line-height:1.2;}
   .calc span.z{font-size:12px;color:#bbb;font-weight:700;}
   .calc i{position:absolute;right:2px;top:2px;font-style:normal;font-size:10px;line-height:1;}
@@ -188,9 +197,9 @@
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <script src="kemuri-core.js?v=20261114s1"></script>
-<script src="kemuri-backup.js?v=20261114s1"></script>
+<script src="kemuri-backup.js?v=20261115n1"></script>
 <script src="pos-source.js?v=20261012b"></script>
-<script src="kemuri-data.js?v=20261114s1"></script>
+<script src="kemuri-data.js?v=20261115n1"></script>
 <script src="kemuri-cal.js?v=20261115c2"></script><!-- 売上カレンダー（読むだけ） -->
 
 <script>
@@ -212,7 +221,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-const HTML_BUILD = '2026-11-14s1';   /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-11-15n1';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -462,10 +471,32 @@ function calYm(y, m){ while(m < 1){ m += 12; y--; } while(m > 12){ m -= 12; y++;
 function calMove(n){
   const ym = calYm(+CAL.ym.slice(0,4), +CAL.ym.slice(5,7) + n);
   if(+ym.slice(0,4) < 2022 || +ym.slice(0,4) > 2099) return;
-  CAL.ym = ym; CAL.pick = null; render();
+  CAL.ym = ym; CAL.pick = null; CAL.note = null; render();
 }
-function calYear(y){ CAL.ym = y + CAL.ym.slice(4); CAL.pick = null; render(); }
-function calPick(d){ CAL.pick = (CAL.pick === d) ? null : d; render(); }
+function calYear(y){ CAL.ym = y + CAL.ym.slice(4); CAL.pick = null; CAL.note = null; render(); }
+function calPick(d){
+  CAL.pick = (CAL.pick === d) ? null : d;
+  CAL.note = CAL.pick ? Object.assign({ day: CAL.pick, dirty: false }, KemuriData.notes.get(CAL.pick)) : null;
+  render();
+}
+/* ---- 日ごとの印とメモ（手で付ける。保存は kemuri_daynote_v1。バックアップにも入る） ---- */
+function calNoteTag(t){
+  if(!CAL.note) return;
+  const m = document.getElementById('cal-memo'); if(m) CAL.note.memo = m.value;
+  const i = CAL.note.tags.indexOf(t);
+  if(i >= 0) CAL.note.tags.splice(i, 1); else CAL.note.tags.push(t);
+  CAL.note.dirty = true; render();
+}
+function calNoteMemo(v){ if(CAL.note){ CAL.note.memo = v; CAL.note.dirty = true; } }
+async function calNoteSave(){
+  if(!CAL.note) return;
+  const m = document.getElementById('cal-memo'); if(m) CAL.note.memo = m.value;
+  const day = CAL.note.day, v = { tags: CAL.note.tags.slice(), memo: CAL.note.memo };
+  const ok = await KemuriGuard.withSave(() => KemuriData.notes.set(day, v));
+  if(!ok){ CAL.note = (CAL.pick === day) ? Object.assign({ day, dirty:false }, KemuriData.notes.get(day)) : null; saveNg('この日のメモ', KemuriData.notes.why); return; }
+  if(CAL.pick === day) CAL.note = Object.assign({ day, dirty:false }, KemuriData.notes.get(day));
+  render(); toast('メモを保存しました');
+}
 function calMd(d){ return (+d.slice(5,7)) + '/' + (+d.slice(8,10)) + '（' + CAL_DOW[KemuriCal.dow(d)] + '）'; }
 function calHtml(){
   const days = KemuriData.daily.load().days || {};
@@ -473,6 +504,7 @@ function calHtml(){
   const nowY = +KemuriCore.todayStr().slice(0,4);
   calWeather(CAL.ym);
   const wx = CALW[CAL.ym] || { st:'none', days:{} };
+  const notes = KemuriData.notes.load().days || {};
   /* 年のボタン：データがある年＋今年＋去年 */
   const ys = {}; ys[nowY] = 1; ys[nowY - 1] = 1; ys[m.year] = 1;
   Object.keys(days).forEach(d => { const y = +d.slice(0,4); if(y >= 2022) ys[y] = 1; });
@@ -491,15 +523,18 @@ function calHtml(){
     h += '<div class="calrow">' + w.cells.map(c => {
       if(!c.inMonth) return '<div class="calc out"></div>';
       const mark = c.holiday || c.local;
+      const nt = notes[c.date], ntag = nt && nt.tags && nt.tags[0];
       const cls = 'calc ' + (c.hasData ? c.level : 'none') + (c.holiday ? ' hol' : '')
-                + (c.dow === 6 ? ' sat' : c.dow === 0 ? ' sun' : '') + (CAL.pick === c.date ? ' pick' : '');
+                + (c.dow === 6 ? ' sat' : c.dow === 0 ? ' sun' : '') + (CAL.pick === c.date ? ' pick' : '') + (nt ? ' noted' : '');
       /* 天気：気象庁（那覇）が取れていればそれを、無ければ POS の天気を使う。荒れた日は印を出す */
       const x = wx.days[c.date.slice(8,10)], xm = KemuriCal.wxMark(x);
       const wi = xm ? xm.icon : (x && x.day ? KemuriCal.weatherIcon(x.day) : KemuriCal.weatherIcon(c.weather));
       return '<button class="' + cls + '" onclick="calPick(\'' + c.date + '\')">'
            + '<b>' + c.day + '</b>'
+           /* マスの1行：祝日の名前 → 手で付けた印 → 天気の目安の印 の順で、先にあるものを出す */
            + (mark ? '<u' + (!c.holiday && c.local ? ' class="loc"' : '') + '>' + esc(mark) + '</u>'
-                   : '<u class="wx">' + (xm ? xm.label : '') + '</u>')
+              : ntag ? '<u class="nt">' + esc(ntag) + '</u>'
+              : '<u class="wx">' + (xm ? xm.label : '') + '</u>')
            + (wi ? '<i>' + wi + '</i>' : '')
            + (!c.hasData ? '<span class="z">—</span>'
               : c.gross > 0 ? '<span>' + (c.gross / 10000).toFixed(1) + '</span>' : '<span class="z">休</span>')
@@ -539,6 +574,15 @@ function calHtml(){
          + '<div class="caldt"><span>最大瞬間風速</span><b>' + (px.gust == null ? '—' : px.gust + ' m/s' + (px.gustDir ? '（' + esc(px.gustDir) + '）' : '')) + '</b></div>'
          + (pm ? '<div class="warn gap" style="margin-bottom:0">' + pm.icon + ' <b>' + pm.label + '</b> の目安に当たる日です（台風かどうかは、この数字だけでは決められません）。</div>' : '');
     }else if(wx.st === 'load') h += '<div class="muted">那覇の天気を読み込んでいます…</div>';
+    /* 手で付ける印とメモ */
+    if(CAL.note && CAL.note.day === d){
+      h += '<div class="sec">この日の印とメモ</div>'
+         + '<div class="ntags">' + KemuriData.notes.TAGS.map(t =>
+             '<button class="' + (CAL.note.tags.indexOf(t) >= 0 ? 'on' : '') + '" onclick="calNoteTag(\'' + t + '\')">' + esc(t) + '</button>').join('') + '</div>'
+         + '<input id="cal-memo" class="nmemo" type="text" maxlength="' + KemuriData.notes.MEMO_MAX + '" placeholder="一言メモ（例：台風で18時に閉店／20名の宴会）" value="' + esc(CAL.note.memo) + '" oninput="calNoteMemo(this.value)">'
+         + '<button class="btn gap" onclick="calNoteSave()">' + (CAL.note.dirty ? 'メモを保存する' : 'メモを保存する') + '</button>'
+         + (KemuriData.notes.broken ? '<div class="warn gap">日ごとのメモの保存データが読めないため、保存を止めています。</div>' : '');
+    }
     /* ほかの年の «同じ曜日の並び» の日 */
     const py = +d.slice(0,4);
     /* 出すのは、今年・来年と、売上が入っている年だけ */
@@ -547,6 +591,7 @@ function calHtml(){
       h += '<div class="info gap" style="margin-bottom:0">' + (y === nowY ? '今年' : y === nowY - 1 ? '去年' : y === nowY + 1 ? '来年' : '') + '（' + y + '年）の同じ曜日の並びは <b>' + calMd(t) + '</b>'
          + (th ? '（' + esc(th) + '）' : '') + ' です。'
          + (tr ? (num(tr.gross) > 0 ? 'その日の売上は <b>' + yen(num(tr.gross)) + '</b>。' : 'その日は休みでした。') : '')
+         + (notes[t] ? '<br>その日のメモ：' + (notes[t].tags || []).map(x => '<b>' + esc(x) + '</b>').join('・') + (notes[t].memo ? '　' + esc(notes[t].memo) : '') : '')
          + '</div>';
     });
   }
@@ -560,7 +605,13 @@ function calHtml(){
        + (m.best ? '<div class="caldt"><span>いちばん高い日</span><b>' + calMd(m.best.date) + ' ' + yen(m.best.gross) + '</b></div>' : '')
        + (m.missing ? '<div class="muted gap">この月はあと ' + m.missing + '日ぶんが入っていません。</div>' : '');
   }
-  h += '<div class="muted gap">マスの数字は1日の売上（万円）。日を押すと、くわしい内容が出ます。<br>'
+  /* この月に付けた印とメモ */
+  const noted = Object.keys(notes).filter(k => k.slice(0,7) === m.ym).sort();
+  if(noted.length){
+    h += '<div class="sec">この月の印とメモ</div>' + noted.map(k =>
+      '<div class="nlist"><b>' + calMd(k) + '</b>' + (notes[k].tags || []).map(x => '<span>' + esc(x) + '</span>').join('') + esc(notes[k].memo || '') + '</div>').join('');
+  }
+  h += '<div class="muted gap">マスの数字は1日の売上（万円）。日を押すと、くわしい内容が出て、印とメモを付けられます（紫の点が付いた日）。<br>'
      + '色は ' + (m.yard.scope === 'year' ? m.year + '年の営業日の平均（' + yen(Math.round(m.yard.avg)) + '）' : m.yard.scope === 'all' ? '入っている全部の営業日の平均（' + yen(Math.round(m.yard.avg)) + '）' : '平均')
      + ' とくらべた忙しさです。売上0円の日は休みとして、平均から外しています。<br>'
      + '赤い日付は祝日・日曜（祝日は名前つき）。6/23 は慰霊の日の印を出します。'
@@ -1995,7 +2046,7 @@ function dataCheck(){
   toast('別の画面で変わったので、最新を読み直しました');
 }
 window.addEventListener('storage', e=>{
-  if(e.key === null || e.key === KemuriData.COST_KEY || e.key === KemuriData.RECIPE_KEY || e.key === KemuriData.DAILY_KEY || e.key === KemuriCore.SALES_KEY) dataCheck();
+  if(e.key === null || e.key === KemuriData.COST_KEY || e.key === KemuriData.RECIPE_KEY || e.key === KemuriData.DAILY_KEY || e.key === 'kemuri_daynote_v1' || e.key === KemuriCore.SALES_KEY) dataCheck();
 });
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState === 'visible') dataCheck(); });
 window.addEventListener('pageshow', ()=> dataCheck());
