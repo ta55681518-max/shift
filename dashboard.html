@@ -197,9 +197,9 @@
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <script src="kemuri-core.js?v=20261114s1"></script>
-<script src="kemuri-backup.js?v=20261115n1"></script>
+<script src="kemuri-backup.js?v=20261117n2"></script>
 <script src="pos-source.js?v=20261012b"></script>
-<script src="kemuri-data.js?v=20261115n1"></script>
+<script src="kemuri-data.js?v=20261117n2"></script>
 <script src="kemuri-cal.js?v=20261115c2"></script><!-- 売上カレンダー（読むだけ） -->
 
 <script>
@@ -221,7 +221,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-const HTML_BUILD = '2026-11-15n1';   /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-11-17n2';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -487,8 +487,14 @@ function calYear(y){ if(!calNoteLeave()) return; CAL.ym = y + CAL.ym.slice(4); C
 function calPick(d){
   if(!calNoteLeave()) return;
   CAL.pick = (CAL.pick === d) ? null : d;
-  CAL.note = CAL.pick ? Object.assign({ day: CAL.pick, dirty: false }, KemuriData.notes.get(CAL.pick)) : null;
+  CAL.note = CAL.pick ? calNoteOpen(CAL.pick) : null;
   render();
+}
+/* 編集のはじまり。base＝書きはじめた時点の、その日の保存済みの中身（保存の直前に照合する。指摘24）
+   gen＝入力のたびに進む番号（保存を待つあいだの追記を見分ける。指摘25） */
+function calNoteOpen(day){
+  const cur = KemuriData.notes.get(day);
+  return { day, dirty: false, gen: 0, base: JSON.stringify(cur), tags: cur.tags, memo: cur.memo };
 }
 /* ---- 日ごとの印とメモ（手で付ける。保存は kemuri_daynote_v1。バックアップにも入る） ---- */
 function calNoteTag(t){
@@ -496,17 +502,39 @@ function calNoteTag(t){
   const m = document.getElementById('cal-memo'); if(m) CAL.note.memo = m.value;
   const i = CAL.note.tags.indexOf(t);
   if(i >= 0) CAL.note.tags.splice(i, 1); else CAL.note.tags.push(t);
-  CAL.note.dirty = true; render();
+  CAL.note.dirty = true; CAL.note.gen++; render();
 }
 function calNoteBlur(){ setTimeout(() => { if(CAL.later && (document.activeElement || {}).id !== 'cal-memo'){ CAL.later = false; render(); } }, 400); }
-function calNoteMemo(v){ if(CAL.note){ CAL.note.memo = v; CAL.note.dirty = true; } }
+function calNoteMemo(v){ if(CAL.note && CAL.note.memo !== v){ CAL.note.memo = v; CAL.note.dirty = true; CAL.note.gen++; } }
 async function calNoteSave(){
   if(!CAL.note) return;
-  const m = document.getElementById('cal-memo'); if(m) CAL.note.memo = m.value;
-  const day = CAL.note.day, v = { tags: CAL.note.tags.slice(), memo: CAL.note.memo };
-  const ok = await KemuriGuard.withSave(() => KemuriData.notes.set(day, v));
+  const m = document.getElementById('cal-memo'); if(m) calNoteMemo(m.value);
+  const note = CAL.note, day = note.day, gen = note.gen, base = note.base;
+  const v = { tags: note.tags.slice(), memo: note.memo };
+  /* 指摘24：鍵の中で端末の最新を読み、«書きはじめた時点のこの日の中身» と同じときだけ書く。
+     別の画面がこの日のメモを変えていたら書かない（ほかの日の変更は、最新に重ねて残す） */
+  let theirs = null;
+  const ok = await KemuriGuard.withSave(() => {
+    const N = KemuriData.notes; N.reload();
+    if(N.broken) { N.why = '保存データが壊れています（' + N.broken + '）（上書きしないよう、保存を止めています）'; return false; }
+    const cur = N.get(day);
+    if(JSON.stringify(cur) !== base){ theirs = cur; return false; }
+    return N.set(day, v);
+  });
+  if(theirs){
+    const show = (theirs.tags.length || theirs.memo) ? theirs.tags.join('・') + (theirs.tags.length && theirs.memo ? '／' : '') + theirs.memo : '（印もメモも消されています）';
+    refresh();
+    if(confirm('⚠️ ' + calMd(day) + ' の印とメモは、別の画面で変えられています。\n\n別の画面の内容：' + show + '\n\n「OK」… いま入力した内容で上書きする\n「キャンセル」… 保存しない（入力は画面に残ります）')){
+      if(CAL.note === note){ note.base = JSON.stringify(theirs); return calNoteSave(); }
+    }
+    render(); return;
+  }
   if(!ok){ saveNg('この日のメモ', KemuriData.notes.why + '。入力した印とメモは画面に残してあるので、もう一度 «メモを保存する» を押せます'); return; }   /* 入力は消さない（もう一度押せる） */
-  if(CAL.pick === day) CAL.note = Object.assign({ day, dirty:false }, KemuriData.notes.get(day));
+  const saved = KemuriData.notes.get(day);
+  if(CAL.note === note){
+    if(note.gen === gen) CAL.note = calNoteOpen(day);
+    else { note.base = JSON.stringify(saved); note.dirty = true; render(); toast('保存しました（そのあとに入力した分は、まだ保存していません）'); return; }   /* 指摘25：待つあいだの追記は消さない */
+  }
   render(); toast('メモを保存しました');
 }
 function calMd(d){ return (+d.slice(5,7)) + '/' + (+d.slice(8,10)) + '（' + CAL_DOW[KemuriCal.dow(d)] + '）'; }
@@ -2055,7 +2083,7 @@ function dataCheck(){
   try{ const sl = KemuriCore.sales; sales = !!(sl._db && localStorage.getItem(KemuriCore.SALES_KEY) !== sl._raw); }catch(e){}
   if(!KemuriData.changedAny() && !sales) return;
   KemuriData.reloadAll(); refresh();
-  if(CAL.note && !CAL.note.dirty) CAL.note = Object.assign({ day: CAL.note.day, dirty: false }, KemuriData.notes.get(CAL.note.day));
+  if(CAL.note && !CAL.note.dirty) CAL.note = calNoteOpen(CAL.note.day);   /* 書きかけのときは base を進めない（指摘24） */
   render();
   toast('別の画面で変わったので、最新を読み直しました');
 }

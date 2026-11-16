@@ -55,6 +55,7 @@
       if (!row || typeof row !== 'object' || Array.isArray(row)) return '一覧の中に、形が壊れている行があります';
       /* 日ごとのメモ：印（tags）は文字の配列、メモ（memo）は文字 */
       if (key === NOTE_KEY) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return '日ごとのメモの日付の形が壊れています';   /* 指摘27：バックアップの検査と同じ基準 */
         if (row.tags != null && (!Array.isArray(row.tags) || row.tags.some(function (t) { return typeof t !== 'string'; }))) return '日ごとのメモの印の形が壊れています';
         if (row.memo != null && typeof row.memo !== 'string') return '日ごとのメモの形が壊れています';
       }
@@ -1389,7 +1390,7 @@
   }
 
   global.KemuriData = {
-    BUILD: '2026-11-15n1',        /* 画面に出す。古いJSが残っていないか見分けるため */
+    BUILD: '2026-11-17n2',        /* 画面に出す。古いJSが残っていないか見分けるため */
     reloadAll: reloadAll,
     notes: Notes,
     changedAny: changedAny,

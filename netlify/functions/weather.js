@@ -51,11 +51,14 @@ function numOf(s) {
 }
 
 /* ページのHTML → { days: { '01': {...} }, count } 。形が違えば throw */
-function parse(html, ym) {
+function parse(html, ym, whole) {
   const m = String(html).match(/<table[^>]*id=["']tablefix1["'][^>]*>([\s\S]*?)<\/table>/i);
   if (!m) throw new Error('表が見つかりません');
   const body = m[1];
   if (!/天気概況/.test(body) || !/最大瞬間風速/.test(body) || !/降水量/.test(body)) throw new Error('表の見出しが想定と違います');
+  /* 見出しの並び（左から 降水量 → 風向・風速 → 天気概況）も確かめる */
+  const iR = body.indexOf('降水量'), iW = body.indexOf('風向・風速'), iG = body.indexOf('天気概況');
+  if (!(iR < iW && iW < iG)) throw new Error('表の見出しの並びが想定と違います');
   const y = +ym.slice(0, 4), mo = +ym.slice(5, 7);
   const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
   const days = {};
@@ -63,10 +66,12 @@ function parse(html, ym) {
   const rows = body.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
   rows.forEach(function (tr) {
     const cells = (tr.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || []).map(text);
-    if (cells.length !== 21) return;                      // 見出しの行など
-    if (!/^\d{1,2}$/.test(cells[0])) return;
+    if (!cells.length || !/^\d{1,2}$/.test(cells[0])) return;   // 見出しの行など（日付で始まらない行）
+    /* 指摘26：日付の行なのに列の数が違う → ページの形が変わった。飛ばさずに全体を失敗にする */
+    if (cells.length !== 21) throw new Error('日の行の列の数が想定と違います（' + cells[0] + '日）');
     const d = +cells[0];
-    if (d < 1 || d > last) return;
+    if (d < 1 || d > last) throw new Error('日付が想定と違います（' + cells[0] + '）');
+    if (days[String(d).padStart(2, '0')]) throw new Error('同じ日が2回あります（' + d + '日）');
     const rain = numOf(cells[3]);
     days[String(d).padStart(2, '0')] = {
       rain: rain == null ? (cells[3] === '--' ? 0 : null) : rain,   // 「--」は雨なし
@@ -78,6 +83,9 @@ function parse(html, ym) {
     count++;
   });
   if (!count) throw new Error('日ごとの行が読めません');
+  /* 1日から続いていること。過ぎた月（whole）は、月の日数ぶんそろっていること */
+  for (let i = 1; i <= count; i++) if (!days[String(i).padStart(2, '0')]) throw new Error('日が抜けています（' + i + '日）');
+  if (whole && count !== last) throw new Error('月の日数ぶんそろっていません（' + count + '/' + last + '日）');
   return { days: days, count: count };
 }
 
@@ -111,7 +119,7 @@ async function handler(event) {
     const res = await fetch(url, { signal: ac.signal, headers: { 'User-Agent': 'KEMURIya-sales-calendar/1.0 (low-frequency; monthly page; cached)' } });
     if (!res.ok) return respond(502, { ok: false, why: '気象庁のページを開けませんでした（' + res.status + '）' });
     const html = await res.text();
-    const p = parse(html, ym);
+    const p = parse(html, ym, past);
     const body = { ok: true, ym: ym, station: STATION.name, source: SOURCE, edited: true, count: p.count, days: p.days };
     memo.set(ym, { at: Date.now(), body: body });
     if (memo.size > 60) memo.delete(memo.keys().next().value);
