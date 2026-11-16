@@ -774,7 +774,7 @@
     /* 保存するときのファイル名。日時が入っていれば、あとで見分けられる */
     filename: function (kind) {
       var d = new Date(), p = function (x) { return ('0' + x).slice(-2); };
-      return 'TEST_kemuri-' + (kind || 'backup') + '-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
+      return (global.KEMURI_ENV === 'test' ? 'TEST_' : '') + 'kemuri-' + (kind || 'backup') + '-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
            + '-' + p(d.getHours()) + p(d.getMinutes()) + '.json';
     },
     label: function (k) { return LABEL[k] || k; },
