@@ -1391,7 +1391,7 @@ function viewSet(){
 
   h += '<div class="card"><h2>AIの合言葉</h2>'
      + '<div class="muted">このサイトは誰でも開けるURLなので、AIを呼ぶには合言葉が要ります。'
-     + 'Netlifyの環境変数 <b>KEMURI_PASS</b> と同じものを、ここに1回だけ入れてください。'
+     + 'サーバーの設定ファイル（kemuri-private/config.php）の <b>kemuri_pass</b> と同じものを、ここに1回だけ入れてください。'
      + 'この端末に保存され、他の人には見えません。</div>'
      + '<input class="txt gap" id="pass" type="password" value="' + esc(aiPass()) + '" placeholder="合言葉">'
      + '<div class="two"><button class="btn btn-gray" onclick="savePass()">保存</button>'

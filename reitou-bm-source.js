@@ -116,7 +116,7 @@
               そのアプリとブラウザは別の入れ物になっていて、
               ブラウザからは開けない。中途半端に空のアプリを開くと
               そちらに取り込んでしまう事故が起きるので、開かない。 */
-    var APP = 'https://comfy-khapse-8a3cae.netlify.app/reitou.html';
+    var APP = 'https://kanri.kemuriya-shuri.com/reitou.html';
     var copyOnly = !!window.__kemuriCopyOnly;
     var done = function () {
       if (copyOnly) {
