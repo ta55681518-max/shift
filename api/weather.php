@@ -30,10 +30,13 @@ function num_of(string $s): ?float {
 }
 function blankish(string $s): bool { return (bool)preg_match('/^[-\/×#\s]*$/u', $s); }
 
-function parse_jma(string $html, string $ym): array {
+function parse_jma(string $html, string $ym, bool $whole = false): array {
   if (!preg_match('/<table[^>]*id=["\']tablefix1["\'][^>]*>([\s\S]*?)<\/table>/iu', $html, $m)) throw new RuntimeException('表が見つかりません');
   $body = $m[1];
   if (!preg_match('/天気概況/u', $body) || !preg_match('/最大瞬間風速/u', $body) || !preg_match('/降水量/u', $body)) throw new RuntimeException('表の見出しが想定と違います');
+  /* 見出しの並び（左から 降水量 → 風向・風速 → 天気概況）も確かめる */
+  $iR = strpos($body, '降水量'); $iW = strpos($body, '風向・風速'); $iG = strpos($body, '天気概況');
+  if ($iR === false || $iW === false || $iG === false || !($iR < $iW && $iW < $iG)) throw new RuntimeException('表の見出しの並びが想定と違います');
   $y = (int)substr($ym, 0, 4); $mo = (int)substr($ym, 5, 2);
   $last = (int)gmdate('t', gmmktime(0, 0, 0, $mo, 1, $y));
   $days = []; $count = 0;
@@ -41,10 +44,12 @@ function parse_jma(string $html, string $ym): array {
   foreach ($rows[0] as $tr) {
     preg_match_all('/<td[^>]*>[\s\S]*?<\/td>/iu', $tr, $tds);
     $c = array_map('cell_text', $tds[0]);
-    if (count($c) !== 21) continue;
-    if (!preg_match('/^\d{1,2}$/', $c[0])) continue;
+    if (!count($c) || !preg_match('/^\d{1,2}$/', $c[0])) continue;   // 見出しの行など（日付で始まらない行）
+    /* 日付の行なのに列の数が違う → ページの形が変わった。飛ばさずに全体を失敗にする */
+    if (count($c) !== 21) throw new RuntimeException('日の行の列の数が想定と違います（' . $c[0] . '日）');
     $d = (int)$c[0];
-    if ($d < 1 || $d > $last) continue;
+    if ($d < 1 || $d > $last) throw new RuntimeException('日付が想定と違います（' . $c[0] . '）');
+    if (isset($days[sprintf('%02d', $d)])) throw new RuntimeException('同じ日が2回あります（' . $d . '日）');
     $rain = num_of($c[3]);
     $days[sprintf('%02d', $d)] = [
       'rain' => $rain === null ? ($c[3] === '--' ? 0 : null) : $rain,
@@ -56,6 +61,9 @@ function parse_jma(string $html, string $ym): array {
     $count++;
   }
   if (!$count) throw new RuntimeException('日ごとの行が読めません');
+  /* 1日から続いていること。過ぎた月（whole）は、月の日数ぶんそろっていること */
+  for ($i = 1; $i <= $count; $i++) if (!isset($days[sprintf('%02d', $i)])) throw new RuntimeException('日が抜けています（' . $i . '日）');
+  if ($whole && $count !== $last) throw new RuntimeException('月の日数ぶんそろっていません（' . $count . '/' . $last . '日）');
   return ['days' => $days, 'count' => $count];
 }
 
@@ -89,7 +97,7 @@ $err = curl_error($ch);
 curl_close($ch);
 if ($html === false) kemuri_json(502, ['ok' => false, 'why' => '気象庁のページを読めませんでした（' . mb_substr($err, 0, 80, 'UTF-8') . '）']);
 if ($status < 200 || $status >= 300) kemuri_json(502, ['ok' => false, 'why' => '気象庁のページを開けませんでした（' . $status . '）']);
-try { $p = parse_jma((string)$html, $ym); }
+try { $p = parse_jma((string)$html, $ym, $past); }
 catch (Throwable $e) { kemuri_json(502, ['ok' => false, 'why' => '気象庁のページを読めませんでした（' . mb_substr($e->getMessage(), 0, 80, 'UTF-8') . '）']); }
 
 $out = ['ok' => true, 'ym' => $ym, 'station' => STATION_NAME, 'source' => SOURCE, 'edited' => true, 'count' => $p['count'], 'days' => $p['days']];
