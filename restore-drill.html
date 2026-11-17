@@ -77,8 +77,8 @@
    ・書くのは «失敗を起こす復元» と «試験データを消す» だけ。
      どちらも在庫アプリの編集権を空いているときだけ借りる（KemuriGuard.withEditor）
    ============================================================ */
-var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
-var STOP = (location.hostname === PROD_HOST) || window.KEMURI_ENV !== 'test' || !window.KemuriBackup || !window.KemuriGuard;
+var PROD_HOSTS = ['comfy-khapse-8a3cae.netlify.app', 'kanri.kemuriya-shuri.com']; // 本番（旧Netlify・新Xserver）
+var STOP = (PROD_HOSTS.indexOf(location.hostname) >= 0) || window.KEMURI_ENV !== 'test' || !window.KemuriBackup || !window.KemuriGuard;
 if (STOP) {
   document.body.innerHTML = '<div class="band">このページはテスト環境のURLでだけ使います（何もしていません）</div>';
   throw new Error('not test env');
@@ -599,7 +599,7 @@ function copyAll(){
   put('safe', ['URL：' + location.origin,
     'テスト環境の印：' + (window.KEMURI_ENV === 'test' ? 'あり（赤い帯が出ていること）' : 'なし'),
     'ホーム画面アプリとして起動：' + (sa ? 'はい' : 'いいえ'),
-    location.hostname === 'kemuri-kanri-test.netlify.app' ? '通常のテストURLです（試験はこのURLで行う）' : '⚠️ 通常のテストURLではありません。保存領域が別になるので、試験は kemuri-kanri-test.netlify.app で行ってください',
+    (location.hostname === 'kemuri-kanri-test.netlify.app' || location.hostname === 'kanri-test.kemuriya-shuri.com') ? '通常のテストURLです（試験はこのURLで行う）' : '⚠️ 通常のテストURLではありません。保存領域が別になるので、試験は kemuri-kanri-test.netlify.app で行ってください',
     '--- いまの中身 ---', stateText(s)].join('\n'));
 })();
 </script>

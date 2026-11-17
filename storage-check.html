@@ -75,8 +75,8 @@
 <script src="kemuri-errlog.js?v=20261027a1"></script>
 <script>
 'use strict';
-var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
-if (location.hostname === PROD_HOST) {
+var PROD_HOSTS = ['comfy-khapse-8a3cae.netlify.app', 'kanri.kemuriya-shuri.com']; // 本番（旧Netlify・新Xserver）
+if (PROD_HOSTS.indexOf(location.hostname) >= 0) {
   document.body.innerHTML = '<div class="band">本番サイトではこのページを使いません</div>';
   throw new Error('production host');
 }

@@ -14,9 +14,9 @@
    ============================================================ */
 (function () {
   'use strict';
-  var PROD_HOST = 'comfy-khapse-8a3cae.netlify.app';
+  var PROD_HOSTS = ['comfy-khapse-8a3cae.netlify.app', 'kanri.kemuriya-shuri.com']; // 本番（旧Netlify・新Xserver）
   var host = (location.hostname || '').toLowerCase();
-  if (host === PROD_HOST) return;
+  if (PROD_HOSTS.indexOf(host) >= 0) return;
 
   window.KEMURI_ENV = 'test';
   var blocked = [];
@@ -70,7 +70,7 @@
     if (!a) return;
     var h = '';
     try { h = new URL(a.getAttribute('href'), location.href).hostname.toLowerCase(); } catch (e) { return; }
-    if (h === PROD_HOST) {
+    if (PROD_HOSTS.indexOf(h) >= 0) {
       ev.preventDefault();
       note('link', a.getAttribute('href'));
       alert('テスト環境から本番サイトは開けません。');

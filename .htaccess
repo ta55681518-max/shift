@@ -1,0 +1,13 @@
+# 串焼KEMURI屋 管理アプリ（Xserver）— netlify.toml と同じ役目
+Options -Indexes
+RewriteEngine On
+# ブラウザからは /api/ai・/api/weather を呼ぶ。中身はサーバー側のPHP
+RewriteRule ^api/(ai|weather)/?$ api/$1.php [L,QSA]
+# 部品ファイルは直接開かせない
+RewriteRule ^api/_common\.php$ - [F,L]
+# アプリはこの端末のデータを見るので、古いHTML・JSが残らないようにする
+<IfModule mod_headers.c>
+  <FilesMatch "\.(html|js)$">
+    Header set Cache-Control "public, max-age=0, must-revalidate"
+  </FilesMatch>
+</IfModule>
