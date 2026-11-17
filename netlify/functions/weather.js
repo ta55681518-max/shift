@@ -55,6 +55,7 @@ function clean(t) {
    返り値：[{ t:'open', name, attrs, self } | { t:'close', name } | { t:'text', s } | { t:'bad', why }]
    ------------------------------------------------------------ */
 const RAW = { script: 1, style: 1, textarea: 1, title: 1, template: 1, noscript: 1, iframe: 1, noembed: 1, noframes: 1, xmp: 1 };
+const FOREIGN = { svg: 1, math: 1 };
 function isAlpha(c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 function isSpace(c) { return c === ' ' || c === '\n' || c === '\t' || c === '\r' || c === '\f'; }
 function tokenize(html) {
@@ -66,12 +67,19 @@ function tokenize(html) {
     const c = h[i + 1];
     if (h.startsWith('<!--', i)) {                                   // コメント
       flush(i);
+      /* 標準の形（<!-- … -->）だけ受け付ける。ブラウザが特別に扱う変則の形（<!--> <!---> …--!>）は、
+         どこで終わるかの解釈がずれて行を隠すおそれがあるので、読まずに止める */
+      if (h.startsWith('<!-->', i) || h.startsWith('<!--->', i)) { out.push({ t: 'bad', why: 'コメントの形が想定と違います' }); return out; }
       const e = h.indexOf('-->', i + 4);
       if (e < 0) { out.push({ t: 'bad', why: 'コメントが閉じていません' }); return out; }
+      const odd = h.indexOf('--!>', i + 4);
+      if (odd >= 0 && odd < e) { out.push({ t: 'bad', why: 'コメントの形が想定と違います' }); return out; }
       i = e + 3; textFrom = i; continue;
     }
     if (c === '!' || c === '?') {                                    // <!DOCTYPE ...> など
       flush(i);
+      /* CDATA（図形・数式の中だけで意味を持つ囲み）は扱わない。あれば止める */
+      if (h.slice(i, i + 9).toUpperCase() === '<![CDATA[') { out.push({ t: 'bad', why: 'CDATA は扱えません' }); return out; }
       const e = h.indexOf('>', i);
       if (e < 0) { out.push({ t: 'bad', why: '宣言が閉じていません' }); return out; }
       i = e + 1; textFrom = i; continue;
@@ -129,12 +137,18 @@ function tokenize(html) {
       if (!Object.prototype.hasOwnProperty.call(attrs, an)) attrs[an] = av;   // 同じ名前は最初のものが有効
     }
     if (!closed) { out.push({ t: 'bad', why: 'タグが途中で終わっています' }); return out; }
+    /* 図形・数式（svg / math）の中は、HTML と読み方の決まりが違う。扱わずに止める */
+    if (FOREIGN[name]) { out.push({ t: 'bad', why: name + ' は扱えません' }); return out; }
     out.push({ t: 'open', name: name, attrs: attrs, self: self });
     i = j; textFrom = i;
-    if (RAW[name] && !self) {                                        // 中身は文字として読み飛ばす
+    if (RAW[name]) {                                                 // 中身は読み飛ばす
+      /* 自分で閉じる形（<script/> など）は、ブラウザでは «閉じていない» 扱いになる。止める */
+      if (self) { out.push({ t: 'bad', why: name + ' の形が想定と違います' }); return out; }
       const re = new RegExp('</' + name + '[\\s>/]', 'i');
       const rest = h.slice(i), mm = re.exec(rest);
       if (!mm) { out.push({ t: 'bad', why: name + ' が閉じていません' }); return out; }
+      /* 中に同じ名前の開始がある（入れ子）と、どこで終わるかを取り違える。止める */
+      if (new RegExp('<' + name + '[\\s>/]', 'i').test(rest.slice(0, mm.index))) { out.push({ t: 'bad', why: name + ' が入れ子になっています' }); return out; }
       i += mm.index; textFrom = i;                                   // 中身は捨てる（文字としても使わない）
     }
   }
@@ -150,11 +164,17 @@ function numOf(s) {
 
 /* 表の中で、行の外に置いてよいタグ（行のまとまり・列の指定など） */
 const TABLE_PARTS = { tbody: 1, thead: 1, tfoot: 1, caption: 1, colgroup: 1, col: 1 };
+/* セルの中に置いてよい飾りのタグ（文字だけ拾う）。ここに無いタグが表の中にあれば、想定外として全体を失敗にする */
+const CELL_INLINE = { a: 1, div: 1, span: 1, br: 1, img: 1, b: 1, strong: 1, i: 1, em: 1, u: 1, font: 1, small: 1, sup: 1, sub: 1, p: 1, nobr: 1, wbr: 1 };
 
 /* ページのHTML → { days: { '01': {...} }, count } 。形が違えば throw
    方針：推測で埋めない。読めない形・想定と違う形は、1か所でも全体を失敗にする */
 function parse(html, ym, whole) {
   const toks = tokenize(html);
+  /* 0) 読めない部分・扱わない書き方がページのどこかに1つでもあれば、全体を失敗にする
+        （表の前にあるものでも、表の始まり・終わりの解釈をずらすおそれがあるため） */
+  const badTok = toks.find(function (k) { return k.t === 'bad'; });
+  if (badTok) throw new Error('ページに読めない部分があります（' + badTok.why + '）');
   /* 1) コメントや設定値の外にある «本物の» 表のうち、id が tablefix1 のものを選ぶ */
   const starts = [];
   toks.forEach(function (k, i) { if (k.t === 'open' && k.name === 'table' && k.attrs.id === 'tablefix1') starts.push(i); });
@@ -180,10 +200,10 @@ function parse(html, ym, whole) {
         cell = { kind: nm, text: '' };
       } else if (TABLE_PARTS[nm]) {
         if (row || cell) throw new Error('表の行の中に、行のまとまりのタグがあります');
-      } else if (!cell && RAW[nm]) {
+      } else if (!(cell && CELL_INLINE[nm])) {
+        /* セルの中の飾り（a・div・span・br など）だけ読み飛ばす。それ以外・セルの外のタグは想定外 */
         throw new Error('表の中に想定外のタグがあります（' + nm + '）');
       }
-      /* そのほかのタグ（a・div・span・br・img など）は、セルの中の飾りとして読み飛ばす（文字は拾う） */
       continue;
     }
     /* 閉じタグ */
@@ -200,6 +220,8 @@ function parse(html, ym, whole) {
       cell = null;
     } else if (TABLE_PARTS[nm]) {
       if (row || cell) throw new Error('表の行の中に、行のまとまりのタグがあります');
+    } else if (!(cell && CELL_INLINE[nm])) {
+      throw new Error('表の中に想定外の閉じタグがあります（' + nm + '）');
     }
   }
   if (!ended) throw new Error('表が閉じていません');
