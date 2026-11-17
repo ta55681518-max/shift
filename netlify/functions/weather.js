@@ -54,7 +54,9 @@ function numOf(s) {
 function parse(html, ym, whole) {
   const m = String(html).match(/<table[^>]*id=["']tablefix1["'][^>]*>([\s\S]*?)<\/table>/i);
   if (!m) throw new Error('表が見つかりません');
-  const body = m[1];
+  /* コメントは画面に出ない部分なので、先に取り除く。閉じていないコメントは、後ろを全部隠すので失敗にする */
+  const body = m[1].replace(/<!--[\s\S]*?-->/g, '');
+  if (body.indexOf('<!--') >= 0) throw new Error('表の中のコメントが閉じていません');
   if (!/天気概況/.test(body) || !/最大瞬間風速/.test(body) || !/降水量/.test(body)) throw new Error('表の見出しが想定と違います');
   /* 見出しの並び（左から 降水量 → 風向・風速 → 天気概況）も確かめる */
   const iR = body.indexOf('降水量'), iW = body.indexOf('風向・風速'), iG = body.indexOf('天気概況');
@@ -64,6 +66,22 @@ function parse(html, ym, whole) {
   const days = {};
   let count = 0;
   const rows = body.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+  /* 指摘26（3回目）：«拾えなかった行・セル» が1つでもあれば、全体を失敗にする。
+     閉じタグの抜けた行やセルは、上の取り出しに掛からず黙って消えるため、
+     開始タグの数・終了タグの数・実際に拾えた数の3つが一致することを先に確かめる */
+  const cnt = function (re) { return (body.match(re) || []).length; };
+  const trOpen = cnt(/<tr[\s>\/]/gi), trClose = cnt(/<\/tr\s*>/gi);
+  const tdOpen = cnt(/<td[\s>\/]/gi), tdClose = cnt(/<\/td\s*>/gi);
+  const thOpen = cnt(/<th[\s>\/]/gi), thClose = cnt(/<\/th\s*>/gi);
+  let tdGot = 0, thGot = 0;
+  rows.forEach(function (tr) {
+    tdGot += (tr.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || []).length;
+    thGot += (tr.match(/<th[^>]*>[\s\S]*?<\/th>/gi) || []).length;
+  });
+  if (trOpen !== trClose || trOpen !== rows.length) throw new Error('表の行のタグが対応していません');
+  if (tdOpen !== tdClose || tdOpen !== tdGot) throw new Error('表のセルのタグが対応していません');
+  if (thOpen !== thClose || thOpen !== thGot) throw new Error('表の見出しのタグが対応していません');
+  if (/<table[\s>]/i.test(body)) throw new Error('表の中に別の表があります');
   rows.forEach(function (tr) {
     const cells = (tr.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || []).map(text);
     const heads = (tr.match(/<th[^>]*>[\s\S]*?<\/th>/gi) || []).length;
