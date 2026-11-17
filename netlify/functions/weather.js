@@ -66,8 +66,12 @@ function parse(html, ym, whole) {
   const rows = body.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
   rows.forEach(function (tr) {
     const cells = (tr.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || []).map(text);
-    if (!cells.length || !/^\d{1,2}$/.test(cells[0])) return;   // 見出しの行など（日付で始まらない行）
-    /* 指摘26：日付の行なのに列の数が違う → ページの形が変わった。飛ばさずに全体を失敗にする */
+    const heads = (tr.match(/<th[^>]*>[\s\S]*?<\/th>/gi) || []).length;
+    /* 見出しとして飛ばしてよいのは «td が1つも無い行»（th だけの行・空の行）だけ。
+       td のある行はすべて観測の行とみなし、形が想定と違えば、飛ばさずに全体を失敗にする（指摘26） */
+    if (!cells.length) return;
+    if (heads) throw new Error('日の行に見出しのセルが混ざっています');
+    if (!/^\d{1,2}$/.test(cells[0])) throw new Error('日付のセルが想定と違います（' + cells[0].slice(0, 10) + '）');
     if (cells.length !== 21) throw new Error('日の行の列の数が想定と違います（' + cells[0] + '日）');
     const d = +cells[0];
     if (d < 1 || d > last) throw new Error('日付が想定と違います（' + cells[0] + '）');
