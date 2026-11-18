@@ -36,3 +36,9 @@
   （必要なら串在庫の「引いた記録」で取消）。
 - テスト：ヘッドレス Chromium（`/opt/pw-browsers/chromium` ＋ `/opt/node22/lib/node_modules/playwright` を `require`）。
   リポジトリを `python3 -m http.server` で配信し、同じオリジンで dashboard と kushiyaki を開いて試すと本番に近い。
+
+## Xserver への引っ越し（2026-11 進行中）
+- 新しい本番：`https://kanri.kemuriya-shuri.com/`（枝 `xserver-prod`）、テスト：`https://kanri-test.kemuriya-shuri.com/`（枝 `xserver-test`）
+- サーバー側の処理は `api/*.php`（Netlify Functions の置き換え）。`.htaccess` で `/api/ai`・`/api/weather` を PHP に回す
+- 合言葉とOpenAIのキーは公開フォルダの外 `kemuriya-shuri.com/kemuri-private/config.php`（リポジトリには入れない）
+- POS取り込みボタンの行き先も新しいURLに変えた。iPhoneのブックマークは引っ越しの日に入れ直す

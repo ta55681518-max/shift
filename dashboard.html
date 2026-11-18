@@ -2,7 +2,6 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<script src="test-env.js?v=test2"></script><!-- テスト環境専用（test-envブランチのみ） -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -197,9 +196,9 @@
 <input type="file" id="dailyfile" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,application/csv,application/vnd.ms-excel" onchange="onPickDaily(this)">
 
 <script src="kemuri-core.js?v=20261114s1"></script>
-<script src="kemuri-backup.js?v=20261117n2"></script>
+<script src="kemuri-backup.js?v=20261118x1"></script>
 <script src="pos-source.js?v=20261012b"></script>
-<script src="kemuri-data.js?v=20261117n2"></script>
+<script src="kemuri-data.js?v=20261118x1"></script>
 <script src="kemuri-cal.js?v=20261115c2"></script><!-- 売上カレンダー（読むだけ） -->
 
 <script>
@@ -221,7 +220,7 @@ const yen = n => '¥' + Math.round(num(n)).toLocaleString('ja-JP');
 const fmtDay = d => { const m = String(d||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);
                       return m ? (+m[2]) + '/' + (+m[3]) : String(d||''); };
 
-const HTML_BUILD = '2026-11-17n2';   /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-11-18x1';   /* JSの ?v= と揃えること */
 let TAB = 'tmr';        /* 開いたら «明日の仕込み»。毎日見るのはここなので */
 let RANGE = 'all';                      // all | 7 | 30 | month
 let A = null;                           // 直近の分析結果
@@ -1791,7 +1790,7 @@ function viewSet(){
 
   h += '<div class="card"><h2>AIの合言葉</h2>'
      + '<div class="muted">このサイトは誰でも開けるURLなので、AIを呼ぶには合言葉が要ります。'
-     + 'Netlifyの環境変数 <b>KEMURI_PASS</b> と同じものを、ここに1回だけ入れてください。'
+     + 'サーバーの設定ファイル（kemuri-private/config.php）の <b>kemuri_pass</b> と同じものを、ここに1回だけ入れてください。'
      + 'この端末に保存され、他の人には見えません。</div>'
      + '<input class="txt gap" id="pass" type="password" value="' + esc(aiPass()) + '" placeholder="合言葉">'
      + '<div class="two"><button class="btn btn-gray" onclick="savePass()">保存</button>'

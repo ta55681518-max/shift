@@ -58,13 +58,10 @@
     kemuri_costs_v1:'仕入原価',   kemuri_recipes_v1:'レシピ',  kemuri_zaiko_v1:'串打ち前の在庫',
     kemuri_kushiyaki_v1:'串焼き', kemuri_hacchu_v1:'発注', kemuri_daynote_v1:'日ごとのメモ'
   };
-  /* テスト環境（test-envブランチ）だけの設定：
-     書き出すバックアップの印を本番と変える。本番の復元処理は印が
-     'kemuri-backup' のファイルしか受け付けないので、テストで作った
-     バックアップを本番で読み込むことはできない。
-     読み込みは、本番で書き出したもの（'kemuri-backup'）も受け付ける。 */
-  var TAG = 'kemuri-backup-TEST';
-  var ACCEPT = ['kemuri-backup-TEST', 'kemuri-backup'];
+  /* バックアップの印。本番は 'kemuri-backup' だけを書き出し、これだけを受け付ける
+     （テストサイトで作ったバックアップは、本番では読み込まない） */
+  var TAG = 'kemuri-backup';
+  var ACCEPT = ['kemuri-backup'];
   var FORMAT = 2;                       /* 書き出す形式の版 */
   var MARK = 'kemuri_restore_v1';       /* 復元中の印（途中で止まったときの控え） */
 

@@ -2,12 +2,10 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<script src="test-env.js?v=test2"></script><!-- テスト環境専用（test-envブランチのみ） -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="TEST在庫"><!-- テスト環境専用（test-envブランチのみ。本番は「冷凍在庫」） -->
-<link rel="apple-touch-icon" href="test-icon.png"><!-- テスト環境専用（test-envブランチのみ） -->
+<meta name="apple-mobile-web-app-title" content="冷凍在庫">
 <title>KEMURI屋 冷凍在庫</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -232,10 +230,10 @@
 
 <!-- 共通の土台（小道具・売上履歴）と、売上の取得層。アプリ本体より先に読む -->
 <script src="kemuri-core.js?v=20261114s1"></script>
-<script src="kemuri-backup.js?v=20261117n2"></script>
+<script src="kemuri-backup.js?v=20261118x1"></script>
 <script src="pos-source.js?v=20261012b"></script>
 <!-- 日別売上の読み取り（dailyFromCsv）と保存（daily.importRows）はここにある -->
-<script src="kemuri-data.js?v=20261117n2"></script>
+<script src="kemuri-data.js?v=20261118x1"></script>
 
 <script>
 /* ============================================================
@@ -286,7 +284,7 @@ const REASONS = ['棚卸（数え直し）','廃棄','まかない','こぼし�
    pos … POSの売上から自動で在庫を引くかどうか。
          調味料や備品は「1皿でどれだけ減るか」が決まらないので棚卸だけで回す。
    ※ k（キー）は保存したデータに残るので、後から変えないこと。名前と絵文字は変えてよい。 */
-const HTML_BUILD = '2026-11-17n2';            /* JSの ?v= と揃えること */
+const HTML_BUILD = '2026-11-18x1';            /* JSの ?v= と揃えること */
 const CATS = [
   { k:'frozen', name:'冷凍',         ic:'🧊', pos:true  },
   { k:'fresh',  name:'生鮮',         ic:'🥬', pos:true  },
