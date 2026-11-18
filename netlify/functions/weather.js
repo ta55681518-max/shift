@@ -66,6 +66,8 @@ const PAGE_TAGS = dict('html head body title meta link style script noscript div
   + 'header footer nav main section article center strong b em i u small sup sub font nobr wbr');
 /* 中身を読み飛ばす要素（中のタグ文字はタグにしない） */
 const RAW = dict('script style title noscript');
+/* 失敗の理由に出すタグの名前：半角の英数字とハイフンだけのときに、先頭20文字まで（PHP版と同じ文言にするため） */
+function shown(name) { return /^[a-z0-9-]+$/.test(name) ? name.slice(0, 20) : '名前に想定外の文字'; }
 function isAlpha(c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 function isSpace(c) { return c === ' ' || c === '\n' || c === '\t' || c === '\r' || c === '\f'; }
 function tokenize(html) {
@@ -86,21 +88,18 @@ function tokenize(html) {
       if (odd >= 0 && odd < e) { out.push({ t: 'bad', why: 'コメントの形が想定と違います' }); return out; }
       i = e + 3; textFrom = i; continue;
     }
-    if (c === '!' || c === '?') {                                    // <!DOCTYPE ...> など
+    if (c === '!' || c === '?') {                                    // 宣言など
       flush(i);
-      /* CDATA（図形・数式の中だけで意味を持つ囲み）は扱わない。あれば止める */
-      if (h.slice(i, i + 9).toUpperCase() === '<![CDATA[') { out.push({ t: 'bad', why: 'CDATA は扱えません' }); return out; }
-      const e = h.indexOf('>', i);
-      if (e < 0) { out.push({ t: 'bad', why: '宣言が閉じていません' }); return out; }
-      i = e + 1; textFrom = i; continue;
+      /* 受け付ける宣言は «<!doctype html>» の1つの形だけ（大文字小文字は問わない）。
+         それ以外（公開識別子つきの DOCTYPE・<?xml …?>・CDATA・そのほかの <! …>）は、どこで終わるかの
+         解釈がずれて、引用符の中の文字をタグとして読むおそれがあるので、読まずに止める（レビュー15） */
+      const dm = /^<!doctype[ \t\n\r\f]+html[ \t\n\r\f]*>/i.exec(h.slice(i, i + 64));
+      if (!dm) { out.push({ t: 'bad', why: '宣言の形が想定と違います' }); return out; }
+      i += dm[0].length; textFrom = i; continue;
     }
     if (c === '/') {                                                 // 閉じタグ
-      if (!(i + 2 < n) || !isAlpha(h[i + 2])) {                      // </ のあとが文字でない：ブラウザはコメント扱いにする
-        flush(i);
-        const e = h.indexOf('>', i);
-        if (e < 0) { out.push({ t: 'bad', why: 'タグが閉じていません' }); return out; }
-        i = e + 1; textFrom = i; continue;
-      }
+      /* </ のあとが文字でない形（ブラウザはコメント扱いにする）は、扱わずに止める */
+      if (!(i + 2 < n) || !isAlpha(h[i + 2])) { flush(i); out.push({ t: 'bad', why: 'タグの形が想定と違います' }); return out; }
       flush(i);
       let j = i + 2;
       while (j < n && !isSpace(h[j]) && h[j] !== '>' && h[j] !== '/') j++;
@@ -108,8 +107,8 @@ function tokenize(html) {
       const e = h.indexOf('>', j);
       if (e < 0) { out.push({ t: 'bad', why: '閉じタグが途中で終わっています' }); return out; }
       /* 閉じタグに余計なもの（設定値など）が付いていたら、形が想定外として印を付ける */
-      if (h.slice(j, e).replace(/[ \t\n\r\f]/g, '') !== '') out.push({ t: 'bad', why: '閉じタグの形が想定と違います（' + name + '）' });
-      if (!PAGE_TAGS[name]) { out.push({ t: 'bad', why: 'このタグは扱えません（' + name.slice(0, 20) + '）' }); return out; }
+      if (h.slice(j, e).replace(/[ \t\n\r\f]/g, '') !== '') out.push({ t: 'bad', why: '閉じタグの形が想定と違います（' + shown(name) + '）' });
+      if (!PAGE_TAGS[name]) { out.push({ t: 'bad', why: 'このタグは扱えません（' + shown(name) + '）' }); return out; }
       out.push({ t: 'close', name: name });
       i = e + 1; textFrom = i; continue;
     }
@@ -149,7 +148,7 @@ function tokenize(html) {
     }
     if (!closed) { out.push({ t: 'bad', why: 'タグが途中で終わっています' }); return out; }
     /* 一覧に無いタグは扱わない（図形・数式・plaintext・template など、読み方の決まりが違うものを含む） */
-    if (!PAGE_TAGS[name]) { out.push({ t: 'bad', why: 'このタグは扱えません（' + name.slice(0, 20) + '）' }); return out; }
+    if (!PAGE_TAGS[name]) { out.push({ t: 'bad', why: 'このタグは扱えません（' + shown(name) + '）' }); return out; }
     out.push({ t: 'open', name: name, attrs: attrs, self: self });
     i = j; textFrom = i;
     if (RAW[name]) {                                                 // 中身は読み飛ばす
@@ -312,7 +311,10 @@ async function handler(event) {
     const res = await fetch(url, { signal: ac.signal, headers: { 'User-Agent': 'KEMURIya-sales-calendar/1.0 (low-frequency; monthly page; cached)' } });
     if (!res.ok) return respond(502, { ok: false, why: '気象庁のページを開けませんでした（' + res.status + '）' });
     /* UTF-8 として正しく読めなければ、置き換えずに止める */
-    const html = new TextDecoder('utf-8', { fatal: true }).decode(await res.arrayBuffer());
+    const bytes = await res.arrayBuffer();
+    let html;
+    try { html = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch (e) { throw new Error('ページの文字が壊れています'); }
     const p = parse(html, ym, past);
     const body = { ok: true, ym: ym, station: STATION.name, source: SOURCE, edited: true, count: p.count, days: p.days };
     memo.set(ym, { at: Date.now(), body: body });
