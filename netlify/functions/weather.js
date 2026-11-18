@@ -127,8 +127,11 @@ function tokenize(html) {
       if (h[j] === '/') { if (h[j + 1] === '>') { self = true; j += 2; closed = true; break; } j++; continue; }
       let a = j;
       while (j < n && !isSpace(h[j]) && h[j] !== '=' && h[j] !== '>' && h[j] !== '/') j++;
-      if (j === a) { j++; continue; }                                // 先頭が «=» の設定名など
+      /* 設定の名前が読めない（«=» で始まる）・名前に引用符や «<» がある → 直して読まずに止める（レビュー16）。
+         ブラウザは «=id» という別の名前の設定として扱うので、ここで «id» に直すと、目的でない表を選んでしまう */
+      if (j === a) { out.push({ t: 'bad', why: 'タグの設定の形が想定と違います' }); return out; }
       const an = h.slice(a, j).toLowerCase();
+      if (/["'<]/.test(an)) { out.push({ t: 'bad', why: 'タグの設定の形が想定と違います' }); return out; }
       let av = '';
       while (j < n && isSpace(h[j])) j++;
       if (h[j] === '=') {
@@ -142,6 +145,8 @@ function tokenize(html) {
           a = j;
           while (j < n && !isSpace(h[j]) && h[j] !== '>') j++;
           av = h.slice(a, j);
+          /* 引用符なしの値：空・引用符や « < = ` » を含むものは、想定外の形として止める */
+          if (av === '' || /["'<=`]/.test(av)) { out.push({ t: 'bad', why: 'タグの設定の形が想定と違います' }); return out; }
         }
       }
       if (!Object.prototype.hasOwnProperty.call(attrs, an)) attrs[an] = av;   // 同じ名前は最初のものが有効
