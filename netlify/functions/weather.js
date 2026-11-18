@@ -41,21 +41,31 @@ function jstYm(now) {
 }
 
 /* 文字の部分（タグの外）の後始末：よく出る記号を戻し、空白をつめる */
+/* 空白として扱うのは、半角の空白・タブ・改行（LF/CR）・改ページの5つだけ（PHP版と同じ決まり。指摘A-2） */
 function clean(t) {
   return String(t).replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+    .replace(/&amp;/g, '&').replace(/[ \t\n\r\f]+/g, ' ').replace(/^ | $/g, '');
 }
 
 /* ------------------------------------------------------------
    HTML を頭から順に読み、«本物のタグ» «文字» を区別して並べる（Codex指摘26）。
    ・コメント（<!-- -->）の中は読まない。閉じていないコメントは «読めない» の印を付ける
    ・タグの設定値（引用符の中）は設定値として読む。中に <tr> などの文字があってもタグにしない
-   ・script / style / textarea / title / template / noscript などの中身は読み飛ばす（画面に表として出ない部分。中のタグ文字はタグにしない）
+   ・script / style / title / noscript の中身は読み飛ばす（画面に表として出ない部分。中のタグ文字はタグにしない）
+   ・使ってよいタグの一覧（PAGE_TAGS）に無いタグは bad（開始・終了とも）
    ・途中で終わったタグ・閉じていない引用符は «読めない» の印（bad）にする
    返り値：[{ t:'open', name, attrs, self } | { t:'close', name } | { t:'text', s } | { t:'bad', why }]
    ------------------------------------------------------------ */
-const RAW = { script: 1, style: 1, textarea: 1, title: 1, template: 1, noscript: 1, iframe: 1, noembed: 1, noframes: 1, xmp: 1 };
-const FOREIGN = { svg: 1, math: 1 };
+/* 一覧は «自分で持っている名前だけ» を見る（constructor などの名前を誤って拾わない。指摘A-5） */
+function dict(names) { const o = Object.create(null); names.split(' ').forEach(function (n) { o[n] = 1; }); return o; }
+/* ページ全体で使ってよいタグ（指摘A-1）。ここに無いタグ（plaintext・template・svg・select など、
+   HTML の読み方そのものを変えるものを含む）が1つでもあれば、ページ全体を «読めない» として止める。
+   本物の気象庁ページ（那覇・日ごとの値）で使われているタグと、害のない飾り・区切りのタグだけを並べている */
+const PAGE_TAGS = dict('html head body title meta link style script noscript div span p a img br hr ul ol li dl dt dd '
+  + 'table thead tbody tfoot tr td th caption colgroup col form input label button h1 h2 h3 h4 h5 h6 '
+  + 'header footer nav main section article center strong b em i u small sup sub font nobr wbr');
+/* 中身を読み飛ばす要素（中のタグ文字はタグにしない） */
+const RAW = dict('script style title noscript');
 function isAlpha(c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 function isSpace(c) { return c === ' ' || c === '\n' || c === '\t' || c === '\r' || c === '\f'; }
 function tokenize(html) {
@@ -98,7 +108,8 @@ function tokenize(html) {
       const e = h.indexOf('>', j);
       if (e < 0) { out.push({ t: 'bad', why: '閉じタグが途中で終わっています' }); return out; }
       /* 閉じタグに余計なもの（設定値など）が付いていたら、形が想定外として印を付ける */
-      if (h.slice(j, e).trim() !== '') out.push({ t: 'bad', why: '閉じタグの形が想定と違います（' + name + '）' });
+      if (h.slice(j, e).replace(/[ \t\n\r\f]/g, '') !== '') out.push({ t: 'bad', why: '閉じタグの形が想定と違います（' + name + '）' });
+      if (!PAGE_TAGS[name]) { out.push({ t: 'bad', why: 'このタグは扱えません（' + name.slice(0, 20) + '）' }); return out; }
       out.push({ t: 'close', name: name });
       i = e + 1; textFrom = i; continue;
     }
@@ -137,18 +148,18 @@ function tokenize(html) {
       if (!Object.prototype.hasOwnProperty.call(attrs, an)) attrs[an] = av;   // 同じ名前は最初のものが有効
     }
     if (!closed) { out.push({ t: 'bad', why: 'タグが途中で終わっています' }); return out; }
-    /* 図形・数式（svg / math）の中は、HTML と読み方の決まりが違う。扱わずに止める */
-    if (FOREIGN[name]) { out.push({ t: 'bad', why: name + ' は扱えません' }); return out; }
+    /* 一覧に無いタグは扱わない（図形・数式・plaintext・template など、読み方の決まりが違うものを含む） */
+    if (!PAGE_TAGS[name]) { out.push({ t: 'bad', why: 'このタグは扱えません（' + name.slice(0, 20) + '）' }); return out; }
     out.push({ t: 'open', name: name, attrs: attrs, self: self });
     i = j; textFrom = i;
     if (RAW[name]) {                                                 // 中身は読み飛ばす
       /* 自分で閉じる形（<script/> など）は、ブラウザでは «閉じていない» 扱いになる。止める */
       if (self) { out.push({ t: 'bad', why: name + ' の形が想定と違います' }); return out; }
-      const re = new RegExp('</' + name + '[\\s>/]', 'i');
+      const re = new RegExp('</' + name + '[ \\t\\n\\r\\f>/]', 'i');
       const rest = h.slice(i), mm = re.exec(rest);
       if (!mm) { out.push({ t: 'bad', why: name + ' が閉じていません' }); return out; }
       /* 中に同じ名前の開始がある（入れ子）と、どこで終わるかを取り違える。止める */
-      if (new RegExp('<' + name + '[\\s>/]', 'i').test(rest.slice(0, mm.index))) { out.push({ t: 'bad', why: name + ' が入れ子になっています' }); return out; }
+      if (new RegExp('<' + name + '[ \\t\\n\\r\\f>/]', 'i').test(rest.slice(0, mm.index))) { out.push({ t: 'bad', why: name + ' が入れ子になっています' }); return out; }
       i += mm.index; textFrom = i;                                   // 中身は捨てる（文字としても使わない）
     }
   }
@@ -157,19 +168,24 @@ function tokenize(html) {
 }
 
 /* 気象庁の表の数値：「3.5」「3.5)」「0.0]」→ 数値。「--」（現象なし）「///」「×」「#」や空 → null */
+/* 桁が多すぎる数字（15文字を超える）は、表の形がおかしいとみなして止める（指摘A-3） */
 function numOf(s) {
   const m = String(s).match(/^-?\d+(?:\.\d+)?/);
-  return m ? Number(m[0]) : null;
+  if (!m) return null;
+  if (m[0].length > 15) throw new Error('数値が想定と違います');
+  return Number(m[0]);
 }
 
 /* 表の中で、行の外に置いてよいタグ（行のまとまり・列の指定など） */
-const TABLE_PARTS = { tbody: 1, thead: 1, tfoot: 1, caption: 1, colgroup: 1, col: 1 };
+const TABLE_PARTS = dict('tbody thead tfoot caption colgroup col');
 /* セルの中に置いてよい飾りのタグ（文字だけ拾う）。ここに無いタグが表の中にあれば、想定外として全体を失敗にする */
-const CELL_INLINE = { a: 1, div: 1, span: 1, br: 1, img: 1, b: 1, strong: 1, i: 1, em: 1, u: 1, font: 1, small: 1, sup: 1, sub: 1, p: 1, nobr: 1, wbr: 1 };
+const CELL_INLINE = dict('a div span br img b strong i em u font small sup sub p nobr wbr');
 
 /* ページのHTML → { days: { '01': {...} }, count } 。形が違えば throw
    方針：推測で埋めない。読めない形・想定と違う形は、1か所でも全体を失敗にする */
 function parse(html, ym, whole) {
+  /* 文字が壊れている（UTF-8 として読めなかった印 U+FFFD がある）・NUL がある → 読まずに止める（指摘A-2） */
+  if (/[\uFFFD\u0000]/.test(String(html))) throw new Error('ページの文字が壊れています');
   const toks = tokenize(html);
   /* 0) 読めない部分・扱わない書き方がページのどこかに1つでもあれば、全体を失敗にする
         （表の前にあるものでも、表の始まり・終わりの解釈をずらすおそれがあるため） */
@@ -254,8 +270,8 @@ function parse(html, ym, whole) {
       rain: rain == null ? (cells[3] === '--' ? 0 : null) : rain,   // 「--」は雨なし
       wind: numOf(cells[12]), windDir: cells[13] || '',
       gust: numOf(cells[14]), gustDir: cells[15] || '',
-      day: /^[-/×#\s]*$/.test(cells[19]) ? '' : cells[19],
-      night: /^[-/×#\s]*$/.test(cells[20]) ? '' : cells[20],
+      day: /^[-/×# \t\n\r\f]*$/.test(cells[19]) ? '' : cells[19],
+      night: /^[-/×# \t\n\r\f]*$/.test(cells[20]) ? '' : cells[20],
     };
     count++;
   });
@@ -295,7 +311,8 @@ async function handler(event) {
   try {
     const res = await fetch(url, { signal: ac.signal, headers: { 'User-Agent': 'KEMURIya-sales-calendar/1.0 (low-frequency; monthly page; cached)' } });
     if (!res.ok) return respond(502, { ok: false, why: '気象庁のページを開けませんでした（' + res.status + '）' });
-    const html = await res.text();
+    /* UTF-8 として正しく読めなければ、置き換えずに止める */
+    const html = new TextDecoder('utf-8', { fatal: true }).decode(await res.arrayBuffer());
     const p = parse(html, ym, past);
     const body = { ok: true, ym: ym, station: STATION.name, source: SOURCE, edited: true, count: p.count, days: p.days };
     memo.set(ym, { at: Date.now(), body: body });
