@@ -103,8 +103,10 @@ function wx_tokenize(string $h): array {
       if ($h[$j] === '/') { if ($j + 1 < $n && $h[$j + 1] === '>') { $self = true; $j += 2; $closed = true; break; } $j++; continue; }
       $a = $j;
       while ($j < $n && !wx_space($h[$j]) && $h[$j] !== '=' && $h[$j] !== '>' && $h[$j] !== '/') $j++;
-      if ($j === $a) { $j++; continue; }                               // 先頭が «=» の設定名など
+      /* 設定の名前が読めない（«=» で始まる）・名前に引用符や «<» がある → 直して読まずに止める（JS版と同じ。レビュー16） */
+      if ($j === $a) return $bad('タグの設定の形が想定と違います');
       $an = strtolower(substr($h, $a, $j - $a));
+      if (strpbrk($an, "\"'<") !== false) return $bad('タグの設定の形が想定と違います');
       $av = '';
       while ($j < $n && wx_space($h[$j])) $j++;
       if ($j < $n && $h[$j] === '=') {
@@ -118,6 +120,8 @@ function wx_tokenize(string $h): array {
           $a = $j;
           while ($j < $n && !wx_space($h[$j]) && $h[$j] !== '>') $j++;
           $av = substr($h, $a, $j - $a);
+          /* 引用符なしの値：空・引用符や « < = ` » を含むものは、想定外の形として止める */
+          if ($av === '' || strpbrk($av, "\"'<=`") !== false) return $bad('タグの設定の形が想定と違います');
         }
       }
       if (!array_key_exists($an, $attrs)) $attrs[$an] = $av;           // 同じ名前は最初のものが有効
@@ -251,7 +255,7 @@ function parse_jma(string $html, string $ym, bool $whole = false): array {
 }
 
 /* 読み取り方式の版。読み取りの決まりを変えたら1つ進める（古い版で作った控えを使わないため） */
-const WX_PARSER_VERSION = 5;
+const WX_PARSER_VERSION = 6;
 
 /* 返事（控え）の中身の検査：成功の形・年月・日数（count と行の数が同じ／1日から続く／月の日数を超えない／
    過ぎた月は月の日数ぶん）・各行の項目の形。parse_jma が成功として返す形だけを通す */
@@ -267,7 +271,7 @@ function wx_valid_body($b, string $ym, bool $whole): bool {
     $r = $days[sprintf('%02d', $i)] ?? null;
     if (!is_array($r) || count($r) !== 7) return false;
     foreach (['rain', 'wind', 'gust'] as $k) if (!array_key_exists($k, $r) || !$num($r[$k])) return false;
-    foreach (['windDir', 'gustDir', 'day', 'night'] as $k) if (!is_string($r[$k] ?? null) || strlen($r[$k]) > 200) return false;
+    foreach (['windDir', 'gustDir', 'day', 'night'] as $k) if (!is_string($r[$k] ?? null)) return false;   /* 長さの上限は付けない（JS版と同じ受け方。レビュー16） */
   }
   return true;
 }
