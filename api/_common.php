@@ -36,25 +36,47 @@ function kemuri_json(int $status, array $obj, string $cache = 'no-store'): void 
 }
 
 /* 簡易レート制限（ファイルで数える）。本当の歯止めはOpenAIの前払い残高。
-   記録のファイルを開けない・鍵を取れない・書けないときは «制限中» として扱う（true を返す）。
-   数えられないまま外へ取りにいかないため（指摘A-4）。 */
+   方針：«数えられないときは、外へ出さない»（true＝制限中 を返す）。
+   ・鍵は別のファイル（rate-NAME.lock）で取る。記録（rate-NAME.json）は、別の名前で書いてから入れ替える
+     → 書くのに失敗しても、元の記録は壊れない
+   ・記録が «まだ無い» のと «あるのに読めない・形が壊れている» のを区別する。
+     壊れているときは制限中として扱い、記録を «上限いっぱい» に作り直す（時間がたてば自然に元へ戻る） */
 function kemuri_rate_limited(string $name, int $max, int $windowSec): bool {
   $dir = kemuri_private_dir() . '/tmp';
   if (!is_dir($dir)) @mkdir($dir, 0700, true);
   if (!is_dir($dir)) return true;
-  $f = $dir . '/rate-' . preg_replace('/[^a-z0-9_-]/i', '', $name) . '.json';
-  $fp = @fopen($f, 'c+');
-  if (!$fp) return true;
-  if (!flock($fp, LOCK_EX)) { fclose($fp); return true; }
-  $raw = stream_get_contents($fp);
-  $hits = json_decode(is_string($raw) && $raw !== '' ? $raw : '[]', true);
-  if (!is_array($hits)) $hits = [];
-  $now = time();
-  $hits = array_values(array_filter($hits, fn($t) => is_int($t) && $now - $t < $windowSec));
-  $limited = count($hits) >= $max;
-  if (!$limited) $hits[] = $now;
-  $json = json_encode($hits);
-  $ok = is_string($json) && ftruncate($fp, 0) && rewind($fp) && fwrite($fp, $json) === strlen($json) && fflush($fp);
-  flock($fp, LOCK_UN); fclose($fp);
-  return $limited || !$ok;
+  $base = $dir . '/rate-' . preg_replace('/[^a-z0-9_-]/i', '', $name);
+  $lock = @fopen($base . '.lock', 'c');
+  if (!$lock) return true;
+  if (!flock($lock, LOCK_EX)) { fclose($lock); return true; }
+  $limited = true;
+  try {
+    $f = $base . '.json';
+    $now = time();
+    $put = function (array $hits) use ($f): bool {
+      $json = json_encode(array_values($hits));
+      if (!is_string($json)) return false;
+      $tmp = $f . '.' . bin2hex(random_bytes(4)) . '.tmp';
+      if (@file_put_contents($tmp, $json) !== strlen($json)) { @unlink($tmp); return false; }
+      if (!@rename($tmp, $f)) { @unlink($tmp); return false; }
+      return true;
+    };
+    clearstatcache(true, $f);
+    if (!file_exists($f)) {
+      $hits = [];                                         // まだ記録が無い（最初の1回）
+    } else {
+      $raw = @file_get_contents($f);
+      $hits = is_string($raw) ? json_decode($raw, true) : null;
+      $ok = is_array($hits) && $hits === array_values($hits);
+      if ($ok) foreach ($hits as $t) if (!is_int($t)) { $ok = false; break; }
+      if (!$ok) { $put(array_fill(0, $max, $now)); return true; }   // 読めない・壊れている → 止める
+    }
+    $hits = array_values(array_filter($hits, fn($t) => $t <= $now && $now - $t < $windowSec));
+    if (count($hits) >= $max) return true;
+    $hits[] = $now;
+    $limited = !$put($hits);                              // 書けなかったら、数えられていないので止める
+    return $limited;
+  } finally {
+    flock($lock, LOCK_UN); fclose($lock);
+  }
 }
