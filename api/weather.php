@@ -49,6 +49,8 @@ const WX_PAGE_TAGS = ['html' => 1, 'head' => 1, 'body' => 1, 'title' => 1, 'meta
   'strong' => 1, 'b' => 1, 'em' => 1, 'i' => 1, 'u' => 1, 'small' => 1, 'sup' => 1, 'sub' => 1, 'font' => 1, 'nobr' => 1, 'wbr' => 1];
 /* 中身を読み飛ばす要素（中のタグ文字はタグにしない） */
 const WX_RAW = ['script' => 1, 'style' => 1, 'title' => 1, 'noscript' => 1];
+/* 失敗の理由に出すタグの名前：半角の英数字とハイフンだけのときに、先頭20文字まで（JS版と同じ文言にするため） */
+function wx_shown(string $name): string { return preg_match('/^[a-z0-9-]+$/D', $name) === 1 ? substr($name, 0, 20) : '名前に想定外の文字'; }
 function wx_alpha(string $c): bool { return ($c >= 'a' && $c <= 'z') || ($c >= 'A' && $c <= 'Z'); }
 function wx_space(string $c): bool { return $c === ' ' || $c === "\n" || $c === "\t" || $c === "\r" || $c === "\f"; }
 function wx_tokenize(string $h): array {
@@ -67,28 +69,23 @@ function wx_tokenize(string $h): array {
       if ($odd !== false && $odd < $e) return $bad('コメントの形が想定と違います');
       $i = $e + 3; $textFrom = $i; continue;
     }
-    if ($c === '!' || $c === '?') {                                    // <!DOCTYPE ...> など
+    if ($c === '!' || $c === '?') {                                    // 宣言など
       $flush($i);
-      if (strtoupper(substr($h, $i, 9)) === '<![CDATA[') return $bad('CDATA は扱えません');
-      $e = strpos($h, '>', $i);
-      if ($e === false) return $bad('宣言が閉じていません');
-      $i = $e + 1; $textFrom = $i; continue;
+      /* 受け付ける宣言は «<!doctype html>» の1つの形だけ（JS版と同じ。レビュー15） */
+      if (preg_match('/^<!doctype[ \t\n\r\f]+html[ \t\n\r\f]*>/i', substr($h, $i, 64), $dm) !== 1) return $bad('宣言の形が想定と違います');
+      $i += strlen($dm[0]); $textFrom = $i; continue;
     }
     if ($c === '/') {                                                  // 閉じタグ
-      if (!($i + 2 < $n) || !wx_alpha($h[$i + 2])) {                   // </ のあとが文字でない：ブラウザはコメント扱いにする
-        $flush($i);
-        $e = strpos($h, '>', $i);
-        if ($e === false) return $bad('タグが閉じていません');
-        $i = $e + 1; $textFrom = $i; continue;
-      }
+      /* </ のあとが文字でない形（ブラウザはコメント扱いにする）は、扱わずに止める */
+      if (!($i + 2 < $n) || !wx_alpha($h[$i + 2])) { $flush($i); return $bad('タグの形が想定と違います'); }
       $flush($i);
       $j = $i + 2;
       while ($j < $n && !wx_space($h[$j]) && $h[$j] !== '>' && $h[$j] !== '/') $j++;
       $name = strtolower(substr($h, $i + 2, $j - $i - 2));
       $e = strpos($h, '>', $j);
       if ($e === false) return $bad('閉じタグが途中で終わっています');
-      if (trim(substr($h, $j, $e - $j), " \n\t\r\f") !== '') $out[] = ['t' => 'bad', 'why' => '閉じタグの形が想定と違います（' . $name . '）'];
-      if (!isset(WX_PAGE_TAGS[$name])) return $bad('このタグは扱えません（' . substr($name, 0, 20) . '）');
+      if (trim(substr($h, $j, $e - $j), " \n\t\r\f") !== '') $out[] = ['t' => 'bad', 'why' => '閉じタグの形が想定と違います（' . wx_shown($name) . '）'];
+      if (!isset(WX_PAGE_TAGS[$name])) return $bad('このタグは扱えません（' . wx_shown($name) . '）');
       $out[] = ['t' => 'close', 'name' => $name];
       $i = $e + 1; $textFrom = $i; continue;
     }
@@ -126,7 +123,7 @@ function wx_tokenize(string $h): array {
       if (!array_key_exists($an, $attrs)) $attrs[$an] = $av;           // 同じ名前は最初のものが有効
     }
     if (!$closed) return $bad('タグが途中で終わっています');
-    if (!isset(WX_PAGE_TAGS[$name])) return $bad('このタグは扱えません（' . substr($name, 0, 20) . '）');
+    if (!isset(WX_PAGE_TAGS[$name])) return $bad('このタグは扱えません（' . wx_shown($name) . '）');
     $out[] = ['t' => 'open', 'name' => $name, 'attrs' => $attrs, 'self' => $self];
     $i = $j; $textFrom = $i;
     if (isset(WX_RAW[$name])) {                                        // 中身は読み飛ばす
@@ -253,6 +250,28 @@ function parse_jma(string $html, string $ym, bool $whole = false): array {
   return ['days' => $days, 'count' => $count];
 }
 
+/* 読み取り方式の版。読み取りの決まりを変えたら1つ進める（古い版で作った控えを使わないため） */
+const WX_PARSER_VERSION = 5;
+
+/* 返事（控え）の中身の検査：成功の形・年月・日数（count と行の数が同じ／1日から続く／月の日数を超えない／
+   過ぎた月は月の日数ぶん）・各行の項目の形。parse_jma が成功として返す形だけを通す */
+function wx_valid_body($b, string $ym, bool $whole): bool {
+  if (!is_array($b) || ($b['ok'] ?? null) !== true || ($b['ym'] ?? null) !== $ym) return false;
+  if (($b['station'] ?? null) !== STATION_NAME || ($b['source'] ?? null) !== SOURCE || ($b['edited'] ?? null) !== true) return false;
+  $days = $b['days'] ?? null; $count = $b['count'] ?? null;
+  if (!is_array($days) || !is_int($count) || $count < 1 || count($days) !== $count) return false;
+  $last = (int)gmdate('t', gmmktime(0, 0, 0, (int)substr($ym, 5, 2), 1, (int)substr($ym, 0, 4)));
+  if ($count > $last || ($whole && $count !== $last)) return false;
+  $num = fn($v) => $v === null || ((is_int($v) || is_float($v)) && is_finite((float)$v));
+  for ($i = 1; $i <= $count; $i++) {
+    $r = $days[sprintf('%02d', $i)] ?? null;
+    if (!is_array($r) || count($r) !== 7) return false;
+    foreach (['rain', 'wind', 'gust'] as $k) if (!array_key_exists($k, $r) || !$num($r[$k])) return false;
+    foreach (['windDir', 'gustDir', 'day', 'night'] as $k) if (!is_string($r[$k] ?? null) || strlen($r[$k]) > 200) return false;
+  }
+  return true;
+}
+
 /* 試験のときは、ここより上の関数だけを使う（WX_LIB_ONLY を定義して読み込む） */
 if (defined('WX_LIB_ONLY')) return;
 
@@ -271,8 +290,9 @@ if (!is_dir($dir)) @mkdir($dir, 0700, true);
 $memo = $dir . '/' . $ym . '.json';
 if (is_file($memo) && time() - filemtime($memo) < $ttl) {
   $hit = json_decode((string)file_get_contents($memo), true);
-  /* 控えは «成功の返事» の形のものだけ使う（空・途中まで・別の月のものは使わず、取り直す） */
-  if (is_array($hit) && ($hit['ok'] ?? null) === true && ($hit['ym'] ?? null) === $ym && is_array($hit['days'] ?? null) && count($hit['days']) > 0) kemuri_json(200, $hit, $cache);
+  /* 控えは、いまの読み取り方式で作った・中身の形が正しいものだけ使う（wx_valid_body）。
+     そうでないもの（古い方式の控え・日数の足りない控え・空・途中まで・別の月）は使わず、取り直す */
+  if (is_array($hit) && ($hit['pv'] ?? null) === WX_PARSER_VERSION && is_array($hit['body'] ?? null) && wx_valid_body($hit['body'], $ym, $past)) kemuri_json(200, $hit['body'], $cache);
 }
 
 if (kemuri_rate_limited('weather', 30, 60)) kemuri_json(429, ['ok' => false, 'why' => '少し時間をおいてから開いてください']);
@@ -292,7 +312,8 @@ catch (Throwable $e) { kemuri_json(502, ['ok' => false, 'why' => '気象庁の�
 
 $out = ['ok' => true, 'ym' => $ym, 'station' => STATION_NAME, 'source' => SOURCE, 'edited' => true, 'count' => $p['count'], 'days' => $p['days']];
 /* 返事を作れることを確かめてから、控えに置く（作れなければ成功にしない。空の控えも作らない。指摘A-3） */
-$json = json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+/* 控えには、読み取り方式の版（pv）を付けて置く */
+$json = wx_valid_body($out, $ym, $past) ? json_encode(['pv' => WX_PARSER_VERSION, 'body' => $out], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : false;
 if (!is_string($json) || $json === '') kemuri_json(502, ['ok' => false, 'why' => '気象庁のページを読めませんでした（返事を作れません）']);
 $tmp = $memo . '.' . bin2hex(random_bytes(4)) . '.tmp';
 if (@file_put_contents($tmp, $json, LOCK_EX) === strlen($json)) { if (!@rename($tmp, $memo)) @unlink($tmp); } else { @unlink($tmp); }
