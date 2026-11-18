@@ -21,9 +21,12 @@ const MIN_YEAR = 2022;
 function jst_ym(): string { return gmdate('Y-m', time() + 9 * 3600); }
 
 /* 文字の部分（タグの外）の後始末：よく出る記号を戻し、空白をつめる */
+/* 空白として扱うのは、半角の空白・タブ・改行（LF/CR）・改ページの5つだけ（JS版と同じ決まり。指摘A-2） */
 function clean_text(string $t): string {
   $s = str_replace(['&nbsp;', '&lt;', '&gt;', '&amp;'], [' ', '<', '>', '&'], $t);
-  return trim((string)preg_replace('/\s+/u', ' ', $s));
+  $s = preg_replace('/[ \t\n\r\f]+/', ' ', $s);
+  if (!is_string($s)) throw new RuntimeException('ページの文字が壊れています');
+  return trim($s, ' ');
 }
 
 /* ------------------------------------------------------------
@@ -31,13 +34,21 @@ function clean_text(string $t): string {
    netlify/functions/weather.js の tokenize と同じ決まり。
    ・コメント（<!-- -->）の中は読まない。標準の形だけ受け付け、変則の形・閉じていないものは bad
    ・タグの設定値（引用符の中）は設定値として読む。中に <tr> などの文字があってもタグにしない
-   ・script / style / template / noscript などの中身は読み飛ばす。入れ子・自分で閉じる形は bad
-   ・CDATA・svg・math は扱わない（bad）
+   ・script / style / title / noscript の中身は読み飛ばす。入れ子・自分で閉じる形は bad
+   ・CDATA は扱わない（bad）。使ってよいタグの一覧（WX_PAGE_TAGS）に無いタグは bad（開始・終了とも）
    返り値：[['t'=>'open','name'=>..,'attrs'=>[..],'self'=>bool] | ['t'=>'close','name'=>..] | ['t'=>'text','s'=>..] | ['t'=>'bad','why'=>..]]
    ※ 文字は UTF-8 のバイト列のまま扱う（区切りに使う記号はすべて1バイトなので、日本語を壊さない）
    ------------------------------------------------------------ */
-const WX_RAW = ['script' => 1, 'style' => 1, 'textarea' => 1, 'title' => 1, 'template' => 1, 'noscript' => 1, 'iframe' => 1, 'noembed' => 1, 'noframes' => 1, 'xmp' => 1];
-const WX_FOREIGN = ['svg' => 1, 'math' => 1];
+/* ページ全体で使ってよいタグ（指摘A-1）。ここに無いタグ（plaintext・template・svg・select など、
+   HTML の読み方そのものを変えるものを含む）が1つでもあれば、ページ全体を «読めない» として止める。JS版と同じ一覧 */
+const WX_PAGE_TAGS = ['html' => 1, 'head' => 1, 'body' => 1, 'title' => 1, 'meta' => 1, 'link' => 1, 'style' => 1, 'script' => 1, 'noscript' => 1,
+  'div' => 1, 'span' => 1, 'p' => 1, 'a' => 1, 'img' => 1, 'br' => 1, 'hr' => 1, 'ul' => 1, 'ol' => 1, 'li' => 1, 'dl' => 1, 'dt' => 1, 'dd' => 1,
+  'table' => 1, 'thead' => 1, 'tbody' => 1, 'tfoot' => 1, 'tr' => 1, 'td' => 1, 'th' => 1, 'caption' => 1, 'colgroup' => 1, 'col' => 1,
+  'form' => 1, 'input' => 1, 'label' => 1, 'button' => 1, 'h1' => 1, 'h2' => 1, 'h3' => 1, 'h4' => 1, 'h5' => 1, 'h6' => 1,
+  'header' => 1, 'footer' => 1, 'nav' => 1, 'main' => 1, 'section' => 1, 'article' => 1, 'center' => 1,
+  'strong' => 1, 'b' => 1, 'em' => 1, 'i' => 1, 'u' => 1, 'small' => 1, 'sup' => 1, 'sub' => 1, 'font' => 1, 'nobr' => 1, 'wbr' => 1];
+/* 中身を読み飛ばす要素（中のタグ文字はタグにしない） */
+const WX_RAW = ['script' => 1, 'style' => 1, 'title' => 1, 'noscript' => 1];
 function wx_alpha(string $c): bool { return ($c >= 'a' && $c <= 'z') || ($c >= 'A' && $c <= 'Z'); }
 function wx_space(string $c): bool { return $c === ' ' || $c === "\n" || $c === "\t" || $c === "\r" || $c === "\f"; }
 function wx_tokenize(string $h): array {
@@ -77,6 +88,7 @@ function wx_tokenize(string $h): array {
       $e = strpos($h, '>', $j);
       if ($e === false) return $bad('閉じタグが途中で終わっています');
       if (trim(substr($h, $j, $e - $j), " \n\t\r\f") !== '') $out[] = ['t' => 'bad', 'why' => '閉じタグの形が想定と違います（' . $name . '）'];
+      if (!isset(WX_PAGE_TAGS[$name])) return $bad('このタグは扱えません（' . substr($name, 0, 20) . '）');
       $out[] = ['t' => 'close', 'name' => $name];
       $i = $e + 1; $textFrom = $i; continue;
     }
@@ -114,25 +126,32 @@ function wx_tokenize(string $h): array {
       if (!array_key_exists($an, $attrs)) $attrs[$an] = $av;           // 同じ名前は最初のものが有効
     }
     if (!$closed) return $bad('タグが途中で終わっています');
-    if (isset(WX_FOREIGN[$name])) return $bad($name . ' は扱えません');
+    if (!isset(WX_PAGE_TAGS[$name])) return $bad('このタグは扱えません（' . substr($name, 0, 20) . '）');
     $out[] = ['t' => 'open', 'name' => $name, 'attrs' => $attrs, 'self' => $self];
     $i = $j; $textFrom = $i;
     if (isset(WX_RAW[$name])) {                                        // 中身は読み飛ばす
       if ($self) return $bad($name . ' の形が想定と違います');
       $rest = substr($h, $i);
-      if (!preg_match('/<\/' . $name . '[\s>\/]/i', $rest, $mm, PREG_OFFSET_CAPTURE)) return $bad($name . ' が閉じていません');
+      if (!preg_match('/<\/' . $name . '[ \t\n\r\f>\/]/i', $rest, $mm, PREG_OFFSET_CAPTURE)) return $bad($name . ' が閉じていません');
       $at = $mm[0][1];
-      if (preg_match('/<' . $name . '[\s>\/]/i', substr($rest, 0, $at))) return $bad($name . ' が入れ子になっています');
+      if (preg_match('/<' . $name . '[ \t\n\r\f>\/]/i', substr($rest, 0, $at))) return $bad($name . ' が入れ子になっています');
       $i += $at; $textFrom = $i;                                       // 中身は捨てる（文字としても使わない）
     }
   }
   $flush($n);
   return $out;
 }
+/* 桁が多すぎる数字（15文字を超える）は、表の形がおかしいとみなして止める（指摘A-3。INF になって返事を作れなくなるのを防ぐ） */
 function num_of(string $s): ?float {
-  return preg_match('/^-?\d+(?:\.\d+)?/', $s, $m) ? (float)$m[0] : null;
+  if (!preg_match('/^-?\d+(?:\.\d+)?/', $s, $m)) return null;
+  if (strlen($m[0]) > 15) throw new RuntimeException('数値が想定と違います');
+  return (float)$m[0];
 }
-function blankish(string $s): bool { return (bool)preg_match('/^[-\/×#\s]*$/u', $s); }
+function blankish(string $s): bool {
+  $r = preg_match('/^[-\/×# \t\n\r\f]*$/u', $s);
+  if ($r === false) throw new RuntimeException('ページの文字が壊れています');
+  return $r === 1;
+}
 
 const WX_TABLE_PARTS = ['tbody' => 1, 'thead' => 1, 'tfoot' => 1, 'caption' => 1, 'colgroup' => 1, 'col' => 1];
 /* セルの中に置いてよい飾りのタグ（文字だけ拾う）。ここに無いタグが表の中にあれば、想定外として全体を失敗にする */
@@ -142,6 +161,8 @@ const WX_CELL_INLINE = ['a' => 1, 'div' => 1, 'span' => 1, 'br' => 1, 'img' => 1
    方針：推測で埋めない。読めない形・想定と違う形は、1か所でも全体を失敗にする
    （netlify/functions/weather.js の parse と同じ決まり） */
 function parse_jma(string $html, string $ym, bool $whole = false): array {
+  /* 文字が壊れている（UTF-8 として正しくない・置き換えの印 U+FFFD がある）・NUL がある → 読まずに止める（指摘A-2） */
+  if (preg_match('//u', $html) !== 1 || strpos($html, "\xEF\xBF\xBD") !== false || strpos($html, "\0") !== false) throw new RuntimeException('ページの文字が壊れています');
   $toks = wx_tokenize($html);
   /* 0) 読めない部分・扱わない書き方がページのどこかに1つでもあれば、全体を失敗にする */
   foreach ($toks as $k) if ($k['t'] === 'bad') throw new RuntimeException('ページに読めない部分があります（' . $k['why'] . '）');
@@ -250,7 +271,8 @@ if (!is_dir($dir)) @mkdir($dir, 0700, true);
 $memo = $dir . '/' . $ym . '.json';
 if (is_file($memo) && time() - filemtime($memo) < $ttl) {
   $hit = json_decode((string)file_get_contents($memo), true);
-  if (is_array($hit)) kemuri_json(200, $hit, $cache);
+  /* 控えは «成功の返事» の形のものだけ使う（空・途中まで・別の月のものは使わず、取り直す） */
+  if (is_array($hit) && ($hit['ok'] ?? null) === true && ($hit['ym'] ?? null) === $ym && is_array($hit['days'] ?? null) && count($hit['days']) > 0) kemuri_json(200, $hit, $cache);
 }
 
 if (kemuri_rate_limited('weather', 30, 60)) kemuri_json(429, ['ok' => false, 'why' => '少し時間をおいてから開いてください']);
@@ -269,5 +291,9 @@ try { $p = parse_jma((string)$html, $ym, $past); }
 catch (Throwable $e) { kemuri_json(502, ['ok' => false, 'why' => '気象庁のページを読めませんでした（' . mb_substr($e->getMessage(), 0, 80, 'UTF-8') . '）']); }
 
 $out = ['ok' => true, 'ym' => $ym, 'station' => STATION_NAME, 'source' => SOURCE, 'edited' => true, 'count' => $p['count'], 'days' => $p['days']];
-@file_put_contents($memo, json_encode($out, JSON_UNESCAPED_UNICODE), LOCK_EX);
+/* 返事を作れることを確かめてから、控えに置く（作れなければ成功にしない。空の控えも作らない。指摘A-3） */
+$json = json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+if (!is_string($json) || $json === '') kemuri_json(502, ['ok' => false, 'why' => '気象庁のページを読めませんでした（返事を作れません）']);
+$tmp = $memo . '.' . bin2hex(random_bytes(4)) . '.tmp';
+if (@file_put_contents($tmp, $json, LOCK_EX) === strlen($json)) { if (!@rename($tmp, $memo)) @unlink($tmp); } else { @unlink($tmp); }
 kemuri_json(200, $out, $cache);
