@@ -66,12 +66,15 @@ function kemuri_rate_limited(string $name, int $max, int $windowSec): bool {
       $hits = [];                                         // まだ記録が無い（最初の1回）
     } else {
       $raw = @file_get_contents($f);
-      $hits = is_string($raw) ? json_decode($raw, true) : null;
+      /* JSON の «配列» として書かれていること（[ で始まり ] で終わる）を、文字のまま確かめる。
+         PHP は {} や {"0":1} も配列に変えてしまうので、変えたあとの形だけでは区別できない（レビュー16） */
+      $txt = is_string($raw) ? trim($raw) : '';
+      $hits = ($txt !== '' && $txt[0] === '[' && substr($txt, -1) === ']') ? json_decode($txt, true) : null;
       $ok = is_array($hits) && $hits === array_values($hits);
-      if ($ok) foreach ($hits as $t) if (!is_int($t)) { $ok = false; break; }
+      if ($ok) foreach ($hits as $t) if (!is_int($t) || $t > $now) { $ok = false; break; }   /* 未来の時刻（時計が戻った）も «おかしい記録» として止める */
       if (!$ok) { $put(array_fill(0, $max, $now)); return true; }   // 読めない・壊れている → 止める
     }
-    $hits = array_values(array_filter($hits, fn($t) => $t <= $now && $now - $t < $windowSec));
+    $hits = array_values(array_filter($hits, fn($t) => $now - $t < $windowSec));
     if (count($hits) >= $max) return true;
     $hits[] = $now;
     $limited = !$put($hits);                              // 書けなかったら、数えられていないので止める
