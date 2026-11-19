@@ -157,9 +157,15 @@
       d.setAttribute('style', 'position:fixed;inset:0;z-index:2147483647;background:#fff8f0;color:#3a2a1e;'
         + 'padding:48px 20px;text-align:center;font:16px/1.8 -apple-system,"Hiragino Sans",sans-serif');
       d.innerHTML = '<b style="font-size:21px;color:#b3261e">このアプリは引っ越しました</b><br>'
-        + 'ここ（古いほう）では入力できません。<br><br>'
-        + '<a href="https://kanri.kemuriya-shuri.com/' + p + '" style="display:inline-block;background:#b3261e;color:#fff;'
-        + 'text-decoration:none;border-radius:14px;padding:14px 22px;font-weight:700">新しいほうを開く →</a>';
+        + 'ここ（古いほう）では入力できません。<br><br>';
+      /* 行き先は、?… と #…（POSの取り込みボタンから来たときの売上）もそのまま付けて送る。
+         文字をつないだHTMLではなく、リンクの部品に直接入れる（変な文字が入っても崩れないように） */
+      var a = document.createElement('a');
+      a.href = 'https://kanri.kemuriya-shuri.com/' + p + location.search + location.hash;
+      a.setAttribute('style', 'display:inline-block;background:#b3261e;color:#fff;'
+        + 'text-decoration:none;border-radius:14px;padding:14px 22px;font-weight:700');
+      a.textContent = '新しいほうを開く →';
+      d.appendChild(a);
       document.body.appendChild(d);
     }, 0);
   });
