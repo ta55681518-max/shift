@@ -134,8 +134,39 @@
   #dsc-box { background: #fff; border-radius: 14px; padding: 18px; max-width: 340px; width: 100%; }
   #dsc-title { font-size: 15px; }
 </style>
+<!-- 古いURLの見張り（site-notice.js が読めなくても必ず動くよう、ここに直接書く）。
+     旧Netlify・旧GitHub Pagesで開かれたら、本体より先に保存と通信を止める。
+     site-notice.js の案内が出なかったときは、最低限の «引っ越しました» を出す。新しい場所では何もしない。 -->
+<script>
+(function () {
+  var h = (location.hostname || '').toLowerCase(), N = 'comfy-khapse-8a3cae.netlify.app';
+  if (!(h === N || h.slice(-(N.length + 2)) === '--' + N || h.indexOf('github.io') >= 0)) return;
+  window.__kemuriMoving = 1; window.__kemuriFrozen = 1;
+  var no = function () {};
+  try { Storage.prototype.setItem = no; Storage.prototype.removeItem = no; Storage.prototype.clear = no; } catch (e) {}
+  try { window.fetch = function () { return Promise.reject(new TypeError('引っ越したページなので通信しません')); }; } catch (e) {}
+  try { XMLHttpRequest.prototype.open = XMLHttpRequest.prototype.send = function () { throw new Error('引っ越したページなので通信しません'); }; } catch (e) {}
+  try { if (navigator.sendBeacon) navigator.sendBeacon = function () { return false; }; } catch (e) {}
+  document.addEventListener('DOMContentLoaded', function () {
+    setTimeout(function () {
+      if (document.getElementById('kemuri-moved') || document.getElementById('kemuri-moved-fallback')) return;
+      var p = (location.pathname.split('/').pop() || '').toLowerCase();
+      if (p && p.indexOf('.') < 0) p += '.html';
+      var d = document.createElement('div');
+      d.id = 'kemuri-moved-fallback';
+      d.setAttribute('style', 'position:fixed;inset:0;z-index:2147483647;background:#fff8f0;color:#3a2a1e;'
+        + 'padding:48px 20px;text-align:center;font:16px/1.8 -apple-system,"Hiragino Sans",sans-serif');
+      d.innerHTML = '<b style="font-size:21px;color:#b3261e">このアプリは引っ越しました</b><br>'
+        + 'ここ（古いほう）では入力できません。<br><br>'
+        + '<a href="https://kanri.kemuriya-shuri.com/' + p + '" style="display:inline-block;background:#b3261e;color:#fff;'
+        + 'text-decoration:none;border-radius:14px;padding:14px 22px;font-weight:700">新しいほうを開く →</a>';
+      document.body.appendChild(d);
+    }, 0);
+  });
+})();
+</script>
 <!-- 古いURLのお知らせ。アプリ本体より先に読む（取り込みボタンの売上を読み取られる前に新しいURLへ送るため） -->
-<script src="site-notice.js?v=20261120a"></script>
+<script src="site-notice.js?v=20261120b"></script>
 <!-- 共通の土台。POSの出数（売上履歴）・レシピ・原価マスタはここから読む。
      冷凍在庫アプリでPOSを取り込むと売上履歴にたまり、串在庫はそれを読んで串を引く。 -->
 <script src="kemuri-core.js?v=20261026r1"></script>
