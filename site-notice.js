@@ -14,6 +14,8 @@
    　・«#pos=…» つき（POSの取り込みボタンから来た）なら、読み取られる前に
    　　新しいURLへそのまま送る。古いほうの在庫を動かさないため。
    　　→ そのため、このファイルはアプリ本体より先に読み込む（<head>）。
+   　・どちらの場合も、本体が動き出す前に «保存の空振り・通信止め» で凍らせる（freeze）。
+   　　覆いは読み込みの最後に出るので、それまでに本体の起動処理が書いたり送ったりしないように。
    　・それ以外は、画面全体を「引っ越しました」の案内で覆って、入力できなくする。
    　　データは消さない。念のため «控えを書き出す» ボタンだけ残す
    　　（古いアイコンに入力してしまったときに、あとで取り出せるように）。
@@ -36,9 +38,44 @@
   var onNetlify = host === NETLIFY_HOST || host.slice(-(NETLIFY_HOST.length + 2)) === '--' + NETLIFY_HOST;
   if (!onGithub && !onNetlify) return;      // 新しいURL・テスト・手元の確認用では出さない
 
+  /* ページ名をそろえる。Netlify・GitHub Pages は «.html» を省いた /reitou でも同じページを配るので、
+     小文字にして、拡張子が無ければ «.html» を足す。«/» で終わるとき（/shift/ など）は index.html。 */
   var page = (location.pathname.split('/').pop() || 'index.html');
+  try { page = decodeURIComponent(page); } catch (e) { /* そのまま */ }
+  page = page.toLowerCase();
+  if (page.indexOf('.') < 0) page += '.html';
   var moved = !!MOVED[page];
   if (!moved && !onGithub) return;          // Netlify の、まだ使っているページ
+
+  /* 引っ越したページは、本体が動き出す前（このファイルは <head> で読まれる）に凍らせる。
+     ・ブラウザへの保存（書く・消す）を空振りにする。読むのはできる（控えの書き出しに使う）
+     ・外への通信（fetch・XMLHttpRequest・sendBeacon）を止める（串焼きの共有・AI窓口など）
+     ・POSの取り込み（#pos=…）を本体に読ませない印を立てる
+     本体の起動処理（POS出数の自動反映・開いたときの手入れ・共有の同期）が覆いより先に
+     走っても、古いほうのデータは変わらず、古い場所からは何も送られない。 */
+  if (moved) freeze();
+  function freeze() {
+    window.__kemuriMoving = 1;
+    window.__kemuriFrozen = 1;
+    var noop = function () {};
+    try {
+      if (window.Storage && Storage.prototype) {
+        Storage.prototype.setItem = noop;
+        Storage.prototype.removeItem = noop;
+        Storage.prototype.clear = noop;
+      }
+    } catch (e) {}
+    try {
+      window.fetch = function () { return Promise.reject(new TypeError('引っ越したページなので通信しません')); };
+    } catch (e) {}
+    try {
+      if (window.XMLHttpRequest) {
+        XMLHttpRequest.prototype.open = function () { throw new Error('引っ越したページなので通信しません'); };
+        XMLHttpRequest.prototype.send = function () { throw new Error('引っ越したページなので通信しません'); };
+      }
+    } catch (e) {}
+    try { if (navigator.sendBeacon) navigator.sendBeacon = function () { return false; }; } catch (e) {}
+  }
 
   var NEW_HOST = moved ? XSERVER_HOST : NETLIFY_HOST;
   function newUrl(hash) {
