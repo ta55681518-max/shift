@@ -88,7 +88,7 @@ if ($a === 'setup') {
   echo '<h1>🎤 音声メモ サーバー設定</h1>';
   if (!$cfg) {
     if ($msg) echo '<p class="e">' . $h($msg) . '</p>';
-    echo '<p>お店の<b>合言葉</b>を決めてください。スタッフのiPhoneでもこの合言葉を入れると、同じメモを見られます（8文字以上）。</p>';
+    echo '<p><b>合言葉</b>を決めてください（8文字以上）。ほかのiPhoneでもこの合言葉を入れると、同じメモが同期されます。</p>';
     echo '<form method="post"><label>合言葉<input type="password" name="p1" autocomplete="new-password"></label><label>もう一度<input type="password" name="p2"></label><button>設定する</button></form>';
   } else {
     $writable = is_writable(MEMO_DATA_DIR);

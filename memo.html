@@ -20,8 +20,8 @@
   ・データはこの端末（ブラウザ×URL）の localStorage「kemuri_memo_v1」に保存
     → 機種変更・ブラウザ変更のときは「設定 → バックアップ書き出し」で持ち出す
   ・リマインドの通知は «このページ（またはホーム画面アプリ）が開いているあいだ» に鳴る。
-  ・Xserver に xserver/memo-api を置いて「設定 → みんなで共有」で接続すると、
-    スタッフの端末とメモを共有でき、閉じていてもサーバーからプッシュ通知が届く
+  ・Xserver に xserver/memo-api を置いて「設定 → ほかのiPhoneと同期」で接続すると、
+    どのiPhoneで書いても同じ内容になり、閉じていてもサーバーからプッシュ通知が届く
     （設置手順は xserver/memo-api/README.md）。
   ============================================================
 -->
@@ -226,9 +226,6 @@
         <option value="monthly">毎月（同じ日）</option>
       </select>
     </div>
-    <div class="field" id="edNotifyBox"><label>通知する人（共有中）</label>
-      <select id="edNotify"><option value="all">全員のiPhoneに通知</option><option value="me">入れた人だけに通知</option></select>
-    </div>
     <div class="field"><label>カレンダーにも入れる（アプリを閉じていても鳴る）</label>
       <div class="row"><button class="btn" id="edIcs">📅 カレンダー</button><button class="btn" id="edGcal">Googleカレンダー</button></div>
     </div>
@@ -248,13 +245,11 @@
       <button class="btn" id="catAdd" style="width:100%;margin-top:4px">＋ 項目を追加</button>
       <div class="muted" style="margin-top:6px">項目を消すと、その項目のメモは「その他」に移ります（メモは消えません）。</div>
     </div>
-    <div class="field"><label>☁ みんなで共有・サーバー通知（Xserver）</label>
+    <div class="field"><label>☁ ほかのiPhoneと同期・サーバー通知（Xserver）</label>
       <input id="shUrl" type="url" placeholder="サーバーのURL（例：https://xxxx.xsrv.jp/memo-api/）" style="margin-bottom:6px" autocapitalize="off">
-      <input id="shPass" type="password" placeholder="お店の合言葉" style="margin-bottom:6px" autocomplete="current-password">
-      <input id="shName" placeholder="あなたの名前（例：店長・田中）" style="margin-bottom:6px" maxlength="20">
-      <div class="row"><button class="btn" id="shConnect">接続する</button><button class="btn dan" id="shOff">共有をやめる</button></div>
+      <input id="shPass" type="password" placeholder="合言葉" style="margin-bottom:6px" autocomplete="current-password">
+      <div class="row"><button class="btn" id="shConnect">接続する</button><button class="btn dan" id="shOff">同期をやめる</button></div>
       <div class="row" style="margin-top:8px"><button class="btn" id="pushBtn">この端末で通知を受け取る</button><button class="btn" id="pushTest">サーバーから試す</button></div>
-      <label class="row" style="font-size:14px;color:var(--tx);margin-top:8px"><input type="checkbox" id="optNotifyMe" style="width:auto;flex:0 0 auto"> 新しいメモのリマインドは、ふだん «自分だけ» に通知する</label>
       <div class="note" id="shNote" style="margin-top:8px"></div>
     </div>
     <div class="field"><label>通知（この画面を開いているとき）</label>
@@ -274,7 +269,7 @@
     </div>
     <div class="note">
       ・ホーム画面に追加すると、アプリのように使えます（iPhone：共有ボタン→「ホーム画面に追加」）。<br>
-      ・リマインドは、この画面を開いているあいだ通知・音で知らせます。<b>閉じていても知らせてほしい時は、上の「みんなで共有・サーバー通知」に接続</b>するか、メモの「📅カレンダー」を使ってください。<br>
+      ・リマインドは、この画面を開いているあいだ通知・音で知らせます。<b>閉じていても知らせてほしい時は、上の「ほかのiPhoneと同期・サーバー通知」に接続</b>するか、メモの「📅カレンダー」を使ってください。<br>
       ・データはこの端末の中だけに保存されます。機種変更の前に「書き出し」をしておくと安心です。
     </div>
   </div>
@@ -377,7 +372,7 @@ function fromLocalInput(v){ if(!v) return null; var t = new Date(v).getTime(); r
 
 function tickHeader(){
   var n = new Date();
-  var cl = (typeof shareOn === 'function' && shareOn()) ? (share.err ? ' ⚠未同期' : ' ☁共有中') : '';
+  var cl = (typeof shareOn === 'function' && shareOn()) ? (share.err ? ' ⚠未同期' : ' ☁同期中') : '';
   $('today').innerHTML = n.getFullYear() + '年' + fmtDay(n) + '<small>' + hm(n) + cl + '</small>';
   $('nowStamp').textContent = '入力日：' + fmtDay(n) + ' ' + hm(n);
 }
@@ -665,8 +660,7 @@ function memoCard(m){
     + '<div class="mhead"><span class="cbadge" style="background:' + esc(k.color) + '">' + esc(k.emoji) + ' ' + esc(k.name) + '</span>'
     + '<span>' + fmtDay(d) + ' ' + hm(d) + '</span>' + (m.pin ? '<span class="pin">📌</span>' : '')
     + (m.updated && m.updated - m.created > 60000 ? '<span>（' + fmtShort(m.updated) + ' 修正）</span>' : '')
-    + (m.voice ? '<span title="声で入力">🎙</span>' : '') + (shareOn() && m.by ? '<span>👤' + esc(m.by) + '</span>' : '')
-    + (shareOn() && m.remind && m.notify === 'me' ? '<span title="通知は入れた人だけ">🔕他</span>' : '') + rb + '</div>'
+    + (m.voice ? '<span title="声で入力">🎙</span>' : '') + rb + '</div>'
     + '<div class="txt">' + esc(m.text) + '</div>'
     + '<div class="acts">'
     + '<button data-act="done" data-id="' + m.id + '" class="' + (m.done?'on':'') + '">' + (m.done?'✓完了':'☐完了') + '</button>'
@@ -697,7 +691,7 @@ function addMemo(text, cat, remind, repeat, byVoice){
   var now = Date.now();
   var m = {id:uid('m'), cat:cat, text:text, created:now, updated:now, remind:remind || null, repeat:repeat || '',
            notified:false, done:false, pin:false, voice:!!byVoice,
-           owner:share.device, by:share.name || '', notify:share.notifyDefault || 'all'};
+           owner:share.device};
   db.memos.push(m); save();
   return m;
 }
@@ -772,8 +766,6 @@ function openEdit(id, startMic){
   $('edText').value = m.text;
   $('edRem').value = toLocalInput(m.remind);
   $('edRepeat').value = m.repeat || '';
-  $('edNotifyBox').style.display = shareOn() ? '' : 'none';
-  $('edNotify').value = m.notify === 'me' ? 'me' : 'all';
   renderEdQuick(); hideSuggest('ed');
   openSheet('editBg');
   if(startMic) setTimeout(function(){ startVoice($('edText'), $('edInterim'), $('edMic'), null, function(v){ showSuggest('ed', v); }); }, 250);
@@ -791,7 +783,6 @@ function saveEdit(){
   if(!t){ toast('内容が空です（消すときは「削除」）'); return; }
   var r = fromLocalInput($('edRem').value);
   if(r !== m.remind){ m.notified = false; delete m.resume; }
-  if(shareOn()){ var nv = $('edNotify').value; if(nv !== (m.notify || 'all')){ m.notify = nv; if(!m.owner) m.owner = share.device; } }
   m.text = t; m.cat = ui.edCat; m.remind = r; m.repeat = r ? $('edRepeat').value : ''; m.updated = Date.now();
   if(r && m.done && r > Date.now()) m.done = false;
   save(); closeSheets(); renderAll(); toast('保存しました');
@@ -931,7 +922,6 @@ function checkReminders(){
     var al = {}; try{ al = JSON.parse(localStorage.getItem(ALARMED) || '{}') || {}; }catch(e){}
     db.memos.forEach(function(m){
       if(m.done || !m.remind || m.notified || m.remind > now) return;
-      if(m.notify === 'me' && m.owner && m.owner !== share.device) return;
       if(al[m.id] === m.remind) return;
       al[m.id] = m.remind;
       if(!share.push){ var k = catOf(m.cat); osNotify('🔔 ' + k.emoji + ' ' + k.name, firstLine(m.text), m.id); }
@@ -1206,9 +1196,9 @@ window.addEventListener('pagehide', saveDraft);
 document.addEventListener('visibilitychange', function(){ if(document.hidden) saveDraft(); });
 
 /* ============================================================
-   共有・サーバー通知（Xserver の memo-api と話す）
+   ほかのiPhoneとの同期・サーバー通知（Xserver の memo-api と話す）
    ・メモは «前回サーバーと揃えた形» と比べて、変わったものだけ送る
-   ・同じメモを2人が直したら、あとから送ったほうが残る
+   ・同じメモを2台で直したら、あとから送ったほうが残る
    ・通知はサーバーの cron が毎分見て、Web Push でiPhoneに送る
    ============================================================ */
 function shareOn(){ return !!(share.url && share.pass); }
@@ -1287,18 +1277,16 @@ document.addEventListener('visibilitychange', function(){ if(!document.hidden &&
 function renderShareSettings(){
   if(!$('shUrl')) return;
   if(document.activeElement !== $('shUrl')) $('shUrl').value = share.url || share.draftUrl || '';
-  if(document.activeElement !== $('shName')) $('shName').value = share.name || '';
-  $('shPass').placeholder = shareOn() ? '（接続済み・変えるときだけ入力）' : 'お店の合言葉';
-  $('optNotifyMe').checked = share.notifyDefault === 'me';
+  $('shPass').placeholder = shareOn() ? '（接続済み・変えるときだけ入力）' : '合言葉';
   $('shOff').disabled = !shareOn();
   $('pushBtn').textContent = share.push ? '通知を受け取らない' : 'この端末で通知を受け取る';
   $('pushBtn').disabled = !shareOn(); $('pushTest').disabled = !share.push;
   var h;
-  if(!shareOn()) h = 'お店のXserverに入れた「memo-api」のURLと合言葉を入れると、スタッフのiPhoneと同じメモを見られて、アプリを閉じていてもリマインドが届きます。';
+  if(!shareOn()) h = 'Xserverに置いた「memo-api」のURLと合言葉を入れると、どのiPhoneで書いても・直しても同じ内容になり、アプリを閉じていてもリマインドが届きます。ほかのiPhoneでも同じURLと合言葉を入れてください。';
   else {
-    h = (share.err ? '⚠ 同期できていません：' + esc(share.err) : '✅ 共有中' + (share.lastOk ? '（最終同期 ' + hm(new Date(share.lastOk)) + '）' : ''));
+    h = (share.err ? '⚠ 同期できていません：' + esc(share.err) : '✅ 同期中' + (share.lastOk ? '（最終同期 ' + hm(new Date(share.lastOk)) + '）' : ''));
     h += '<br>通知：' + (share.push ? '🔔 この端末はサーバーから受け取ります' : '🔕 この端末はまだ受け取っていません');
-    if(share.people && share.people.length) h += '<br>通知を受け取る人：' + share.people.map(function(p){ return esc(p.name || '名前なし') + (p.me ? '（この端末）' : ''); }).join('、');
+    if(share.people && share.people.length) h += '<br>通知を受け取る端末：' + share.people.length + '台';
     if(isIOS() && !isStandalone()) h += '<br><b>iPhoneは、Safariの共有ボタン →「ホーム画面に追加」→ ホーム画面のアイコンから開くと通知を受け取れます。</b>';
   }
   $('shNote').innerHTML = h;
@@ -1307,18 +1295,17 @@ function isIOS(){ return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigato
 function isStandalone(){ return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)); }
 
 $('shConnect').addEventListener('click', function(){
-  var url = $('shUrl').value.trim(), pass = $('shPass').value || (shareOn() ? share.pass : ''), name = $('shName').value.trim();
+  var url = $('shUrl').value.trim(), pass = $('shPass').value || (shareOn() ? share.pass : ''), name = deviceName();
   if(!/^https?:\/\//.test(url)){ toast('サーバーのURLを https:// から入れてください'); return; }
   if(!pass){ toast('合言葉を入れてください'); return; }
-  if(!name){ toast('名前を入れてください（だれが入れたメモか分かるように）'); return; }
   var first = !shareOn();
   var mine = db.memos.length;
-  if(first && mine && !confirm('この端末のメモ ' + mine + '件も、みんなの共有に入ります。よろしいですか？')) return;
+  if(first && mine && !confirm('この端末のメモ ' + mine + '件もサーバーに入れて、ほかのiPhoneと同じ内容にします。よろしいですか？')) return;
   var btn = this; btn.disabled = true; btn.textContent = '接続中…';
   api('sync', {memos:[]}, {url:url, pass:pass, name:name}).then(function(){
     share.url = url; share.pass = pass; share.name = name; share.err = '';
     if(first){ share.lastSynced = {}; share.catsJson = ''; }
-    db.memos.forEach(function(m){ if(!m.owner){ m.owner = share.device; m.by = name; } });
+    db.memos.forEach(function(m){ if(!m.owner) m.owner = share.device; });
     saveShare(); $('shPass').value = '';
     return doSync();
   }).then(function(){
@@ -1327,13 +1314,16 @@ $('shConnect').addEventListener('click', function(){
   .then(function(){ btn.disabled = false; btn.textContent = '接続する'; renderShareSettings(); renderAll(); });
 });
 $('shOff').addEventListener('click', function(){
-  if(!confirm('共有をやめますか？\nこの端末のメモは残ります（サーバーのメモも消えません）。')) return;
+  if(!confirm('同期をやめますか？\nこの端末のメモは残ります（サーバーのメモも消えません）。')) return;
   disablePush(true);
   share.url = ''; share.pass = ''; share.lastSynced = {}; share.catsJson = ''; share.err = ''; share.people = [];
-  saveShare(); renderShareSettings(); renderAll(); toast('共有をやめました');
+  saveShare(); renderShareSettings(); renderAll(); toast('同期をやめました');
 });
-$('shName').addEventListener('change', function(){ if(this.value.trim()){ share.name = this.value.trim(); saveShare(); } });
-$('optNotifyMe').addEventListener('change', function(){ share.notifyDefault = this.checked ? 'me' : 'all'; saveShare(); });
+// 端末の見分け用（サーバーの記録に残すだけ。画面には出さない）
+function deviceName(){
+  var u = navigator.userAgent;
+  return /iPad/.test(u) ? 'iPad' : /iPhone/.test(u) ? 'iPhone' : /Android/.test(u) ? 'Android' : /Mac/.test(u) ? 'Mac' : /Windows/.test(u) ? 'Windows' : '端末';
+}
 
 function b64uToU8(s){
   s = s.replace(/-/g, '+').replace(/_/g, '/'); while(s.length % 4) s += '=';
