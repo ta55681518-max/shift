@@ -177,7 +177,7 @@
   <div class="card" id="composer">
     <div class="ttl">✏️ 新しいメモ<span class="sp"></span><span class="muted" id="nowStamp"></span></div>
     <div class="catchips" id="compCats"></div>
-    <textarea id="compText" placeholder="下のマイクを押して話す／ここに打ってもOK"></textarea>
+    <textarea id="compText" maxlength="100000" placeholder="下のマイクを押して話す／ここに打ってもOK"></textarea>
     <div class="interim" id="compInterim"></div>
     <div class="suggest" id="compSuggest"></div>
     <div class="quick" id="compQuick"></div>
@@ -208,7 +208,7 @@
     <div class="muted" id="edStamp" style="margin-bottom:10px"></div>
     <div class="field"><label>項目</label><div class="catchips" id="edCats"></div></div>
     <div class="field"><label>内容</label>
-      <textarea id="edText" style="min-height:140px"></textarea>
+      <textarea id="edText" maxlength="100000" style="min-height:140px"></textarea>
       <div class="interim" id="edInterim"></div>
       <button class="mic" id="edMic">🎤 話して追記</button>
     </div>
@@ -1244,6 +1244,8 @@ function doSync(){
       var j = JSON.stringify(m);
       if(j !== sent[m.id] && j !== last[m.id]) keep[m.id] = m;      // 送っている間に直された／増えたメモ
     });
+    var rejected = res.rejected || [];
+    db.memos.forEach(function(m){ if(rejected.indexOf(m.id) >= 0) keep[m.id] = m; });   // サーバーに断られた（長すぎる）→ 原文を残す
     var newLast = {}, list = [], seen = {};
     (res.memos || []).forEach(function(sm){
       if(sm.deleted) return;
@@ -1259,7 +1261,8 @@ function doSync(){
       if(JSON.stringify(db.cats) === catsJ) db.cats = res.cats;
       share.catsJson = JSON.stringify(res.cats);
     }
-    share.lastSynced = newLast; share.lastOk = Date.now(); share.err = ''; share.people = res.people || [];
+    share.lastSynced = newLast; share.lastOk = Date.now(); share.people = res.people || [];
+    share.err = rejected.length ? '長すぎるメモ ' + rejected.length + '件は同期されていません（' + (res.textMax || 100000) + '文字まで）。この端末には残っています' : '';
     saveShare();
     applyingRemote = true; save(); applyingRemote = false;
     if(JSON.stringify(db) !== before) renderAll(); else tickHeader();
@@ -1300,12 +1303,24 @@ $('shConnect').addEventListener('click', function(){
   if(!pass){ toast('合言葉を入れてください'); return; }
   var first = !shareOn();
   var mine = db.memos.length;
-  if(first && mine && !confirm('この端末のメモ ' + mine + '件もサーバーに入れて、ほかのiPhoneと同じ内容にします。よろしいですか？')) return;
+  if(first && mine && !confirm('この端末のメモ ' + mine + '件もサーバーに入れて、ほかのiPhoneと同じ内容にします。\n項目はサーバー（ほかのiPhone）の項目に合わせ、この端末で自分で作った項目はそこに足します。よろしいですか？')) return;
   var btn = this; btn.disabled = true; btn.textContent = '接続中…';
-  api('sync', {memos:[]}, {url:url, pass:pass, name:name}).then(function(){
+  api('sync', {memos:[]}, {url:url, pass:pass, name:name}).then(function(res){
     share.url = url; share.pass = pass; share.name = name; share.err = '';
-    if(first){ share.lastSynced = {}; share.catsJson = ''; }
+    if(first){
+      share.lastSynced = {};
+      if(res.catsRev > 0 && res.cats && res.cats.length){
+        // サーバーに項目があれば、それを基準にする。初期の項目は送らず、自分で作った項目だけ足す
+        var have = {}, def = {};
+        res.cats.forEach(function(c){ have[c.id] = 1; });
+        DEFAULT_CATS.forEach(function(c){ def[c.id] = 1; });
+        var extra = db.cats.filter(function(c){ return !have[c.id] && !def[c.id]; });
+        db.cats = res.cats.concat(extra);
+        share.catsJson = JSON.stringify(res.cats);        // extra があるときだけ «変更» として送られる
+      } else share.catsJson = '';                          // サーバーが空 → この端末の項目を入れる
+    }
     db.memos.forEach(function(m){ if(!m.owner) m.owner = share.device; });
+    applyingRemote = true; save(); applyingRemote = false;
     saveShare(); $('shPass').value = '';
     return doSync();
   }).then(function(){

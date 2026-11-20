@@ -19,6 +19,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') exit;
 
 $a = $_GET['a'] ?? '';
 
+set_exception_handler(function ($e) {
+  if (!headers_sent()) { http_response_code(500); header('Content-Type: application/json; charset=utf-8'); }
+  echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+});
+
 function out($arr, $code = 200) {
   http_response_code($code);
   header('Content-Type: application/json; charset=utf-8');
@@ -36,13 +41,15 @@ function need_auth($cfg) {
   if ($p === '' || !password_verify($p, $cfg['passHash'])) { sleep(1); out(['ok' => false, 'error' => '合言葉がちがいます'], 403); }
 }
 function clean_str($s, $max) { return mb_substr((string) $s, 0, $max); }
+/* 本文は切り捨てない。長すぎるものは 'too_long' を返して、受け取らない（端末の原文は残る） */
 function clean_memo($m) {
   if (!is_array($m) || empty($m['id']) || !is_string($m['id']) || strlen($m['id']) > 40) return null;
+  if (empty($m['deleted']) && mb_strlen((string) ($m['text'] ?? '')) > MEMO_TEXT_MAX) return 'too_long';
   $o = ['id' => $m['id'], 'rev' => (int) ($m['rev'] ?? 0)];
   if (!empty($m['deleted'])) { $o['deleted'] = true; return $o; }
   $o += [
     'cat' => clean_str($m['cat'] ?? '', 40),
-    'text' => clean_str($m['text'] ?? '', 5000),
+    'text' => (string) ($m['text'] ?? ''),
     'created' => (int) ($m['created'] ?? 0),
     'updated' => (int) ($m['updated'] ?? 0),
     'remind' => !empty($m['remind']) ? (int) $m['remind'] : null,
@@ -66,7 +73,11 @@ $cfg = load_config();
 if ($a === 'setup') {
   header('Content-Type: text/html; charset=utf-8');
   $self = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? '') . dirname($_SERVER['SCRIPT_NAME'] ?? '/') . '/';
-  $msg = '';
+  $msg = ''; $showToken = false;
+  if ($cfg && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    if (password_verify((string) ($_POST['p1'] ?? ''), $cfg['passHash'])) $showToken = true;
+    else { sleep(1); $msg = '合言葉がちがいます。'; }
+  }
   if (!$cfg && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     $p1 = (string) ($_POST['p1'] ?? ''); $p2 = (string) ($_POST['p2'] ?? '');
     if (mb_strlen($p1) < 8) $msg = '合言葉は8文字以上にしてください。';
@@ -79,6 +90,7 @@ if ($a === 'setup') {
                 'created' => date('c')];
         save_config($cfg);
         with_store(function (&$d, &$changed) { $changed = true; });
+        $showToken = true;
       } catch (Exception $e) { $cfg = null; $msg = 'エラー：' . $e->getMessage(); }
     }
   }
@@ -96,8 +108,15 @@ if ($a === 'setup') {
     echo '<h3>① アプリに入れるサーバーのURL</h3><code>' . $h($self) . '</code>';
     echo '<h3>② cron（1分ごと）に登録するコマンド</h3><p>サーバーパネル →「Cron設定」→ 分・時・日・月・曜日をすべて <b>*</b> にして、コマンドに：</p>';
     echo '<code>/usr/bin/php8.3 ' . $h(__DIR__ . '/cron.php') . ' &gt; /dev/null 2&gt;&amp;1</code>';
-    echo '<p style="font-size:13px">php8.3 の部分は、サーバーパネルの「PHP Ver.切替」で選んでいるバージョンに合わせてください（例：php8.2）。うまくいかないときは代わりに：</p>';
-    echo '<code>curl -s "' . $h($self . 'api.php?a=cron&token=' . $cfg['cronToken']) . '" &gt; /dev/null</code>';
+    echo '<p style="font-size:13px">php8.3 の部分は、サーバーパネルの「PHP Ver.切替」で選んでいるバージョンに合わせてください（例：php8.2）。</p>';
+    if ($msg) echo '<p class="e">' . $h($msg) . '</p>';
+    if ($showToken) {
+      echo '<p style="font-size:13px">上のコマンドでうまくいかないときは代わりに（この行は人に見せないでください）：</p>';
+      echo '<code>curl -s "' . $h($self . 'api.php?a=cron&token=' . $cfg['cronToken']) . '" &gt; /dev/null</code>';
+    } else {
+      echo '<p style="font-size:13px">上のコマンドでうまくいかないときの «URL版» のコマンドは、合言葉を入れると表示されます。</p>';
+      echo '<form method="post"><input type="password" name="p1" placeholder="合言葉"><button>表示する</button></form>';
+    }
     echo '<p style="font-size:13px">合言葉を変えたいときは、FTPで data/config.json を消してからこのページを開き直します（通知の登録はやり直しになります）。</p>';
   }
   exit;
@@ -124,9 +143,10 @@ if ($a === 'sync') {
   $res = with_store(function (&$d, &$changed) use ($b, $cfg, $device, $name) {
     $map = [];
     foreach ($d['memos'] as $m) $map[$m['id']] = $m;
-    $accepted = 0;
+    $accepted = 0; $rejected = [];
     foreach ((array) ($b['memos'] ?? []) as $in) {
       $m = clean_memo($in);
+      if ($m === 'too_long') { $rejected[] = (string) $in['id']; continue; }
       if (!$m) continue;
       $cur = $map[$m['id']] ?? null;
       if (!$cur || $m['rev'] >= (int) ($cur['rev'] ?? 0)) { $map[$m['id']] = $m; $accepted++; $changed = true; }
@@ -150,7 +170,8 @@ if ($a === 'sync') {
     run_reminders_locked($d, $changed, $cfg);
     $people = [];
     foreach ($d['subs'] as $s) $people[] = ['name' => $s['name'] ?? '', 'me' => ($s['device'] ?? '') === $device];
-    return ['ok' => true, 'memos' => $d['memos'], 'cats' => $d['cats'], 'catsRev' => $d['catsRev'], 'accepted' => $accepted, 'people' => $people, 'time' => now_ms()];
+    $memos = array_map(function ($m) { unset($m['sentTo'], $m['pushTries']); return $m; }, $d['memos']);
+    return ['ok' => true, 'memos' => $memos, 'cats' => $d['cats'], 'catsRev' => $d['catsRev'], 'accepted' => $accepted, 'rejected' => $rejected, 'textMax' => MEMO_TEXT_MAX, 'people' => $people, 'time' => now_ms()];
   });
   out($res);
 }

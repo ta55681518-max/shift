@@ -35,27 +35,48 @@ function save_config($c) {
   rename($tmp, MEMO_CONFIG);
 }
 
-/* ---------------- データ（ロックして読み書き） ---------------- */
+/* ---------------- データ（ロックして読み書き） ----------------
+   ・ロックは別ファイル（memo.lock）で取り、書くときは «一時ファイル → 置きかえ» にする
+     → 書いている途中で止まっても memo.json が半端な中身にならない
+   ・1つ前の中身を memo.json.bak に残す
+   ・memo.json が読めない／壊れているときは、空とみなさずにエラーで止める
+     （空として返すと、端末のメモまで空で上書きされてしまうため）
+   ------------------------------------------------------------ */
+define('MEMO_LOCK', MEMO_DATA_DIR . '/memo.lock');
+define('MEMO_TEXT_MAX', 100000);
 function with_store($fn) {
   if (!is_dir(MEMO_DATA_DIR)) mkdir(MEMO_DATA_DIR, 0700, true);
-  $fp = fopen(MEMO_STORE, 'c+');
-  if (!$fp) throw new Exception('データファイルを開けません（data フォルダの書き込み権限を確認）');
-  flock($fp, LOCK_EX);
-  $raw = stream_get_contents($fp);
-  $d = $raw ? json_decode($raw, true) : null;
-  if (!is_array($d)) $d = [];
-  $d += ['memos' => [], 'cats' => [], 'catsRev' => 0, 'subs' => []];
-  $changed = false;
-  $result = $fn($d, $changed);
-  if ($changed) {
-    ftruncate($fp, 0);
-    rewind($fp);
-    fwrite($fp, json_encode($d, JSON_UNESCAPED_UNICODE));
-    fflush($fp);
+  $lk = fopen(MEMO_LOCK, 'c');
+  if (!$lk) throw new Exception('データフォルダに書き込めません（data フォルダの権限を確認）');
+  flock($lk, LOCK_EX);
+  try {
+    $d = [];
+    if (file_exists(MEMO_STORE)) {
+      $raw = file_get_contents(MEMO_STORE);
+      if ($raw === false) throw new Exception('memo.json を読めません');
+      if (trim($raw) !== '') {
+        $d = json_decode($raw, true);
+        if (!is_array($d) || !isset($d['memos']) || !is_array($d['memos'])) {
+          throw new Exception('サーバーのデータ（memo.json）が壊れています。memo.json.bak から戻してください');
+        }
+      }
+    }
+    $d += ['memos' => [], 'cats' => [], 'catsRev' => 0, 'subs' => []];
+    $changed = false;
+    $result = $fn($d, $changed);
+    if ($changed) {
+      $json = json_encode($d, JSON_UNESCAPED_UNICODE);
+      if ($json === false) throw new Exception('保存用のデータを作れませんでした');
+      $tmp = MEMO_STORE . '.tmp';
+      if (file_put_contents($tmp, $json, LOCK_EX) !== strlen($json)) { @unlink($tmp); throw new Exception('保存に失敗しました（容量を確認）'); }
+      if (file_exists(MEMO_STORE)) @copy(MEMO_STORE, MEMO_STORE . '.bak');
+      if (!rename($tmp, MEMO_STORE)) throw new Exception('保存に失敗しました');
+    }
+    return $result;
+  } finally {
+    flock($lk, LOCK_UN);
+    fclose($lk);
   }
-  flock($fp, LOCK_UN);
-  fclose($fp);
-  return $result;
 }
 
 /* ---------------- VAPID 鍵 ---------------- */
@@ -130,7 +151,8 @@ function webpush_send($sub, $payloadArr, $cfg) {
     CURLOPT_POST => true,
     CURLOPT_POSTFIELDS => $body,
     CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_TIMEOUT => 15,
+    CURLOPT_TIMEOUT => 10,
+    CURLOPT_CONNECTTIMEOUT => 5,
     CURLOPT_HTTPHEADER => [
       'Authorization: vapid t=' . vapid_jwt($sub['endpoint'], $cfg) . ', k=' . $cfg['vapid']['pub'],
       'Content-Encoding: aes128gcm',
@@ -175,15 +197,29 @@ function run_reminders_locked(&$d, &$changed, $cfg) {
     if (!empty($m['by'])) $first .= '（' . $m['by'] . '）';
     $payload = ['title' => $title, 'body' => $first, 'id' => $m['id']];
     $onlyMe = ($m['notify'] ?? 'all') === 'me';
+    // 端末ごとに «届いた» を覚えておき、一時的な失敗（通信エラー・429・5xx）の端末にだけ次の分で送り直す
+    $done = isset($m['sentTo']) && is_array($m['sentTo']) ? $m['sentTo'] : [];
+    $retry = 0;
     foreach ($d['subs'] as $i => $s) {
       if ($onlyMe && ($s['device'] ?? '') !== ($m['owner'] ?? '')) continue;
+      $key = substr(sha1($s['endpoint']), 0, 12);
+      if (in_array($key, $done, true)) continue;
       try {
         $code = webpush_send($s, $payload, $cfg);
-        if ($code === 404 || $code === 410) { unset($d['subs'][$i]); }   // 解除された端末
-        elseif ($code >= 200 && $code < 300) $sent++;
-      } catch (Exception $e) { /* 1台の失敗で全体を止めない */ }
+      } catch (Exception $e) { $code = -1; }                       // 購読情報が壊れている → 送り直しても無駄
+      if ($code === 404 || $code === 410) { unset($d['subs'][$i]); continue; }   // 解除された端末
+      if ($code === 0 || $code === 429 || $code >= 500) { $retry++; continue; }
+      if ($code >= 200 && $code < 300) $sent++;
+      $done[] = $key;                                              // 届いた or 送り直しても無駄な失敗
     }
     $d['subs'] = array_values($d['subs']);
+    $m['pushTries'] = (int) ($m['pushTries'] ?? 0) + 1;
+    if ($retry > 0 && $m['pushTries'] < 15) {                      // 15分ほど送り直す
+      $m['sentTo'] = $done;
+      $changed = true;
+      continue;
+    }
+    unset($m['sentTo'], $m['pushTries']);
     if (!empty($m['repeat']) && !empty($m['resume'])) { $m['remind'] = $m['resume']; unset($m['resume']); $m['notified'] = false; }
     elseif (!empty($m['repeat'])) { $m['remind'] = next_repeat((int) $m['remind'], $m['repeat']); $m['notified'] = false; }
     else $m['notified'] = true;
