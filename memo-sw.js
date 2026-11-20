@@ -8,6 +8,20 @@
 self.addEventListener('install', function () { self.skipWaiting(); });
 self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });
 
+/* Xserver（memo-api の cron）から届くリマインド。アプリを閉じていても鳴る */
+self.addEventListener('push', function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || '🔔 音声メモ', {
+    body: d.body || '',
+    icon: 'memo-icon.png',
+    badge: 'memo-icon.png',
+    tag: 'memo-' + (d.id || Date.now()),
+    data: { id: d.id || '' },
+    vibrate: [200, 100, 200]
+  }));
+});
+
 self.addEventListener('notificationclick', function (e) {
   e.notification.close();
   var id = (e.notification.data && e.notification.data.id) || '';
