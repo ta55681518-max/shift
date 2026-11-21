@@ -3,163 +3,487 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#2a1109">
+<meta name="theme-color" content="#111111">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="音声メモ">
 <link rel="apple-touch-icon" href="memo-icon-180.png">
 <link rel="icon" type="image/png" href="memo-icon.png">
 <link rel="manifest" href="memo.webmanifest">
 <title>音声メモ - 串焼KEMURI屋</title>
-<script src="site-notice.js?v=20261012b"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Shippori+Mincho:wght@600&display=swap" rel="stylesheet">
 <!--
   ============================================================
-  音声メモ（memo.html）
+  音声メモ（xserver/memo/index.html）
   ・項目（カテゴリ）ごとに、声でメモを入れられる
   ・メモごとにリマインド（日時・くり返し）をかけられる
   ・入れた日付と曜日・時刻が自動でつく
+  ・置き場所：Xserver の public_html/memo/（このファイル＝index.html、サーバー部分＝api/）
   ・データはこの端末（ブラウザ×URL）の localStorage「kemuri_memo_v1」に保存
     → 機種変更・ブラウザ変更のときは「設定 → バックアップ書き出し」で持ち出す
   ・リマインドの通知は «このページ（またはホーム画面アプリ）が開いているあいだ» に鳴る。
-  ・Xserver に xserver/memo-api を置いて「設定 → ほかのiPhoneと同期」で接続すると、
+  ・「設定 → ほかのiPhoneと同期」で合言葉を入れて接続すると、
     どのiPhoneで書いても同じ内容になり、閉じていてもサーバーからプッシュ通知が届く
-    （設置手順は xserver/memo-api/README.md）。
+    （設置手順は xserver/memo/README.md）。
   ============================================================
 -->
 <style>
-  :root{
-    --bg:#1a1210; --card:#241813; --card2:#2e2019; --line:#3a2a22; --line2:#5a4438;
-    --tx:#f5efe6; --sub:#b9a99c; --mute:#8a7a6e; --acc:#e8622a; --acc2:#ff7b3d; --gold:#ffcf9e;
-    --red:#ff6b5b; --green:#3fb57a; --blue:#7db4ff;
-  }
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;background:var(--bg);color:var(--tx)}
-  body{font-family:-apple-system,"Hiragino Kaku Gothic ProN","Meiryo",sans-serif;padding-bottom:calc(90px + env(safe-area-inset-bottom))}
-  button{font-family:inherit;cursor:pointer}
-  header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#3a1c12,#2a1109);
-    border-bottom:2px solid var(--acc);padding:calc(10px + env(safe-area-inset-top)) 16px 10px}
-  .hrow{display:flex;align-items:center;gap:10px;max-width:640px;margin:0 auto}
-  .hrow h1{margin:0;font-size:18px;letter-spacing:1px;flex:1}
-  .today{font-size:13px;color:var(--gold);font-weight:bold;text-align:right;line-height:1.3}
-  .today small{display:block;color:var(--sub);font-weight:normal;font-size:11px}
-  .iconbtn{background:#00000033;border:1px solid var(--line2);color:var(--tx);border-radius:10px;
-    min-width:40px;height:40px;font-size:18px;position:relative}
-  .badge{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;font-size:11px;
-    border-radius:10px;padding:1px 6px;font-weight:bold}
-  .wrap{max-width:640px;margin:0 auto;padding:12px 16px}
-  .tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 16px 4px;max-width:640px;margin:0 auto;scrollbar-width:none}
-  .tabs::-webkit-scrollbar{display:none}
-  .tab{flex:0 0 auto;padding:8px 14px;border-radius:20px;border:1px solid var(--line2);background:var(--card2);
-    color:var(--sub);font-size:14px;font-weight:bold;white-space:nowrap}
-  .tab.on{background:var(--acc);border-color:var(--acc);color:#fff}
-  .tab .n{font-size:11px;opacity:.8;margin-left:4px}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
-  .ttl{font-size:13px;color:var(--gold);font-weight:bold;margin:0 0 8px;display:flex;align-items:center;gap:6px}
-  .ttl .sp{flex:1}
-  .muted{color:var(--mute);font-size:12px}
-  /* 項目ごとの録音タイル */
-  .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
-  .tile{border:1px solid var(--line2);background:var(--card2);border-radius:12px;padding:12px 8px;color:var(--tx);
-    display:flex;flex-direction:column;align-items:center;gap:4px;font-size:14px;font-weight:bold;min-height:84px;justify-content:center}
-  .tile .e{font-size:24px}
-  .tile .m{font-size:11px;color:var(--sub);font-weight:normal}
-  .tile:active{transform:scale(.97)}
-  /* 入力欄 */
-  .catchips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-  .chip{padding:6px 10px;border-radius:16px;border:1px solid var(--line2);background:transparent;color:var(--sub);font-size:13px}
-  .chip.on{color:#fff;border-color:transparent}
-  textarea,input,select{width:100%;padding:12px;font-size:16px;border-radius:10px;border:1px solid var(--line2);
-    background:#160f0c;color:var(--tx);font-family:inherit}
-  textarea{min-height:96px;resize:vertical;line-height:1.5}
-  input[type=datetime-local]{min-height:46px}
-  .interim{color:var(--mute);font-size:14px;min-height:20px;margin-top:4px;font-style:italic}
-  .mic{width:100%;margin-top:10px;padding:16px;border:none;border-radius:14px;font-size:18px;font-weight:bold;
-    background:linear-gradient(180deg,#ff7b3d,#e8541f);color:#fff;box-shadow:0 4px 0 #a83a12;letter-spacing:1px}
-  .mic:active{transform:translateY(2px);box-shadow:0 2px 0 #a83a12}
-  .mic.rec{background:linear-gradient(180deg,#e03b3b,#b51f1f);box-shadow:0 4px 0 #6e1010;animation:pulse 1.2s infinite}
-  @keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
-  .row{display:flex;gap:8px;align-items:center}
-  .row>*{flex:1}
-  .btn{padding:12px;border-radius:12px;border:1px solid var(--line2);background:var(--card2);color:var(--gold);font-size:15px;font-weight:bold}
-  .btn.pri{background:var(--green);border-color:var(--green);color:#fff}
-  .btn.dan{color:var(--red)}
-  .btn:disabled{opacity:.45}
-  .quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-  .quick button{padding:7px 10px;border-radius:16px;border:1px solid var(--line2);background:#160f0c;color:var(--gold);font-size:12px}
-  .quick button.on{background:var(--gold);color:#2a1109;border-color:var(--gold);font-weight:bold}
-  .suggest{margin-top:8px;padding:8px 10px;border-radius:10px;background:#3b2a12;border:1px dashed var(--gold);font-size:13px;display:none}
-  .suggest button{margin-left:6px;padding:4px 10px;border-radius:12px;border:none;background:var(--gold);color:#2a1109;font-weight:bold}
-  .remsel{margin-top:8px;font-size:13px;color:var(--gold)}
-  /* 絞り込み */
-  .filters{display:flex;gap:6px;overflow-x:auto;margin-bottom:8px;scrollbar-width:none}
-  .filters::-webkit-scrollbar{display:none}
-  .filters button{flex:0 0 auto;padding:6px 12px;border-radius:16px;border:1px solid var(--line2);background:transparent;color:var(--sub);font-size:13px}
-  .filters button.on{background:var(--card2);color:var(--gold);border-color:var(--gold)}
-  .search{margin-bottom:10px}
-  /* 一覧 */
-  .dayh{display:flex;align-items:baseline;gap:8px;margin:16px 2px 6px;font-weight:bold;font-size:14px;color:var(--gold)}
-  .dayh .rel{font-size:11px;color:var(--sub);font-weight:normal}
-  .dayh.sat{color:var(--blue)} .dayh.sun{color:#ff8a8a}
-  .memo{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--acc);border-radius:12px;padding:10px 12px;margin-bottom:8px}
-  .memo.done{opacity:.55}
-  .memo.done .txt{text-decoration:line-through}
-  .memo.flash{animation:flash 1.6s 2}
-  @keyframes flash{50%{background:#4a2a18}}
-  .mhead{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sub);margin-bottom:4px;flex-wrap:wrap}
-  .cbadge{padding:2px 8px;border-radius:10px;color:#fff;font-weight:bold;font-size:11px}
-  .rbadge{padding:2px 8px;border-radius:10px;background:#3b2a12;color:var(--gold);font-size:11px}
-  .rbadge.over{background:#5a1d18;color:#ffb3a8}
-  .rbadge.soon{background:#4a3a10;color:#ffe08a}
-  .pin{color:var(--gold)}
-  .txt{white-space:pre-wrap;word-break:break-word;font-size:16px;line-height:1.55}
-  .acts{display:grid;grid-template-columns:1.3fr 1.3fr 1.3fr 1fr 1fr 1fr 1fr;gap:4px;margin-top:8px}
-  .acts button{min-width:0;white-space:nowrap;overflow:hidden;padding:8px 0;border-radius:9px;border:1px solid var(--line);background:var(--card2);color:var(--sub);font-size:13px}
-  .acts button.on{color:var(--green);border-color:var(--green)}
-  .empty{text-align:center;color:var(--mute);padding:30px 10px;font-size:14px}
-  /* 今日のリマインド */
-  .duelist .it{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:14px}
-  .duelist .it:last-child{border-bottom:none}
-  .duelist .t{color:var(--gold);font-weight:bold;min-width:52px}
-  .duelist .x{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* シート（モーダル） */
-  .sheetbg{position:fixed;inset:0;background:#000a;z-index:40;display:none;align-items:flex-end;justify-content:center}
-  .sheetbg.show{display:flex}
-  .sheet{background:var(--bg);width:100%;max-width:640px;max-height:92vh;overflow:auto;border-radius:18px 18px 0 0;
-    border-top:2px solid var(--acc);padding:16px 16px calc(20px + env(safe-area-inset-bottom))}
-  .sheet h2{margin:0 0 12px;font-size:17px;display:flex;align-items:center}
-  .sheet h2 .sp{flex:1}
-  .field{margin-bottom:12px}
-  .field>label{display:block;font-size:12px;color:var(--gold);font-weight:bold;margin-bottom:5px}
-  .catrow{display:flex;gap:6px;align-items:center;margin-bottom:6px}
-  .catrow input.emo{width:56px;flex:0 0 56px;text-align:center;padding:10px 4px}
-  .catrow input.col{width:46px;flex:0 0 46px;padding:2px;height:44px}
-  .catrow button{flex:0 0 auto;width:40px;height:44px;border-radius:10px;border:1px solid var(--line2);background:var(--card2);color:var(--sub);font-size:15px}
-  /* 鳴っているリマインド */
-  .alarm{position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));z-index:60;max-width:616px;margin:0 auto;
-    background:#3b1a10;border:2px solid var(--acc2);border-radius:14px;padding:12px;box-shadow:0 8px 30px #000c;display:none}
-  .alarm.show{display:block;animation:drop .3s}
-  @keyframes drop{from{transform:translateY(-30px);opacity:0}}
-  .alarm .at{font-size:12px;color:var(--gold);font-weight:bold}
-  .alarm .ax{font-size:16px;margin:6px 0 10px;white-space:pre-wrap;max-height:30vh;overflow:auto}
-  .alarm .row button{padding:10px 4px;font-size:13px}
-  .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#000;color:#fff;
-    padding:10px 16px;border-radius:22px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:70;
-    max-width:92%;display:flex;gap:10px;align-items:center}
-  .toast.show{opacity:.95;pointer-events:auto}
-  .toast button{background:none;border:none;color:var(--gold);font-weight:bold;font-size:14px}
-  .fab{position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:30;width:66px;height:66px;border-radius:50%;
-    border:none;font-size:28px;color:#fff;background:linear-gradient(180deg,#ff7b3d,#e8541f);box-shadow:0 6px 18px #000a}
-  .fab.rec{background:linear-gradient(180deg,#e03b3b,#b51f1f);animation:pulse 1.2s infinite}
-  .note{font-size:12px;color:var(--sub);line-height:1.6;background:#160f0c;border-radius:10px;padding:10px;border:1px solid var(--line)}
-  .warn{background:#3b1a10;border:1px solid var(--acc);color:#ffd7c2;border-radius:10px;padding:10px;font-size:13px;margin-bottom:12px;line-height:1.5}
-  .nav{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:20px 0 8px}
-  .nav a{font-size:12px;text-decoration:none;padding:6px 11px;border-radius:16px;background:var(--card2);color:var(--sub);border:1px solid var(--line)}
+  /* デザイン：OpenAI（gpt-5.5）に作ってもらったもの。墨色・炭の地に真鍮色と控えめな朱 */
+:root{
+  --bg:#11100e;
+  --bg2:#171512;
+  --card:#1b1814;
+  --card2:#221e19;
+  --card3:#29231d;
+  --line:#342d25;
+  --line2:#4b4034;
+  --line3:#6a5b49;
+  --tx:#f1eadf;
+  --sub:#b7aa99;
+  --mute:#85796b;
+  --acc:#a95435;
+  --acc2:#b96542;
+  --gold:#c7a66a;
+  --gold2:#dcc38e;
+  --red:#c75a4b;
+  --green:#5f9b72;
+  --blue:#7898bd;
+  --shadow:0 16px 40px rgba(0,0,0,.28);
+  --r:14px;
+  --focus:0 0 0 3px rgba(199,166,106,.18);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx)}
+html{min-height:100%;background:var(--bg)}
+body{
+  min-height:100%;
+  font-family:'Noto Sans JP',-apple-system,BlinkMacSystemFont,'Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif;
+  font-size:16px;
+  line-height:1.65;
+  letter-spacing:.015em;
+  padding-bottom:calc(96px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at 50% -120px, rgba(199,166,106,.10), transparent 320px),
+    linear-gradient(180deg,#14120f 0%,#100f0d 42%,#0d0c0b 100%);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+button,input,textarea,select{font-family:inherit}
+button{cursor:pointer;touch-action:manipulation}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible{outline:none;box-shadow:var(--focus);border-color:var(--gold)}
+button:disabled{cursor:not-allowed}
+::selection{background:rgba(199,166,106,.28);color:var(--tx)}
+header{
+  position:sticky;top:0;z-index:20;
+  background:rgba(17,16,14,.88);
+  backdrop-filter:saturate(120%) blur(18px);
+  -webkit-backdrop-filter:saturate(120%) blur(18px);
+  border-bottom:1px solid rgba(199,166,106,.20);
+  padding:calc(11px + env(safe-area-inset-top)) 14px 10px;
+}
+.hrow{display:flex;align-items:center;gap:8px;max-width:640px;margin:0 auto;flex-wrap:nowrap;min-width:0}
+.hrow h1{
+  margin:0;
+  flex:1 1 auto;
+  min-width:0;
+  font-family:'Shippori Mincho','Noto Sans JP',serif;
+  font-size:18px;
+  font-weight:600;
+  letter-spacing:.055em;
+  line-height:1.25;
+  color:var(--tx);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:clip;
+}
+.today{flex:0 0 auto;font-size:12px;color:var(--gold2);font-weight:500;text-align:right;line-height:1.28;letter-spacing:.025em;white-space:nowrap;font-variant-numeric:tabular-nums}
+.today small{display:block;color:var(--mute);font-weight:400;font-size:10px;letter-spacing:.015em}
+.iconbtn{
+  appearance:none;
+  flex:0 0 44px;
+  background:rgba(255,255,255,.022);
+  border:1px solid rgba(75,64,52,.82);
+  color:var(--tx);
+  border-radius:12px;
+  min-width:44px;height:44px;
+  padding:0 10px;
+  font-size:18px;
+  position:relative;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.iconbtn:active{transform:translateY(1px);background:rgba(199,166,106,.08)}
+.badge{
+  position:absolute;top:-6px;right:-6px;
+  min-width:20px;height:20px;padding:1px 6px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--red);color:#fff;
+  font-size:11px;font-weight:700;line-height:1;border-radius:999px;
+  border:1px solid rgba(17,16,14,.95);
+}
+.wrap{max-width:640px;margin:0 auto;padding:14px 16px 0}
+.tabs{
+  display:flex;gap:8px;overflow-x:auto;
+  padding:12px 16px 5px;max-width:640px;margin:0 auto;
+  scrollbar-width:none;
+  -webkit-overflow-scrolling:touch;
+}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  flex:0 0 auto;
+  min-height:44px;
+  padding:10px 15px;
+  border-radius:999px;
+  border:1px solid rgba(75,64,52,.82);
+  background:rgba(34,30,25,.70);
+  color:var(--sub);
+  font-size:14px;font-weight:500;white-space:nowrap;
+  letter-spacing:.02em;
+}
+.tab.on{
+  background:rgba(199,166,106,.12);
+  border-color:rgba(199,166,106,.62);
+  color:var(--gold2);
+}
+.tab:active{transform:translateY(1px);background:rgba(199,166,106,.10)}
+.tab .n{font-size:11px;opacity:.72;margin-left:5px;font-weight:500}
+.card{
+  background:linear-gradient(180deg,rgba(31,28,24,.96),rgba(25,22,19,.96));
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  padding:15px;
+  margin-bottom:14px;
+  box-shadow:0 1px 0 rgba(255,255,255,.025) inset;
+}
+.ttl{
+  font-size:13px;color:var(--gold2);font-weight:700;
+  margin:0 0 11px;
+  display:flex;align-items:center;gap:7px;
+  letter-spacing:.075em;
+  line-height:1.45;
+  font-feature-settings:'palt' 1;
+}
+.ttl .sp,.sheet h2 .sp{flex:1}
+.muted{color:var(--mute);font-size:12px;font-weight:400;letter-spacing:.02em}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:10px}
+.tile{
+  min-height:98px;
+  padding:14px 10px 13px;
+  border:0 solid var(--line2);
+  border-top-width:2px;
+  outline:1px solid rgba(75,64,52,.66);
+  outline-offset:-1px;
+  background:linear-gradient(180deg,rgba(37,32,27,.70),rgba(27,24,20,.88));
+  color:var(--tx);
+  border-radius:13px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  font-size:14px;font-weight:700;
+  letter-spacing:.025em;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+.tile .e{font-size:25px;line-height:1.1;filter:saturate(.82) brightness(.96)}
+.tile .m{font-size:11px;color:var(--sub);font-weight:400;letter-spacing:.015em}
+.tile:active{transform:scale(.987);background:rgba(199,166,106,.07)}
+.catchips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}
+.chip{
+  min-height:36px;
+  padding:7px 11px;
+  border-radius:999px;
+  border:1px solid rgba(75,64,52,.82);
+  background:rgba(255,255,255,.015);
+  color:var(--sub);
+  font-size:13px;font-weight:500;
+}
+.chip.on{
+  color:#fff;
+  border-color:rgba(255,255,255,.16);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+}
+textarea,input,select{
+  width:100%;
+  min-height:44px;
+  padding:12px 13px;
+  font-size:16px;
+  border-radius:12px;
+  border:1px solid var(--line2);
+  background:#12110f;
+  color:var(--tx);
+  caret-color:var(--gold2);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+textarea::placeholder,input::placeholder{color:#6f665c}
+textarea{min-height:104px;resize:vertical;line-height:1.65}
+select{appearance:none;background:#12110f;color:var(--tx)}
+input[type=datetime-local]{min-height:48px;color-scheme:dark}
+input[type=color]{min-height:44px}
+input[type=checkbox]{accent-color:var(--gold);min-height:auto}
+.interim{color:var(--mute);font-size:14px;min-height:22px;margin-top:6px;font-style:normal;line-height:1.5}
+.mic{
+  width:100%;
+  min-height:56px;
+  margin-top:12px;
+  padding:15px 18px;
+  border:1px solid rgba(192,121,82,.46);
+  border-radius:14px;
+  font-size:18px;font-weight:700;
+  color:#fff4e7;
+  background:linear-gradient(180deg,#ad5d3b,#8e4029);
+  box-shadow:0 10px 24px rgba(0,0,0,.26), inset 0 1px 0 rgba(255,255,255,.11);
+  letter-spacing:.07em;
+}
+.mic:active{transform:translateY(1px);box-shadow:0 6px 18px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.09)}
+.mic.rec{
+  border-color:rgba(203,111,85,.66);
+  background:linear-gradient(180deg,#a94f3f,#7f332d);
+  animation:recPulse 1.65s ease-in-out infinite;
+}
+@keyframes recPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(185,90,66,.24),0 10px 24px rgba(0,0,0,.24);filter:brightness(1)}
+  50%{box-shadow:0 0 0 8px rgba(185,90,66,0),0 10px 24px rgba(0,0,0,.24);filter:brightness(1.06)}
+}
+.row{display:flex;gap:9px;align-items:center}
+.row>*{flex:1}
+.btn{
+  min-height:44px;
+  padding:11px 13px;
+  border-radius:12px;
+  border:1px solid var(--line2);
+  background:rgba(34,30,25,.92);
+  color:var(--gold2);
+  font-size:15px;font-weight:700;
+  letter-spacing:.03em;
+}
+.btn.pri{background:rgba(95,155,114,.82);border-color:rgba(110,176,132,.76);color:#fff}
+.btn.dan{color:#e4a097;border-color:rgba(199,90,75,.50);background:rgba(55,31,27,.64)}
+.btn:disabled{opacity:.42;filter:saturate(.7)}
+.btn:active{transform:translateY(1px)}
+.quick{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.quick button{
+  min-height:36px;
+  padding:7px 11px;
+  border-radius:999px;
+  border:1px solid var(--line2);
+  background:#14120f;
+  color:var(--gold2);
+  font-size:12px;font-weight:500;
+}
+.quick button.on{background:rgba(199,166,106,.16);color:var(--gold2);border-color:rgba(199,166,106,.72);font-weight:700}
+.suggest{
+  margin-top:9px;
+  padding:10px 11px;
+  border-radius:12px;
+  background:rgba(72,55,27,.28);
+  border:1px dashed rgba(199,166,106,.62);
+  color:var(--tx);
+  font-size:13px;
+  display:none;
+}
+.suggest button{
+  min-height:34px;
+  margin-left:6px;padding:5px 11px;
+  border-radius:999px;border:1px solid rgba(199,166,106,.35);
+  background:rgba(199,166,106,.18);color:var(--gold2);font-weight:700;
+}
+.remsel{margin-top:8px;font-size:13px;color:var(--gold2)}
+.filters{display:flex;gap:7px;overflow-x:auto;margin:2px 0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.filters::-webkit-scrollbar{display:none}
+.filters button{
+  flex:0 0 auto;
+  min-height:38px;
+  padding:7px 12px;
+  border-radius:999px;
+  border:1px solid var(--line2);
+  background:rgba(255,255,255,.01);
+  color:var(--sub);
+  font-size:13px;font-weight:500;
+}
+.filters button.on{background:rgba(199,166,106,.12);color:var(--gold2);border-color:rgba(199,166,106,.65)}
+.search{margin-bottom:12px}
+.dayh{
+  display:flex;align-items:baseline;gap:8px;
+  margin:19px 2px 9px;
+  font-weight:700;font-size:14px;color:var(--gold2);
+  letter-spacing:.055em;
+  line-height:1.45;
+  font-feature-settings:'palt' 1;
+}
+.dayh .rel{font-size:11px;color:var(--sub);font-weight:400;letter-spacing:.02em}
+.dayh.sat{color:var(--blue)}
+.dayh.sun{color:#d98d84}
+.memo{
+  background:linear-gradient(180deg,rgba(31,28,24,.98),rgba(24,22,19,.98));
+  border:1px solid var(--line);
+  border-left:4px solid var(--acc);
+  border-radius:13px;
+  padding:11px 12px 12px;
+  margin-bottom:9px;
+  box-shadow:0 1px 0 rgba(255,255,255,.02) inset;
+}
+.memo.done{opacity:.56;filter:saturate(.78)}
+.memo.done .txt{text-decoration:line-through;text-decoration-thickness:1px;text-decoration-color:rgba(241,234,223,.55)}
+.memo.flash{animation:flash 1.6s ease-in-out 2}
+@keyframes flash{50%{background:rgba(72,55,27,.46);border-color:rgba(199,166,106,.42)}}
+.mhead{display:flex;align-items:center;gap:6px 7px;font-size:12px;color:var(--sub);margin-bottom:6px;flex-wrap:wrap;line-height:1.45}
+.cbadge{
+  padding:3px 8px;
+  border-radius:999px;
+  color:#fff;font-weight:700;font-size:11px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);
+}
+.rbadge{
+  padding:3px 8px;
+  border-radius:999px;
+  background:rgba(72,55,27,.38);
+  border:1px solid rgba(199,166,106,.22);
+  color:var(--gold2);
+  font-size:11px;font-weight:500;
+}
+.rbadge.over{background:rgba(83,34,29,.58);border-color:rgba(199,90,75,.38);color:#e7aaa1}
+.rbadge.soon{background:rgba(79,64,28,.55);border-color:rgba(220,195,142,.38);color:#ead49d}
+.pin{color:var(--gold2)}
+.txt{white-space:pre-wrap;word-break:break-word;font-size:16px;line-height:1.68;color:var(--tx)}
+.acts{
+  display:flex;
+  gap:7px;
+  margin-top:11px;
+  padding-bottom:2px;
+  overflow-x:auto;
+  scrollbar-width:none;
+  -webkit-overflow-scrolling:touch;
+}
+.acts::-webkit-scrollbar{display:none}
+.acts button{
+  flex:0 0 auto;
+  min-width:48px;min-height:44px;
+  white-space:nowrap;overflow:hidden;text-overflow:clip;
+  padding:8px 10px;
+  border-radius:10px;
+  border:1px solid rgba(75,64,52,.72);
+  background:rgba(28,25,21,.82);
+  color:var(--sub);
+  font-size:12.5px;font-weight:500;
+  line-height:1;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+.acts button.on{color:#9bc7a8;border-color:rgba(95,155,114,.62);background:rgba(95,155,114,.10)}
+.empty{text-align:center;color:var(--mute);padding:34px 10px;font-size:14px;line-height:1.7}
+.duelist .it{display:flex;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid rgba(75,64,52,.55);font-size:14px;min-height:44px}
+.duelist .it:last-child{border-bottom:none}
+.duelist .t{color:var(--gold2);font-weight:700;min-width:54px;font-variant-numeric:tabular-nums}
+.duelist .x{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx)}
+.sheetbg{position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:40;display:none;align-items:flex-end;justify-content:center;padding-top:env(safe-area-inset-top)}
+.sheetbg.show{display:flex}
+.sheet{
+  background:linear-gradient(180deg,#1b1814,#12110f);
+  width:100%;max-width:640px;max-height:92vh;overflow:auto;
+  border-radius:20px 20px 0 0;
+  border-top:1px solid rgba(199,166,106,.55);
+  border-left:1px solid rgba(199,166,106,.10);
+  border-right:1px solid rgba(199,166,106,.10);
+  padding:17px 16px calc(22px + env(safe-area-inset-bottom));
+  box-shadow:var(--shadow);
+  -webkit-overflow-scrolling:touch;
+}
+.sheet h2{
+  margin:0 0 14px;
+  font-family:'Shippori Mincho','Noto Sans JP',serif;
+  font-size:18px;font-weight:600;letter-spacing:.06em;
+  display:flex;align-items:center;color:var(--tx);
+}
+.field{margin-bottom:14px}
+.field>label{display:block;font-size:12px;color:var(--gold2);font-weight:700;margin-bottom:6px;letter-spacing:.06em}
+.catrow{display:flex;gap:7px;align-items:center;margin-bottom:8px}
+.catrow input.emo{width:56px;flex:0 0 56px;text-align:center;padding:10px 4px}
+.catrow input.col{width:48px;flex:0 0 48px;padding:3px;height:44px}
+.catrow button{
+  flex:0 0 auto;width:44px;height:44px;
+  border-radius:11px;border:1px solid var(--line2);
+  background:var(--card2);color:var(--sub);font-size:15px;
+}
+.alarm{
+  position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));z-index:60;
+  max-width:616px;margin:0 auto;
+  background:linear-gradient(180deg,#2a1c17,#1b1411);
+  border:1px solid rgba(199,166,106,.68);
+  border-left:4px solid var(--acc2);
+  border-radius:15px;
+  padding:13px;
+  box-shadow:0 20px 48px rgba(0,0,0,.48);
+  display:none;
+}
+.alarm.show{display:block;animation:drop .28s ease-out}
+@keyframes drop{from{transform:translateY(-24px);opacity:0}to{transform:translateY(0);opacity:1}}
+.alarm .at{font-size:12px;color:var(--gold2);font-weight:700;letter-spacing:.05em}
+.alarm .ax{font-size:16px;margin:7px 0 11px;white-space:pre-wrap;max-height:30vh;overflow:auto;line-height:1.65;color:var(--tx)}
+.alarm .row{gap:7px}
+.alarm .row button{padding:10px 4px;font-size:13px;min-height:44px}
+.toast{
+  position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);
+  background:rgba(17,16,14,.95);color:var(--tx);
+  border:1px solid rgba(199,166,106,.28);
+  padding:10px 15px;border-radius:999px;
+  font-size:14px;opacity:0;transition:opacity .25s ease, transform .25s ease;
+  pointer-events:none;z-index:70;max-width:92%;
+  display:flex;gap:10px;align-items:center;
+  box-shadow:0 10px 30px rgba(0,0,0,.38);
+}
+.toast.show{opacity:.96;pointer-events:auto;transform:translateX(-50%) translateY(-2px)}
+.toast button{background:none;border:none;color:var(--gold2);font-weight:700;font-size:14px;min-height:32px;padding:3px 0}
+.fab{
+  position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:30;
+  width:68px;height:68px;border-radius:50%;
+  border:1px solid rgba(192,121,82,.48);
+  font-size:28px;color:#fff4e7;
+  background:linear-gradient(180deg,#ad5d3b,#8e4029);
+  box-shadow:0 14px 34px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.11);
+}
+.fab:active{transform:translateY(1px) scale(.99)}
+.fab.rec{background:linear-gradient(180deg,#a94f3f,#7f332d);animation:recPulse 1.65s ease-in-out infinite}
+.note{
+  font-size:12px;color:var(--sub);line-height:1.75;
+  background:#14120f;border-radius:12px;padding:11px;
+  border:1px solid var(--line);
+}
+.warn{
+  background:rgba(83,34,29,.42);
+  border:1px solid rgba(199,90,75,.55);
+  color:#efd0c9;
+  border-radius:12px;padding:11px;
+  font-size:13px;margin-bottom:13px;line-height:1.6;
+}
+.nav{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:22px 0 9px}
+.nav a{
+  min-height:34px;
+  display:inline-flex;align-items:center;
+  font-size:12px;text-decoration:none;
+  padding:6px 11px;border-radius:999px;
+  background:rgba(34,30,25,.8);color:var(--sub);border:1px solid var(--line);
+}
+.nav a:active{transform:translateY(1px)}
+@media (max-width:380px){
+  .wrap{padding-left:13px;padding-right:13px}
+  header{padding-left:12px;padding-right:12px}
+  .tabs{padding-left:13px;padding-right:13px}
+  .hrow{gap:6px}
+  .hrow h1{font-size:16px;letter-spacing:.04em}
+  .today{font-size:11px}
+  .today small{display:none}
+  .card{padding:13px}
+  .tiles{grid-template-columns:repeat(auto-fill,minmax(126px,1fr))}
+  .acts{gap:6px}
+  .acts button{font-size:12px;min-width:46px;padding-left:9px;padding-right:9px}
+  .alarm{left:8px;right:8px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
 </style>
 </head>
 <body>
 
 <header>
   <div class="hrow">
-    <h1>🎤 音声メモ</h1>
+    <h1>音声メモ</h1>
     <div class="today" id="today"></div>
     <button class="iconbtn" id="bellBtn" title="リマインド一覧">🔔<span class="badge" id="bellBadge" style="display:none"></span></button>
     <button class="iconbtn" id="setBtn" title="設定">⚙</button>
@@ -175,7 +499,7 @@
 
   <!-- 入力欄 -->
   <div class="card" id="composer">
-    <div class="ttl">✏️ 新しいメモ<span class="sp"></span><span class="muted" id="nowStamp"></span></div>
+    <div class="ttl">新しいメモ<span class="sp"></span><span class="muted" id="nowStamp"></span></div>
     <div class="catchips" id="compCats"></div>
     <textarea id="compText" maxlength="100000" placeholder="下のマイクを押して話す／ここに打ってもOK"></textarea>
     <div class="interim" id="compInterim"></div>
@@ -193,9 +517,6 @@
   <input class="search" id="search" type="search" placeholder="🔍 メモをさがす（例：鶏もも、業者）">
   <div id="list"></div>
 
-  <div class="nav">
-    <a href="dashboard.html">ホーム</a><a href="reitou.html">冷凍在庫</a><a href="kushiyaki.html">串焼き在庫</a><a href="hacchu.html">発注</a>
-  </div>
   <div class="muted" style="text-align:center">串焼KEMURI屋 音声メモ v1</div>
 </div>
 
@@ -246,7 +567,7 @@
       <div class="muted" style="margin-top:6px">項目を消すと、その項目のメモは「その他」に移ります（メモは消えません）。</div>
     </div>
     <div class="field"><label>☁ ほかのiPhoneと同期・サーバー通知（Xserver）</label>
-      <input id="shUrl" type="url" placeholder="サーバーのURL（例：https://xxxx.xsrv.jp/memo-api/）" style="margin-bottom:6px" autocapitalize="off">
+      <input id="shUrl" type="url" placeholder="サーバーのURL（ふつうは空のままでOK）" style="margin-bottom:6px" autocapitalize="off">
       <input id="shPass" type="password" placeholder="合言葉" style="margin-bottom:6px" autocomplete="current-password">
       <div class="row"><button class="btn" id="shConnect">接続する</button><button class="btn dan" id="shOff">同期をやめる</button></div>
       <div class="row" style="margin-top:8px"><button class="btn" id="pushBtn">この端末で通知を受け取る</button><button class="btn" id="pushTest">サーバーから試す</button></div>
@@ -547,7 +868,7 @@ function renderTabs(){
 function renderTiles(){
   if(ui.tab !== 'all'){ $('tilesBox').innerHTML = ''; return; }
   var c = counts();
-  var h = '<div class="card"><div class="ttl">🎙 項目を押して、すぐ話す</div><div class="tiles">';
+  var h = '<div class="card"><div class="ttl">項目を選んで、すぐ話す</div><div class="tiles">';
   db.cats.forEach(function(k){
     h += '<button class="tile" data-tilerec="' + k.id + '" style="border-color:' + esc(k.color) + '">'
        + '<span class="e">' + esc(k.emoji) + '</span>' + esc(k.name)
@@ -568,7 +889,7 @@ function renderDue(){
   badge.textContent = waiting;
   badge.style.background = over ? 'var(--red)' : '#8a6a10';
   if(!items.length){ $('dueBox').innerHTML = ''; return; }
-  var h = '<div class="card"><div class="ttl">⏰ 今日のリマインド<span class="sp"></span><span class="muted">' + items.length + '件</span></div><div class="duelist">';
+  var h = '<div class="card"><div class="ttl">今日のリマインド<span class="sp"></span><span class="muted">' + items.length + '件</span></div><div class="duelist">';
   items.forEach(function(m){
     var o = m.remind <= now, k = catOf(m.cat);
     h += '<div class="it" data-jump="' + m.id + '"><span class="t" style="' + (o?'color:var(--red)':'') + '">' + (dayDiff(new Date(m.remind), new Date()) < 0 ? fmtShort(m.remind).split(' ')[0] : hm(new Date(m.remind))) + '</span>'
@@ -633,7 +954,7 @@ function renderList(){
   list.forEach(function(m){
     var d = new Date(m.created);
     if(m.pin && ui.filter !== 'remind' && ui.filter !== 'pin'){
-      if(!pinnedHeader){ h += '<div class="dayh">📌 ピン留め</div>'; pinnedHeader = true; }
+      if(!pinnedHeader){ h += '<div class="dayh">ピン留め</div>'; pinnedHeader = true; }
     } else if(ui.filter === 'remind'){
       var rd = ymd(new Date(m.remind));
       if(rd !== lastDay){ lastDay = rd; var r = new Date(m.remind); h += '<div class="dayh' + (r.getDay()===6?' sat':r.getDay()===0?' sun':'') + '">🔔 ' + fmtDay(r) + '</div>'; }
@@ -874,7 +1195,7 @@ function addCategory(){
 /* ---------------- 通知・リマインドの見張り ---------------- */
 var swReg = null;
 if('serviceWorker' in navigator && location.protocol !== 'file:'){
-  navigator.serviceWorker.register('memo-sw.js', {scope:'./memo.html'}).then(function(r){ swReg = r; }).catch(function(){});
+  navigator.serviceWorker.register('memo-sw.js', {scope:'./'}).then(function(r){ swReg = r; }).catch(function(){});
   navigator.serviceWorker.addEventListener('message', function(e){
     if(e.data && e.data.type === 'open-memo') jumpTo(e.data.id);
   });
@@ -1201,9 +1522,10 @@ document.addEventListener('visibilitychange', function(){ if(document.hidden) sa
    ・同じメモを2台で直したら、あとから送ったほうが残る
    ・通知はサーバーの cron が毎分見て、Web Push でiPhoneに送る
    ============================================================ */
-function shareOn(){ return !!(share.url && share.pass); }
+var DEFAULT_API = (function(){ try{ return new URL('api/', location.href).href; }catch(e){ return ''; } })();
+function shareOn(){ return !!((share.url || /^https?:/.test(DEFAULT_API)) && share.pass); }
 function apiUrl(action, base){
-  var u = String(base || share.url || '').trim();
+  var u = String(base || share.url || DEFAULT_API || '').trim();
   if(!/\.php($|\?)/.test(u)){ if(u.slice(-1) !== '/') u += '/'; u += 'api.php'; }
   return u + (u.indexOf('?') < 0 ? '?' : '&') + 'a=' + action;
 }
@@ -1279,13 +1601,13 @@ document.addEventListener('visibilitychange', function(){ if(!document.hidden &&
 
 function renderShareSettings(){
   if(!$('shUrl')) return;
-  if(document.activeElement !== $('shUrl')) $('shUrl').value = share.url || share.draftUrl || '';
+  if(document.activeElement !== $('shUrl')) $('shUrl').value = (share.url && share.url !== DEFAULT_API) ? share.url : '';
   $('shPass').placeholder = shareOn() ? '（接続済み・変えるときだけ入力）' : '合言葉';
   $('shOff').disabled = !shareOn();
   $('pushBtn').textContent = share.push ? '通知を受け取らない' : 'この端末で通知を受け取る';
   $('pushBtn').disabled = !shareOn(); $('pushTest').disabled = !share.push;
   var h;
-  if(!shareOn()) h = 'Xserverに置いた「memo-api」のURLと合言葉を入れると、どのiPhoneで書いても・直しても同じ内容になり、アプリを閉じていてもリマインドが届きます。ほかのiPhoneでも同じURLと合言葉を入れてください。';
+  if(!shareOn()) h = '合言葉を入れて「接続する」を押すと、どのiPhoneで書いても・直しても同じ内容になり、アプリを閉じていてもリマインドが届きます。ほかのiPhoneでも同じ合言葉を入れてください。（サーバーのURLは、別のサーバーを使うときだけ入れます）';
   else {
     h = (share.err ? '⚠ 同期できていません：' + esc(share.err) : '✅ 同期中' + (share.lastOk ? '（最終同期 ' + hm(new Date(share.lastOk)) + '）' : ''));
     h += '<br>通知：' + (share.push ? '🔔 この端末はサーバーから受け取ります' : '🔕 この端末はまだ受け取っていません');
@@ -1298,8 +1620,8 @@ function isIOS(){ return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigato
 function isStandalone(){ return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)); }
 
 $('shConnect').addEventListener('click', function(){
-  var url = $('shUrl').value.trim(), pass = $('shPass').value || (shareOn() ? share.pass : ''), name = deviceName();
-  if(!/^https?:\/\//.test(url)){ toast('サーバーのURLを https:// から入れてください'); return; }
+  var url = $('shUrl').value.trim() || DEFAULT_API, pass = $('shPass').value || (shareOn() ? share.pass : ''), name = deviceName();
+  if(!/^https?:\/\//.test(url)){ toast('このページをXserverのURL（https://…/memo/）から開いてください'); return; }
   if(!pass){ toast('合言葉を入れてください'); return; }
   var first = !shareOn();
   var mine = db.memos.length;
@@ -1346,7 +1668,7 @@ function b64uToU8(s){
 }
 function getReg(){
   if(swReg) return Promise.resolve(swReg);
-  return navigator.serviceWorker.register('memo-sw.js', {scope:'./memo.html'}).then(function(r){ swReg = r; return r; });
+  return navigator.serviceWorker.register('memo-sw.js', {scope:'./'}).then(function(r){ swReg = r; return r; });
 }
 function waitActive(reg){
   if(reg.active) return Promise.resolve(reg);

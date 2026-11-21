@@ -105,7 +105,8 @@ if ($a === 'setup') {
   } else {
     $writable = is_writable(MEMO_DATA_DIR);
     echo '<p>✅ 設定済みです。' . ($writable ? '' : '<span class="e">ただし data フォルダに書き込めません。パーミッションを 700 か 755 にしてください。</span>') . '</p>';
-    echo '<h3>① アプリに入れるサーバーのURL</h3><code>' . $h($self) . '</code>';
+    $app = preg_replace('#api/$#', '', $self);
+    echo '<h3>① アプリのURL（iPhoneのSafariでこれを開いて「ホーム画面に追加」）</h3><code>' . $h($app) . '</code>';
     echo '<h3>② cron（1分ごと）に登録するコマンド</h3><p>サーバーパネル →「Cron設定」→ 分・時・日・月・曜日をすべて <b>*</b> にして、コマンドに：</p>';
     echo '<code>/usr/bin/php8.3 ' . $h(__DIR__ . '/cron.php') . ' &gt; /dev/null 2&gt;&amp;1</code>';
     echo '<p style="font-size:13px">php8.3 の部分は、サーバーパネルの「PHP Ver.切替」で選んでいるバージョンに合わせてください（例：php8.2）。</p>';
