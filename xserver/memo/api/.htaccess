@@ -1,0 +1,5 @@
+# 音声メモ API：api.php 以外は直接開けないようにする
+<FilesMatch "^(lib|cron)\.php$">
+  Require all denied
+</FilesMatch>
+Options -Indexes
