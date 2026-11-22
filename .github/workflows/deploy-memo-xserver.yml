@@ -1,0 +1,75 @@
+# ============================================================
+# 音声メモ（xserver/memo）を Xserver に FTP でアップロードする
+# ・main の xserver/memo が変わったとき、または main で「Run workflow」を押したときに送る
+# ・FTPのIDやパスワードは GitHub の Secrets に置く（ここには書かない）
+#     XSERVER_FTP_HOST      例）sv12345.xserver.jp
+#     XSERVER_FTP_USER      例）サーバーID（またはFTPアカウント）
+#     XSERVER_FTP_PASSWORD  FTPのパスワード
+#     XSERVER_DOMAIN        例）example.com（public_html があるドメイン名）
+# ・サーバーで作られるデータ（api/data の memo.json・config.json など）は
+#   送らないし消さない
+# ============================================================
+name: 音声メモをXserverへ
+
+# 本番へ送るのは main だけ（main に入るには、ルールで人の承認が要る）。
+# 開発ブランチへの push や、main 以外からの手動実行では送らない。
+on:
+  push:
+    branches: [main]
+    paths: ['xserver/memo/**', '.github/workflows/deploy-memo-xserver.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-memo-xserver
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Settings → Environments で「xserver-production」に Required reviewers を付けると、
+    # 毎回アップロード前にもう一度承認を求めることもできる
+    environment: xserver-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 設定が入っているか確認
+        env:
+          H: ${{ secrets.XSERVER_FTP_HOST }}
+          U: ${{ secrets.XSERVER_FTP_USER }}
+          P: ${{ secrets.XSERVER_FTP_PASSWORD }}
+          D: ${{ secrets.XSERVER_DOMAIN }}
+        run: |
+          missing=""
+          [ -z "$H" ] && missing="$missing XSERVER_FTP_HOST"
+          [ -z "$U" ] && missing="$missing XSERVER_FTP_USER"
+          [ -z "$P" ] && missing="$missing XSERVER_FTP_PASSWORD"
+          [ -z "$D" ] && missing="$missing XSERVER_DOMAIN"
+          if [ -n "$missing" ]; then
+            echo "::error::GitHub の Settings → Secrets and variables → Actions に次を入れてください:$missing"
+            exit 1
+          fi
+
+      - name: PHPの書き間違いがないか確認
+        run: for f in xserver/memo/api/*.php; do php -l "$f"; done
+
+      - name: Xserverへアップロード
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.XSERVER_FTP_HOST }}
+          username: ${{ secrets.XSERVER_FTP_USER }}
+          password: ${{ secrets.XSERVER_FTP_PASSWORD }}
+          protocol: ftps
+          port: 21
+          local-dir: ./xserver/memo/
+          server-dir: /${{ secrets.XSERVER_DOMAIN }}/public_html/memo/
+          state-name: .ftp-deploy-sync-state.json
+          exclude: |
+            **/.git*
+            **/.git*/**
+            README.md
+            api/data/*.json
+            api/data/*.bak
+            api/data/*.tmp
+            api/data/*.lock

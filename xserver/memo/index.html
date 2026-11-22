@@ -1,0 +1,1751 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="音声メモ">
+<link rel="apple-touch-icon" href="memo-icon-180.png">
+<link rel="icon" type="image/png" href="memo-icon.png">
+<link rel="manifest" href="memo.webmanifest">
+<title>音声メモ - 串焼KEMURI屋</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Shippori+Mincho:wght@600&display=swap" rel="stylesheet">
+<!--
+  ============================================================
+  音声メモ（xserver/memo/index.html）
+  ・項目（カテゴリ）ごとに、声でメモを入れられる
+  ・メモごとにリマインド（日時・くり返し）をかけられる
+  ・入れた日付と曜日・時刻が自動でつく
+  ・置き場所：Xserver の public_html/memo/（このファイル＝index.html、サーバー部分＝api/）
+  ・データはこの端末（ブラウザ×URL）の localStorage「kemuri_memo_v1」に保存
+    → 機種変更・ブラウザ変更のときは「設定 → バックアップ書き出し」で持ち出す
+  ・リマインドの通知は «このページ（またはホーム画面アプリ）が開いているあいだ» に鳴る。
+  ・「設定 → ほかのiPhoneと同期」で合言葉を入れて接続すると、
+    どのiPhoneで書いても同じ内容になり、閉じていてもサーバーからプッシュ通知が届く
+    （設置手順は xserver/memo/README.md）。
+  ============================================================
+-->
+<style>
+  /* デザイン：OpenAI（gpt-5.5）に作ってもらったもの。墨色・炭の地に真鍮色と控えめな朱 */
+:root{
+  --bg:#11100e;
+  --bg2:#171512;
+  --card:#1b1814;
+  --card2:#221e19;
+  --card3:#29231d;
+  --line:#342d25;
+  --line2:#4b4034;
+  --line3:#6a5b49;
+  --tx:#f1eadf;
+  --sub:#b7aa99;
+  --mute:#85796b;
+  --acc:#a95435;
+  --acc2:#b96542;
+  --gold:#c7a66a;
+  --gold2:#dcc38e;
+  --red:#c75a4b;
+  --green:#5f9b72;
+  --blue:#7898bd;
+  --shadow:0 16px 40px rgba(0,0,0,.28);
+  --r:14px;
+  --focus:0 0 0 3px rgba(199,166,106,.18);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--tx)}
+html{min-height:100%;background:var(--bg)}
+body{
+  min-height:100%;
+  font-family:'Noto Sans JP',-apple-system,BlinkMacSystemFont,'Hiragino Kaku Gothic ProN','Yu Gothic',Meiryo,sans-serif;
+  font-size:16px;
+  line-height:1.65;
+  letter-spacing:.015em;
+  padding-bottom:calc(96px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(circle at 50% -120px, rgba(199,166,106,.10), transparent 320px),
+    linear-gradient(180deg,#14120f 0%,#100f0d 42%,#0d0c0b 100%);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+button,input,textarea,select{font-family:inherit}
+button{cursor:pointer;touch-action:manipulation}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible{outline:none;box-shadow:var(--focus);border-color:var(--gold)}
+button:disabled{cursor:not-allowed}
+::selection{background:rgba(199,166,106,.28);color:var(--tx)}
+header{
+  position:sticky;top:0;z-index:20;
+  background:rgba(17,16,14,.88);
+  backdrop-filter:saturate(120%) blur(18px);
+  -webkit-backdrop-filter:saturate(120%) blur(18px);
+  border-bottom:1px solid rgba(199,166,106,.20);
+  padding:calc(11px + env(safe-area-inset-top)) 14px 10px;
+}
+.hrow{display:flex;align-items:center;gap:8px;max-width:640px;margin:0 auto;flex-wrap:nowrap;min-width:0}
+.hrow h1{
+  margin:0;
+  flex:1 1 auto;
+  min-width:0;
+  font-family:'Shippori Mincho','Noto Sans JP',serif;
+  font-size:18px;
+  font-weight:600;
+  letter-spacing:.055em;
+  line-height:1.25;
+  color:var(--tx);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:clip;
+}
+.today{flex:0 0 auto;font-size:12px;color:var(--gold2);font-weight:500;text-align:right;line-height:1.28;letter-spacing:.025em;white-space:nowrap;font-variant-numeric:tabular-nums}
+.today small{display:block;color:var(--mute);font-weight:400;font-size:10px;letter-spacing:.015em}
+.iconbtn{
+  appearance:none;
+  flex:0 0 44px;
+  background:rgba(255,255,255,.022);
+  border:1px solid rgba(75,64,52,.82);
+  color:var(--tx);
+  border-radius:12px;
+  min-width:44px;height:44px;
+  padding:0 10px;
+  font-size:18px;
+  position:relative;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.iconbtn:active{transform:translateY(1px);background:rgba(199,166,106,.08)}
+.badge{
+  position:absolute;top:-6px;right:-6px;
+  min-width:20px;height:20px;padding:1px 6px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--red);color:#fff;
+  font-size:11px;font-weight:700;line-height:1;border-radius:999px;
+  border:1px solid rgba(17,16,14,.95);
+}
+.wrap{max-width:640px;margin:0 auto;padding:14px 16px 0}
+.tabs{
+  display:flex;gap:8px;overflow-x:auto;
+  padding:12px 16px 5px;max-width:640px;margin:0 auto;
+  scrollbar-width:none;
+  -webkit-overflow-scrolling:touch;
+}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  flex:0 0 auto;
+  min-height:44px;
+  padding:10px 15px;
+  border-radius:999px;
+  border:1px solid rgba(75,64,52,.82);
+  background:rgba(34,30,25,.70);
+  color:var(--sub);
+  font-size:14px;font-weight:500;white-space:nowrap;
+  letter-spacing:.02em;
+}
+.tab.on{
+  background:rgba(199,166,106,.12);
+  border-color:rgba(199,166,106,.62);
+  color:var(--gold2);
+}
+.tab:active{transform:translateY(1px);background:rgba(199,166,106,.10)}
+.tab .n{font-size:11px;opacity:.72;margin-left:5px;font-weight:500}
+.card{
+  background:linear-gradient(180deg,rgba(31,28,24,.96),rgba(25,22,19,.96));
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  padding:15px;
+  margin-bottom:14px;
+  box-shadow:0 1px 0 rgba(255,255,255,.025) inset;
+}
+.ttl{
+  font-size:13px;color:var(--gold2);font-weight:700;
+  margin:0 0 11px;
+  display:flex;align-items:center;gap:7px;
+  letter-spacing:.075em;
+  line-height:1.45;
+  font-feature-settings:'palt' 1;
+}
+.ttl .sp,.sheet h2 .sp{flex:1}
+.muted{color:var(--mute);font-size:12px;font-weight:400;letter-spacing:.02em}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:10px}
+.tile{
+  min-height:98px;
+  padding:14px 10px 13px;
+  border:0 solid var(--line2);
+  border-top-width:2px;
+  outline:1px solid rgba(75,64,52,.66);
+  outline-offset:-1px;
+  background:linear-gradient(180deg,rgba(37,32,27,.70),rgba(27,24,20,.88));
+  color:var(--tx);
+  border-radius:13px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  font-size:14px;font-weight:700;
+  letter-spacing:.025em;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+.tile .e{font-size:25px;line-height:1.1;filter:saturate(.82) brightness(.96)}
+.tile .m{font-size:11px;color:var(--sub);font-weight:400;letter-spacing:.015em}
+.tile:active{transform:scale(.987);background:rgba(199,166,106,.07)}
+.catchips{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}
+.chip{
+  min-height:36px;
+  padding:7px 11px;
+  border-radius:999px;
+  border:1px solid rgba(75,64,52,.82);
+  background:rgba(255,255,255,.015);
+  color:var(--sub);
+  font-size:13px;font-weight:500;
+}
+.chip.on{
+  color:#fff;
+  border-color:rgba(255,255,255,.16);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+}
+textarea,input,select{
+  width:100%;
+  min-height:44px;
+  padding:12px 13px;
+  font-size:16px;
+  border-radius:12px;
+  border:1px solid var(--line2);
+  background:#12110f;
+  color:var(--tx);
+  caret-color:var(--gold2);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+textarea::placeholder,input::placeholder{color:#6f665c}
+textarea{min-height:104px;resize:vertical;line-height:1.65}
+select{appearance:none;background:#12110f;color:var(--tx)}
+input[type=datetime-local]{min-height:48px;color-scheme:dark}
+input[type=color]{min-height:44px}
+input[type=checkbox]{accent-color:var(--gold);min-height:auto}
+.interim{color:var(--mute);font-size:14px;min-height:22px;margin-top:6px;font-style:normal;line-height:1.5}
+.mic{
+  width:100%;
+  min-height:56px;
+  margin-top:12px;
+  padding:15px 18px;
+  border:1px solid rgba(192,121,82,.46);
+  border-radius:14px;
+  font-size:18px;font-weight:700;
+  color:#fff4e7;
+  background:linear-gradient(180deg,#ad5d3b,#8e4029);
+  box-shadow:0 10px 24px rgba(0,0,0,.26), inset 0 1px 0 rgba(255,255,255,.11);
+  letter-spacing:.07em;
+}
+.mic:active{transform:translateY(1px);box-shadow:0 6px 18px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.09)}
+.mic.rec{
+  border-color:rgba(203,111,85,.66);
+  background:linear-gradient(180deg,#a94f3f,#7f332d);
+  animation:recPulse 1.65s ease-in-out infinite;
+}
+@keyframes recPulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(185,90,66,.24),0 10px 24px rgba(0,0,0,.24);filter:brightness(1)}
+  50%{box-shadow:0 0 0 8px rgba(185,90,66,0),0 10px 24px rgba(0,0,0,.24);filter:brightness(1.06)}
+}
+.row{display:flex;gap:9px;align-items:center}
+.row>*{flex:1}
+.btn{
+  min-height:44px;
+  padding:11px 13px;
+  border-radius:12px;
+  border:1px solid var(--line2);
+  background:rgba(34,30,25,.92);
+  color:var(--gold2);
+  font-size:15px;font-weight:700;
+  letter-spacing:.03em;
+}
+.btn.pri{background:rgba(95,155,114,.82);border-color:rgba(110,176,132,.76);color:#fff}
+.btn.dan{color:#e4a097;border-color:rgba(199,90,75,.50);background:rgba(55,31,27,.64)}
+.btn:disabled{opacity:.42;filter:saturate(.7)}
+.btn:active{transform:translateY(1px)}
+.quick{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.quick button{
+  min-height:36px;
+  padding:7px 11px;
+  border-radius:999px;
+  border:1px solid var(--line2);
+  background:#14120f;
+  color:var(--gold2);
+  font-size:12px;font-weight:500;
+}
+.quick button.on{background:rgba(199,166,106,.16);color:var(--gold2);border-color:rgba(199,166,106,.72);font-weight:700}
+.suggest{
+  margin-top:9px;
+  padding:10px 11px;
+  border-radius:12px;
+  background:rgba(72,55,27,.28);
+  border:1px dashed rgba(199,166,106,.62);
+  color:var(--tx);
+  font-size:13px;
+  display:none;
+}
+.suggest button{
+  min-height:34px;
+  margin-left:6px;padding:5px 11px;
+  border-radius:999px;border:1px solid rgba(199,166,106,.35);
+  background:rgba(199,166,106,.18);color:var(--gold2);font-weight:700;
+}
+.remsel{margin-top:8px;font-size:13px;color:var(--gold2)}
+.filters{display:flex;gap:7px;overflow-x:auto;margin:2px 0 10px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.filters::-webkit-scrollbar{display:none}
+.filters button{
+  flex:0 0 auto;
+  min-height:38px;
+  padding:7px 12px;
+  border-radius:999px;
+  border:1px solid var(--line2);
+  background:rgba(255,255,255,.01);
+  color:var(--sub);
+  font-size:13px;font-weight:500;
+}
+.filters button.on{background:rgba(199,166,106,.12);color:var(--gold2);border-color:rgba(199,166,106,.65)}
+.search{margin-bottom:12px}
+.dayh{
+  display:flex;align-items:baseline;gap:8px;
+  margin:19px 2px 9px;
+  font-weight:700;font-size:14px;color:var(--gold2);
+  letter-spacing:.055em;
+  line-height:1.45;
+  font-feature-settings:'palt' 1;
+}
+.dayh .rel{font-size:11px;color:var(--sub);font-weight:400;letter-spacing:.02em}
+.dayh.sat{color:var(--blue)}
+.dayh.sun{color:#d98d84}
+.memo{
+  background:linear-gradient(180deg,rgba(31,28,24,.98),rgba(24,22,19,.98));
+  border:1px solid var(--line);
+  border-left:4px solid var(--acc);
+  border-radius:13px;
+  padding:11px 12px 12px;
+  margin-bottom:9px;
+  box-shadow:0 1px 0 rgba(255,255,255,.02) inset;
+}
+.memo.done{opacity:.56;filter:saturate(.78)}
+.memo.done .txt{text-decoration:line-through;text-decoration-thickness:1px;text-decoration-color:rgba(241,234,223,.55)}
+.memo.flash{animation:flash 1.6s ease-in-out 2}
+@keyframes flash{50%{background:rgba(72,55,27,.46);border-color:rgba(199,166,106,.42)}}
+.mhead{display:flex;align-items:center;gap:6px 7px;font-size:12px;color:var(--sub);margin-bottom:6px;flex-wrap:wrap;line-height:1.45}
+.cbadge{
+  padding:3px 8px;
+  border-radius:999px;
+  color:#fff;font-weight:700;font-size:11px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.10);
+}
+.rbadge{
+  padding:3px 8px;
+  border-radius:999px;
+  background:rgba(72,55,27,.38);
+  border:1px solid rgba(199,166,106,.22);
+  color:var(--gold2);
+  font-size:11px;font-weight:500;
+}
+.rbadge.over{background:rgba(83,34,29,.58);border-color:rgba(199,90,75,.38);color:#e7aaa1}
+.rbadge.soon{background:rgba(79,64,28,.55);border-color:rgba(220,195,142,.38);color:#ead49d}
+.pin{color:var(--gold2)}
+.txt{white-space:pre-wrap;word-break:break-word;font-size:16px;line-height:1.68;color:var(--tx)}
+.acts{
+  display:flex;
+  gap:7px;
+  margin-top:11px;
+  padding-bottom:2px;
+  overflow-x:auto;
+  scrollbar-width:none;
+  -webkit-overflow-scrolling:touch;
+}
+.acts::-webkit-scrollbar{display:none}
+.acts button{
+  flex:0 0 auto;
+  min-width:48px;min-height:44px;
+  white-space:nowrap;overflow:hidden;text-overflow:clip;
+  padding:8px 10px;
+  border-radius:10px;
+  border:1px solid rgba(75,64,52,.72);
+  background:rgba(28,25,21,.82);
+  color:var(--sub);
+  font-size:12.5px;font-weight:500;
+  line-height:1;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+.acts button.on{color:#9bc7a8;border-color:rgba(95,155,114,.62);background:rgba(95,155,114,.10)}
+.empty{text-align:center;color:var(--mute);padding:34px 10px;font-size:14px;line-height:1.7}
+.duelist .it{display:flex;gap:8px;align-items:center;padding:9px 0;border-bottom:1px solid rgba(75,64,52,.55);font-size:14px;min-height:44px}
+.duelist .it:last-child{border-bottom:none}
+.duelist .t{color:var(--gold2);font-weight:700;min-width:54px;font-variant-numeric:tabular-nums}
+.duelist .x{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx)}
+.sheetbg{position:fixed;inset:0;background:rgba(0,0,0,.68);z-index:40;display:none;align-items:flex-end;justify-content:center;padding-top:env(safe-area-inset-top)}
+.sheetbg.show{display:flex}
+.sheet{
+  background:linear-gradient(180deg,#1b1814,#12110f);
+  width:100%;max-width:640px;max-height:92vh;overflow:auto;
+  border-radius:20px 20px 0 0;
+  border-top:1px solid rgba(199,166,106,.55);
+  border-left:1px solid rgba(199,166,106,.10);
+  border-right:1px solid rgba(199,166,106,.10);
+  padding:17px 16px calc(22px + env(safe-area-inset-bottom));
+  box-shadow:var(--shadow);
+  -webkit-overflow-scrolling:touch;
+}
+.sheet h2{
+  margin:0 0 14px;
+  font-family:'Shippori Mincho','Noto Sans JP',serif;
+  font-size:18px;font-weight:600;letter-spacing:.06em;
+  display:flex;align-items:center;color:var(--tx);
+}
+.field{margin-bottom:14px}
+.field>label{display:block;font-size:12px;color:var(--gold2);font-weight:700;margin-bottom:6px;letter-spacing:.06em}
+.catrow{display:flex;gap:7px;align-items:center;margin-bottom:8px}
+.catrow input.emo{width:56px;flex:0 0 56px;text-align:center;padding:10px 4px}
+.catrow input.col{width:48px;flex:0 0 48px;padding:3px;height:44px}
+.catrow button{
+  flex:0 0 auto;width:44px;height:44px;
+  border-radius:11px;border:1px solid var(--line2);
+  background:var(--card2);color:var(--sub);font-size:15px;
+}
+.alarm{
+  position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));z-index:60;
+  max-width:616px;margin:0 auto;
+  background:linear-gradient(180deg,#2a1c17,#1b1411);
+  border:1px solid rgba(199,166,106,.68);
+  border-left:4px solid var(--acc2);
+  border-radius:15px;
+  padding:13px;
+  box-shadow:0 20px 48px rgba(0,0,0,.48);
+  display:none;
+}
+.alarm.show{display:block;animation:drop .28s ease-out}
+@keyframes drop{from{transform:translateY(-24px);opacity:0}to{transform:translateY(0);opacity:1}}
+.alarm .at{font-size:12px;color:var(--gold2);font-weight:700;letter-spacing:.05em}
+.alarm .ax{font-size:16px;margin:7px 0 11px;white-space:pre-wrap;max-height:30vh;overflow:auto;line-height:1.65;color:var(--tx)}
+.alarm .row{gap:7px}
+.alarm .row button{padding:10px 4px;font-size:13px;min-height:44px}
+.toast{
+  position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);
+  background:rgba(17,16,14,.95);color:var(--tx);
+  border:1px solid rgba(199,166,106,.28);
+  padding:10px 15px;border-radius:999px;
+  font-size:14px;opacity:0;transition:opacity .25s ease, transform .25s ease;
+  pointer-events:none;z-index:70;max-width:92%;
+  display:flex;gap:10px;align-items:center;
+  box-shadow:0 10px 30px rgba(0,0,0,.38);
+}
+.toast.show{opacity:.96;pointer-events:auto;transform:translateX(-50%) translateY(-2px)}
+.toast button{background:none;border:none;color:var(--gold2);font-weight:700;font-size:14px;min-height:32px;padding:3px 0}
+.fab{
+  position:fixed;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:30;
+  width:68px;height:68px;border-radius:50%;
+  border:1px solid rgba(192,121,82,.48);
+  font-size:28px;color:#fff4e7;
+  background:linear-gradient(180deg,#ad5d3b,#8e4029);
+  box-shadow:0 14px 34px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.11);
+}
+.fab:active{transform:translateY(1px) scale(.99)}
+.fab.rec{background:linear-gradient(180deg,#a94f3f,#7f332d);animation:recPulse 1.65s ease-in-out infinite}
+.note{
+  font-size:12px;color:var(--sub);line-height:1.75;
+  background:#14120f;border-radius:12px;padding:11px;
+  border:1px solid var(--line);
+}
+.warn{
+  background:rgba(83,34,29,.42);
+  border:1px solid rgba(199,90,75,.55);
+  color:#efd0c9;
+  border-radius:12px;padding:11px;
+  font-size:13px;margin-bottom:13px;line-height:1.6;
+}
+.nav{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:22px 0 9px}
+.nav a{
+  min-height:34px;
+  display:inline-flex;align-items:center;
+  font-size:12px;text-decoration:none;
+  padding:6px 11px;border-radius:999px;
+  background:rgba(34,30,25,.8);color:var(--sub);border:1px solid var(--line);
+}
+.nav a:active{transform:translateY(1px)}
+@media (max-width:380px){
+  .wrap{padding-left:13px;padding-right:13px}
+  header{padding-left:12px;padding-right:12px}
+  .tabs{padding-left:13px;padding-right:13px}
+  .hrow{gap:6px}
+  .hrow h1{font-size:16px;letter-spacing:.04em}
+  .today{font-size:11px}
+  .today small{display:none}
+  .card{padding:13px}
+  .tiles{grid-template-columns:repeat(auto-fill,minmax(126px,1fr))}
+  .acts{gap:6px}
+  .acts button{font-size:12px;min-width:46px;padding-left:9px;padding-right:9px}
+  .alarm{left:8px;right:8px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hrow">
+    <h1>音声メモ</h1>
+    <div class="today" id="today"></div>
+    <button class="iconbtn" id="bellBtn" title="リマインド一覧">🔔<span class="badge" id="bellBadge" style="display:none"></span></button>
+    <button class="iconbtn" id="setBtn" title="設定">⚙</button>
+  </div>
+</header>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="wrap">
+  <div id="warnBox"></div>
+  <div id="dueBox"></div>
+  <div id="tilesBox"></div>
+
+  <!-- 入力欄 -->
+  <div class="card" id="composer">
+    <div class="ttl">新しいメモ<span class="sp"></span><span class="muted" id="nowStamp"></span></div>
+    <div class="catchips" id="compCats"></div>
+    <textarea id="compText" maxlength="100000" placeholder="下のマイクを押して話す／ここに打ってもOK"></textarea>
+    <div class="interim" id="compInterim"></div>
+    <div class="suggest" id="compSuggest"></div>
+    <div class="quick" id="compQuick"></div>
+    <div class="remsel" id="compRem"></div>
+    <button class="mic" id="compMic">🎤 話して入力</button>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="compClear">クリア</button>
+      <button class="btn pri" id="compSave">保存する</button>
+    </div>
+  </div>
+
+  <div class="filters" id="filters"></div>
+  <input class="search" id="search" type="search" placeholder="🔍 メモをさがす（例：鶏もも、業者）">
+  <div id="list"></div>
+
+  <div class="muted" style="text-align:center">串焼KEMURI屋 音声メモ v1</div>
+</div>
+
+<button class="fab" id="fab" title="すぐ録音">🎤</button>
+
+<!-- 編集シート -->
+<div class="sheetbg" id="editBg">
+  <div class="sheet">
+    <h2>メモを編集<span class="sp"></span><button class="iconbtn" data-close>✕</button></h2>
+    <div class="muted" id="edStamp" style="margin-bottom:10px"></div>
+    <div class="field"><label>項目</label><div class="catchips" id="edCats"></div></div>
+    <div class="field"><label>内容</label>
+      <textarea id="edText" maxlength="100000" style="min-height:140px"></textarea>
+      <div class="interim" id="edInterim"></div>
+      <button class="mic" id="edMic">🎤 話して追記</button>
+    </div>
+    <div class="field"><label>🔔 リマインド</label>
+      <input type="datetime-local" id="edRem">
+      <div class="quick" id="edQuick"></div>
+      <div class="suggest" id="edSuggest"></div>
+    </div>
+    <div class="field"><label>くり返し</label>
+      <select id="edRepeat">
+        <option value="">しない</option>
+        <option value="daily">毎日</option>
+        <option value="weekdays">平日（月〜金）</option>
+        <option value="weekly">毎週（同じ曜日）</option>
+        <option value="monthly">毎月（同じ日）</option>
+      </select>
+    </div>
+    <div class="field"><label>カレンダーにも入れる（アプリを閉じていても鳴る）</label>
+      <div class="row"><button class="btn" id="edIcs">📅 カレンダー</button><button class="btn" id="edGcal">Googleカレンダー</button></div>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="btn dan" id="edDel">削除</button>
+      <button class="btn pri" id="edSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 設定シート -->
+<div class="sheetbg" id="setBg">
+  <div class="sheet">
+    <h2>設定<span class="sp"></span><button class="iconbtn" data-close>✕</button></h2>
+    <div class="field"><label>項目（カテゴリ）</label>
+      <div id="catEdit"></div>
+      <button class="btn" id="catAdd" style="width:100%;margin-top:4px">＋ 項目を追加</button>
+      <div class="muted" style="margin-top:6px">項目を消すと、その項目のメモは「その他」に移ります（メモは消えません）。</div>
+    </div>
+    <div class="field"><label>☁ ほかのiPhoneと同期・サーバー通知（Xserver）</label>
+      <input id="shUrl" type="url" placeholder="サーバーのURL（ふつうは空のままでOK）" style="margin-bottom:6px" autocapitalize="off">
+      <input id="shPass" type="password" placeholder="合言葉" style="margin-bottom:6px" autocomplete="current-password">
+      <div class="row"><button class="btn" id="shConnect">接続する</button><button class="btn dan" id="shOff">同期をやめる</button></div>
+      <div class="row" style="margin-top:8px"><button class="btn" id="pushBtn">この端末で通知を受け取る</button><button class="btn" id="pushTest">サーバーから試す</button></div>
+      <div class="note" id="shNote" style="margin-top:8px"></div>
+    </div>
+    <div class="field"><label>通知（この画面を開いているとき）</label>
+      <div class="row"><button class="btn" id="notifBtn">通知をオンにする</button><button class="btn" id="testBtn">テストで鳴らす</button></div>
+      <div class="note" id="notifNote" style="margin-top:8px"></div>
+    </div>
+    <div class="field"><label>音声入力</label>
+      <label class="row" style="font-size:14px;color:var(--tx)"><input type="checkbox" id="optPunct" style="width:auto;flex:0 0 auto"> 「改行」「句点」「読点」と言うと、改行・。・、に変える</label>
+      <label class="row" style="font-size:14px;color:var(--tx);margin-top:8px"><input type="checkbox" id="optAutoSave" style="width:auto;flex:0 0 auto"> 右下🎤の録音は、止めたらそのまま保存する</label>
+      <label class="row" style="font-size:14px;color:var(--tx);margin-top:8px"><input type="checkbox" id="optSound" style="width:auto;flex:0 0 auto"> リマインドの時に音を鳴らす</label>
+    </div>
+    <div class="field"><label>バックアップ</label>
+      <div class="row"><button class="btn" id="expBtn">書き出し</button><button class="btn" id="impBtn">読み込み</button></div>
+      <input type="file" id="impFile" accept=".json,application/json" style="display:none">
+      <button class="btn" id="txtBtn" style="width:100%;margin-top:8px">メモを文章でコピー（LINE・メール貼り付け用）</button>
+      <div class="muted" style="margin-top:6px" id="dataInfo"></div>
+    </div>
+    <div class="note">
+      ・ホーム画面に追加すると、アプリのように使えます（iPhone：共有ボタン→「ホーム画面に追加」）。<br>
+      ・リマインドは、この画面を開いているあいだ通知・音で知らせます。<b>閉じていても知らせてほしい時は、上の「ほかのiPhoneと同期・サーバー通知」に接続</b>するか、メモの「📅カレンダー」を使ってください。<br>
+      ・データはこの端末の中だけに保存されます。機種変更の前に「書き出し」をしておくと安心です。
+    </div>
+  </div>
+</div>
+
+<div class="alarm" id="alarm">
+  <div class="at" id="alarmAt"></div>
+  <div class="ax" id="alarmTx"></div>
+  <div class="row">
+    <button class="btn" data-snooze="10">10分後</button>
+    <button class="btn" data-snooze="60">1時間後</button>
+    <button class="btn" data-snooze="tomorrow">明日の朝</button>
+    <button class="btn pri" id="alarmDone">完了</button>
+  </div>
+  <button class="btn" id="alarmClose" style="width:100%;margin-top:6px;font-size:13px;padding:8px">あとで（閉じる）</button>
+</div>
+
+<div class="toast" id="toast"><span id="toastTx"></span><button id="toastBtn" style="display:none"></button></div>
+
+<script>
+(function(){
+'use strict';
+
+/* ---------------- 保存まわり ---------------- */
+var KEY = 'kemuri_memo_v1';
+var WD = ['日','月','火','水','木','金','土'];
+var DEFAULT_CATS = [
+  {id:'c_shikomi', name:'仕込み', emoji:'🔪', color:'#d9622b'},
+  {id:'c_hacchu',  name:'発注',   emoji:'📦', color:'#2f8f5b'},
+  {id:'c_mise',    name:'店のこと', emoji:'🏮', color:'#b5403a'},
+  {id:'c_staff',   name:'スタッフ', emoji:'👥', color:'#3d6fb5'},
+  {id:'c_idea',    name:'新メニュー・アイデア', emoji:'💡', color:'#b58a12'},
+  {id:'c_other',   name:'その他', emoji:'📝', color:'#7a6a5e'}
+];
+var db = load();
+var SHARE_KEY = 'kemuri_memo_share_v1';
+var share = (function(){
+  var x = null; try{ x = JSON.parse(localStorage.getItem(SHARE_KEY) || 'null'); }catch(e){}
+  x = x || {};
+  if(!x.device) x.device = uid('d');
+  return x;
+})();
+function saveShare(){ try{ localStorage.setItem(SHARE_KEY, JSON.stringify(share)); }catch(e){} }
+saveShare();
+
+function load(){
+  var d = null;
+  try{ d = JSON.parse(localStorage.getItem(KEY) || 'null'); }catch(e){}
+  if(!d || typeof d !== 'object') d = {};
+  if(!Array.isArray(d.cats) || !d.cats.length) d.cats = DEFAULT_CATS.map(function(c){ return Object.assign({},c); });
+  if(!Array.isArray(d.memos)) d.memos = [];
+  d.opt = Object.assign({punct:true, autoSave:false, sound:true}, d.opt || {});
+  return d;
+}
+var storageOk = true;
+var applyingRemote = false;
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify(db)); storageOk = true; }
+  catch(e){ storageOk = false; toast('⚠ 保存できませんでした（端末の空き容量やプライベートモードを確認）'); }
+  if(!applyingRemote && typeof scheduleSync === 'function') scheduleSync();
+}
+window.addEventListener('storage', function(e){ if(e.key === KEY){ db = load(); renderAll(); } });
+
+function uid(p){ return (p||'m') + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function $(id){ return document.getElementById(id); }
+function catOf(id){ for(var i=0;i<db.cats.length;i++) if(db.cats[i].id === id) return db.cats[i]; return fallbackCat(); }
+function fallbackCat(){
+  var o = db.cats.filter(function(c){ return c.id === 'c_other'; })[0];
+  return o || db.cats[db.cats.length-1] || DEFAULT_CATS[5];
+}
+
+/* ---------------- 日付の表示 ---------------- */
+function pad(n){ return (n<10?'0':'') + n; }
+function ymd(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); }
+function hm(d){ return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+function startOfDay(d){ var x = new Date(d); x.setHours(0,0,0,0); return x; }
+function dayDiff(a, b){ return Math.round((startOfDay(a) - startOfDay(b)) / 86400000); }
+function fmtDay(d){ return (d.getMonth()+1) + '月' + d.getDate() + '日(' + WD[d.getDay()] + ')'; }
+function fmtShort(ms){
+  var d = new Date(ms), now = new Date(), dd = dayDiff(d, now);
+  var day = dd === 0 ? '今日' : dd === 1 ? '明日' : dd === -1 ? '昨日' : dd === 2 ? 'あさって'
+          : (d.getMonth()+1) + '/' + d.getDate() + '(' + WD[d.getDay()] + ')';
+  if(d.getFullYear() !== now.getFullYear()) day = d.getFullYear() + '/' + day;
+  return day + ' ' + hm(d);
+}
+function relDay(d){
+  var dd = dayDiff(new Date(), d);
+  if(dd === 0) return '今日'; if(dd === 1) return '昨日'; if(dd === 2) return 'おととい';
+  if(dd < 7) return dd + '日前'; if(dd < 31) return Math.floor(dd/7) + '週間前';
+  if(dd < 365) return Math.floor(dd/30) + 'か月前'; return Math.floor(dd/365) + '年前';
+}
+function untilText(ms){
+  var diff = ms - Date.now(), m = Math.round(Math.abs(diff)/60000);
+  var s = m < 60 ? m + '分' : m < 1440 ? Math.floor(m/60) + '時間' + (m%60 ? (m%60) + '分' : '') : Math.floor(m/1440) + '日';
+  return diff >= 0 ? 'あと' + s : s + '過ぎ';
+}
+function toLocalInput(ms){ if(!ms) return ''; var d = new Date(ms); return ymd(d) + 'T' + hm(d); }
+function fromLocalInput(v){ if(!v) return null; var t = new Date(v).getTime(); return isNaN(t) ? null : t; }
+
+function tickHeader(){
+  var n = new Date();
+  var cl = (typeof shareOn === 'function' && shareOn()) ? (share.err ? ' ⚠未同期' : ' ☁同期中') : '';
+  $('today').innerHTML = n.getFullYear() + '年' + fmtDay(n) + '<small>' + hm(n) + cl + '</small>';
+  $('nowStamp').textContent = '入力日：' + fmtDay(n) + ' ' + hm(n);
+}
+
+/* ---------------- 話し言葉から日時を読み取る ----------------
+   例）「明日の10時に業者に電話」「金曜の15時半」「30分後」「午後3時」 */
+function kanjiNum(s){
+  return s.replace(/[〇一二三四五六七八九十]+/g, function(k){
+    var map = {'〇':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};
+    if(k.indexOf('十') < 0){ var v=''; for(var i=0;i<k.length;i++) v += map[k[i]]; return v; }
+    var p = k.split('十'); return String((p[0] ? map[p[0]] : 1) * 10 + (p[1] ? map[p[1]] : 0));
+  }).replace(/[０-９]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+}
+function parseWhen(raw){
+  if(!raw) return null;
+  var s = kanjiNum(raw), now = new Date(), m;
+  if((m = s.match(/(\d+)\s*分後/))) return now.getTime() + (+m[1]) * 60000;
+  if((m = s.match(/(\d+)\s*時間(半)?後/))) return now.getTime() + (+m[1]) * 3600000 + (m[2] ? 1800000 : 0);
+  var day = null, hasDay = false, sameDay = false;
+  if(/明後日|あさって/.test(s)){ day = 2; hasDay = true; }
+  else if(/明日|あした|あす/.test(s)){ day = 1; hasDay = true; }
+  else if(/今日|きょう|今夜|今晩/.test(s)){ day = 0; hasDay = true; }
+  else if((m = s.match(/(\d+)\s*日後/))){ day = +m[1]; hasDay = true; }
+  var target = new Date(now);
+  if((m = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/))){
+    target = new Date(now.getFullYear(), +m[1]-1, +m[2]);
+    if(target < startOfDay(now)) target.setFullYear(target.getFullYear()+1);
+    hasDay = true; day = null;
+  } else if((m = s.match(/(来週|再来週)?\s*の?\s*([月火水木金土日])曜/))){
+    var w = WD.indexOf(m[2]), add = (w - now.getDay() + 7) % 7;
+    if(m[1] === '来週'){ add = (w === 0 ? 7 : w) - (now.getDay() === 0 ? 7 : now.getDay()) + 7; }
+    else if(m[1] === '再来週'){ add = (w === 0 ? 7 : w) - (now.getDay() === 0 ? 7 : now.getDay()) + 14; }
+    sameDay = !m[1] && add === 0;
+    target.setDate(now.getDate() + add); hasDay = true; day = null;
+  }
+  if(day !== null) target.setDate(now.getDate() + day);
+  var h = null, mi = 0;
+  if((m = s.match(/(午前|午後|朝|昼|夕方|夜|晩)?\s*(\d{1,2})\s*時\s*(半|(\d{1,2})\s*分)?/))){
+    h = +m[2]; mi = m[3] === '半' ? 30 : (m[4] ? +m[4] : 0);
+    if(/午後|夕方|夜|晩/.test(m[1] || '') && h < 12) h += 12;
+    else if(m[1] === '昼' && h < 6) h += 12;
+  } else if((m = s.match(/(\d{1,2}):(\d{2})/))){ h = +m[1]; mi = +m[2]; }
+  else if(/今夜|今晩/.test(s)){ h = 21; }
+  if(h === null && !hasDay) return null;
+  if(h === null){ h = 9; mi = 0; }
+  if(h > 23 || mi > 59) return null;
+  target.setHours(h, mi, 0, 0);
+  if(!hasDay && target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1);
+  if(sameDay && target.getTime() <= now.getTime()) target.setDate(target.getDate() + 7);
+  if(target.getTime() <= now.getTime()) return null;
+  return target.getTime();
+}
+
+/* ---------------- リマインドのくり返し ---------------- */
+function nextRepeat(ms, rep){
+  var d = new Date(ms), now = Date.now(), guard = 0;
+  do{
+    if(rep === 'daily') d.setDate(d.getDate()+1);
+    else if(rep === 'weekdays'){ do{ d.setDate(d.getDate()+1); }while(d.getDay() === 0 || d.getDay() === 6); }
+    else if(rep === 'weekly') d.setDate(d.getDate()+7);
+    else if(rep === 'monthly') d.setMonth(d.getMonth()+1);
+    else return null;
+  }while(d.getTime() <= now && ++guard < 1000);
+  return d.getTime();
+}
+var REP_LABEL = {daily:'毎日', weekdays:'平日', weekly:'毎週', monthly:'毎月'};
+
+function quickTimes(){
+  var n = new Date(), out = [];
+  out.push(['30分後', n.getTime() + 30*60000]);
+  out.push(['1時間後', n.getTime() + 3600000]);
+  var t = new Date(n); t.setHours(17,0,0,0); if(t > n) out.push(['今日17時（仕込み）', t.getTime()]);
+  t = new Date(n); t.setHours(21,0,0,0); if(t > n) out.push(['今夜21時', t.getTime()]);
+  t = new Date(n); t.setDate(t.getDate()+1); t.setHours(9,0,0,0); out.push(['明日9時', t.getTime()]);
+  t = new Date(n); t.setDate(t.getDate()+1); t.setHours(15,0,0,0); out.push(['明日15時', t.getTime()]);
+  t = new Date(n); var add = (8 - t.getDay()) % 7 || 7; t.setDate(t.getDate()+add); t.setHours(10,0,0,0); out.push(['来週月曜10時', t.getTime()]);
+  return out;
+}
+
+/* ---------------- 音声入力 ---------------- */
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var voice = null;   // {ta, interimEl, btn, base, want, rec, onStop, label}
+function punct(t){
+  if(!db.opt.punct) return t;
+  return t.replace(/\s*改行\s*/g, '\n').replace(/\s*句点\s*/g, '。').replace(/\s*読点\s*/g, '、');
+}
+function startVoice(ta, interimEl, btn, onStop, onText){
+  if(!SR){
+    toast('この端末のブラウザは音声入力に未対応です。キーボードのマイクボタンで話してください');
+    ta.focus(); return;
+  }
+  if(voice){ var same = voice.ta === ta; stopVoice(); if(same) return; }
+  var rec = new SR();
+  rec.lang = 'ja-JP'; rec.continuous = true; rec.interimResults = true;
+  var base = ta.value;
+  if(base && !/[\s\n]$/.test(base)) base += '\n';
+  voice = {ta:ta, interimEl:interimEl, btn:btn, base:base, want:true, rec:rec, onStop:onStop, finals:'', onText:onText};
+  setRecUI(true);
+  rec.onresult = function(e){
+    var interim = '';
+    for(var i = e.resultIndex; i < e.results.length; i++){
+      var r = e.results[i];
+      if(r.isFinal) voice.finals += punct(r[0].transcript);
+      else interim += r[0].transcript;
+    }
+    ta.value = voice.base + voice.finals;
+    interimEl.textContent = interim ? '…' + interim : '';
+    if(voice.onText) voice.onText(ta.value);
+  };
+  rec.onerror = function(e){
+    if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){
+      toast('マイクが許可されていません。ブラウザの設定でマイクを許可してください');
+      if(voice) voice.want = false;
+    } else if(e.error === 'no-speech'){ /* 黙っていただけ。続ける */ }
+    else if(e.error !== 'aborted') toast('音声入力エラー：' + e.error);
+  };
+  rec.onend = function(){
+    // iPhone などは数秒で止まるので、止めるボタンを押すまで続ける
+    if(voice && voice.rec === rec && voice.want){
+      voice.base = ta.value; voice.finals = '';
+      try{ rec.start(); return; }catch(err){}
+    }
+    if(voice && voice.rec === rec) finishVoice();
+  };
+  try{ rec.start(); }catch(err){ toast('音声入力を開始できませんでした'); finishVoice(); }
+}
+function stopVoice(){
+  if(!voice) return;
+  voice.want = false;
+  try{ voice.rec.stop(); }catch(e){}
+  // onend が来ない端末向けの保険
+  var v = voice; setTimeout(function(){ if(voice === v) finishVoice(); }, 1200);
+}
+function finishVoice(){
+  if(!voice) return;
+  var v = voice; voice = null;
+  v.interimEl.textContent = '';
+  setRecUI(false, v);
+  if(v.onStop) v.onStop(v.ta.value);
+}
+function setRecUI(on, v){
+  v = v || voice;
+  if(v && v.btn){
+    v.btn.classList.toggle('rec', on);
+    if(v.btn.id === 'fab') v.btn.textContent = on ? '■' : '🎤';
+    else v.btn.textContent = on ? '■ 止める（話し終わったら押す）' : (v.btn.id === 'edMic' ? '🎤 話して追記' : '🎤 話して入力');
+  }
+  if(on && navigator.vibrate) navigator.vibrate(40);
+}
+
+/* ---------------- 画面の状態 ---------------- */
+var ui = {tab:'all', filter:'open', q:'', compCat:null, compRem:null, compRep:'', editId:null, edCat:null};
+var suggestCompVal = null, suggestEdVal = null;
+
+function counts(){
+  var c = {all:0};
+  db.memos.forEach(function(m){ if(!m.done){ c.all++; c[m.cat] = (c[m.cat]||0) + 1; } });
+  return c;
+}
+
+function renderTabs(){
+  var c = counts();
+  var h = '<button class="tab' + (ui.tab==='all'?' on':'') + '" data-tab="all">すべて<span class="n">' + c.all + '</span></button>';
+  db.cats.forEach(function(k){
+    h += '<button class="tab' + (ui.tab===k.id?' on':'') + '" data-tab="' + k.id + '"' + (ui.tab===k.id?' style="background:'+esc(k.color)+';border-color:'+esc(k.color)+'"':'') + '>'
+       + esc(k.emoji) + ' ' + esc(k.name) + (c[k.id] ? '<span class="n">' + c[k.id] + '</span>' : '') + '</button>';
+  });
+  h += '<button class="tab" data-tab="__add">＋</button>';
+  $('tabs').innerHTML = h;
+}
+
+function renderTiles(){
+  if(ui.tab !== 'all'){ $('tilesBox').innerHTML = ''; return; }
+  var c = counts();
+  var h = '<div class="card"><div class="ttl">項目を選んで、すぐ話す</div><div class="tiles">';
+  db.cats.forEach(function(k){
+    h += '<button class="tile" data-tilerec="' + k.id + '" style="border-color:' + esc(k.color) + '">'
+       + '<span class="e">' + esc(k.emoji) + '</span>' + esc(k.name)
+       + '<span class="m">' + (c[k.id] ? '未完了 ' + c[k.id] + '件' : 'タップで録音') + '</span></button>';
+  });
+  h += '</div></div>';
+  $('tilesBox').innerHTML = h;
+}
+
+function renderDue(){
+  var now = Date.now(), endToday = startOfDay(new Date()).getTime() + 86400000;
+  var items = db.memos.filter(function(m){ return !m.done && m.remind && m.remind < endToday; })
+    .sort(function(a,b){ return a.remind - b.remind; });
+  var waiting = db.memos.filter(function(m){ return !m.done && m.remind; }).length;
+  var badge = $('bellBadge');
+  var over = db.memos.filter(function(m){ return !m.done && m.remind && m.remind <= now; }).length;
+  badge.style.display = waiting ? '' : 'none';
+  badge.textContent = waiting;
+  badge.style.background = over ? 'var(--red)' : '#8a6a10';
+  if(!items.length){ $('dueBox').innerHTML = ''; return; }
+  var h = '<div class="card"><div class="ttl">今日のリマインド<span class="sp"></span><span class="muted">' + items.length + '件</span></div><div class="duelist">';
+  items.forEach(function(m){
+    var o = m.remind <= now, k = catOf(m.cat);
+    h += '<div class="it" data-jump="' + m.id + '"><span class="t" style="' + (o?'color:var(--red)':'') + '">' + (dayDiff(new Date(m.remind), new Date()) < 0 ? fmtShort(m.remind).split(' ')[0] : hm(new Date(m.remind))) + '</span>'
+       + '<span>' + esc(k.emoji) + '</span><span class="x">' + esc(firstLine(m.text)) + '</span>'
+       + '<span class="muted">' + (o ? '過ぎてます' : untilText(m.remind)) + '</span></div>';
+  });
+  h += '</div></div>';
+  $('dueBox').innerHTML = h;
+}
+function firstLine(t){ return String(t||'').split('\n')[0].slice(0,60); }
+
+function renderComposer(){
+  if(ui.tab !== 'all') ui.compCat = ui.tab;
+  if(!ui.compCat || !db.cats.some(function(c){ return c.id === ui.compCat; })) ui.compCat = db.cats[0].id;
+  $('compCats').innerHTML = catChips(ui.compCat, 'compcat');
+  var h = '';
+  quickTimes().forEach(function(q){ h += '<button data-cq="' + q[1] + '">' + q[0] + '</button>'; });
+  h += '<button data-cq="pick">日時をえらぶ…</button>';
+  if(ui.compRem) h += '<button data-cq="none">リマインドなし</button>';
+  $('compQuick').innerHTML = h;
+  $('compRem').innerHTML = ui.compRem ? '🔔 ' + fmtShort(ui.compRem) + ' に知らせる（' + untilText(ui.compRem) + '）' : '<span class="muted">🔔 リマインド：なし（上のボタンで設定）</span>';
+  $('compSave').disabled = !$('compText').value.trim();
+}
+function catChips(sel, attr){
+  return db.cats.map(function(k){
+    var on = k.id === sel;
+    return '<button class="chip' + (on?' on':'') + '" data-' + attr + '="' + k.id + '" style="' + (on?'background:'+esc(k.color):'') + '">' + esc(k.emoji) + ' ' + esc(k.name) + '</button>';
+  }).join('');
+}
+
+function renderFilters(){
+  var f = [['open','未完了'],['remind','🔔 リマインドあり'],['today','今日入れた'],['pin','📌 ピン'],['done','✓ 完了'],['all','ぜんぶ']];
+  $('filters').innerHTML = f.map(function(x){ return '<button class="' + (ui.filter===x[0]?'on':'') + '" data-filter="' + x[0] + '">' + x[1] + '</button>'; }).join('');
+}
+
+function visibleMemos(){
+  var q = ui.q.trim().toLowerCase(), today = ymd(new Date());
+  return db.memos.filter(function(m){
+    if(ui.tab !== 'all' && m.cat !== ui.tab) return false;
+    if(ui.filter === 'open' && m.done) return false;
+    if(ui.filter === 'done' && !m.done) return false;
+    if(ui.filter === 'remind' && (!m.remind || m.done)) return false;
+    if(ui.filter === 'pin' && !m.pin) return false;
+    if(ui.filter === 'today' && ymd(new Date(m.created)) !== today) return false;
+    if(q){
+      var k = catOf(m.cat);
+      if((m.text + ' ' + k.name).toLowerCase().indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+
+function renderList(){
+  var list = visibleMemos();
+  if(ui.filter === 'remind') list.sort(function(a,b){ return a.remind - b.remind; });
+  else list.sort(function(a,b){ return (b.pin?1:0) - (a.pin?1:0) || b.created - a.created; });
+  if(!list.length){
+    $('list').innerHTML = '<div class="empty">' + (db.memos.length ? '当てはまるメモはありません' : 'まだメモがありません。<br>上の項目を押して話してみてください 🎤') + '</div>';
+    return;
+  }
+  var h = '', lastDay = null, pinnedHeader = false;
+  list.forEach(function(m){
+    var d = new Date(m.created);
+    if(m.pin && ui.filter !== 'remind' && ui.filter !== 'pin'){
+      if(!pinnedHeader){ h += '<div class="dayh">ピン留め</div>'; pinnedHeader = true; }
+    } else if(ui.filter === 'remind'){
+      var rd = ymd(new Date(m.remind));
+      if(rd !== lastDay){ lastDay = rd; var r = new Date(m.remind); h += '<div class="dayh' + (r.getDay()===6?' sat':r.getDay()===0?' sun':'') + '">🔔 ' + fmtDay(r) + '</div>'; }
+    } else {
+      var key = ymd(d);
+      if(key !== lastDay){
+        lastDay = key;
+        h += '<div class="dayh' + (d.getDay()===6?' sat':d.getDay()===0?' sun':'') + '">' + (d.getFullYear() !== new Date().getFullYear() ? d.getFullYear() + '年' : '') + fmtDay(d) + '<span class="rel">' + relDay(d) + '</span></div>';
+      }
+    }
+    h += memoCard(m);
+  });
+  $('list').innerHTML = h;
+}
+
+function memoCard(m){
+  var k = catOf(m.cat), now = Date.now(), d = new Date(m.created);
+  var rb = '';
+  if(m.remind && !m.done){
+    var cls = m.remind <= now ? ' over' : (m.remind - now < 3600000 ? ' soon' : '');
+    rb = '<span class="rbadge' + cls + '">🔔 ' + fmtShort(m.remind) + (m.repeat ? '・' + REP_LABEL[m.repeat] : '') + '（' + untilText(m.remind) + '）</span>';
+  }
+  return '<div class="memo' + (m.done?' done':'') + '" id="memo-' + m.id + '" style="border-left-color:' + esc(k.color) + '">'
+    + '<div class="mhead"><span class="cbadge" style="background:' + esc(k.color) + '">' + esc(k.emoji) + ' ' + esc(k.name) + '</span>'
+    + '<span>' + fmtDay(d) + ' ' + hm(d) + '</span>' + (m.pin ? '<span class="pin">📌</span>' : '')
+    + (m.updated && m.updated - m.created > 60000 ? '<span>（' + fmtShort(m.updated) + ' 修正）</span>' : '')
+    + (m.voice ? '<span title="声で入力">🎙</span>' : '') + rb + '</div>'
+    + '<div class="txt">' + esc(m.text) + '</div>'
+    + '<div class="acts">'
+    + '<button data-act="done" data-id="' + m.id + '" class="' + (m.done?'on':'') + '">' + (m.done?'✓完了':'☐完了') + '</button>'
+    + '<button data-act="edit" data-id="' + m.id + '">✎編集</button>'
+    + '<button data-act="addvoice" data-id="' + m.id + '">🎤追記</button>'
+    + '<button data-act="remind" data-id="' + m.id + '">🔔</button>'
+    + '<button data-act="speak" data-id="' + m.id + '" title="読み上げ">🔊</button>'
+    + '<button data-act="pin" data-id="' + m.id + '" title="ピン留め">📌</button>'
+    + '<button data-act="share" data-id="' + m.id + '" title="送る・コピー">↗</button>'
+    + '</div></div>';
+}
+
+function renderWarn(){
+  var h = '';
+  if(!SR) h += '<div class="warn">このブラウザはページ内の音声入力に対応していません。キーボードの🎤（音声入力）ボタンで話せば同じように使えます。iPhoneはSafari、AndroidはChromeがおすすめです。</div>';
+  if(!storageOk) h += '<div class="warn">保存ができない状態です。プライベートブラウズを解除してください。</div>';
+  $('warnBox').innerHTML = h;
+}
+
+function renderAll(){
+  tickHeader(); renderWarn(); renderTabs(); renderDue(); renderTiles(); renderComposer(); renderFilters(); renderList();
+}
+
+/* ---------------- メモの操作 ---------------- */
+function addMemo(text, cat, remind, repeat, byVoice){
+  text = String(text || '').trim();
+  if(!text) return null;
+  var now = Date.now();
+  var m = {id:uid('m'), cat:cat, text:text, created:now, updated:now, remind:remind || null, repeat:repeat || '',
+           notified:false, done:false, pin:false, voice:!!byVoice,
+           owner:share.device};
+  db.memos.push(m); save();
+  return m;
+}
+function getMemo(id){ for(var i=0;i<db.memos.length;i++) if(db.memos[i].id === id) return db.memos[i]; return null; }
+
+var compVoiceUsed = false;
+function saveComposer(){
+  var t = $('compText').value.trim();
+  if(!t){ toast('内容が空です'); return; }
+  if(voice && voice.ta === $('compText')) stopVoice();
+  var m = addMemo(t, ui.compCat, ui.compRem, ui.compRep, compVoiceUsed);
+  $('compText').value = ''; ui.compRem = null; ui.compRep = ''; compVoiceUsed = false;
+  hideSuggest('comp');
+  if(m && m.remind) ensureNotifPermission();
+  renderAll();
+  toast('保存しました：' + catOf(m.cat).emoji + ' ' + catOf(m.cat).name + (m.remind ? '／🔔 ' + fmtShort(m.remind) : ''), '取り消す', function(){
+    db.memos = db.memos.filter(function(x){ return x.id !== m.id; }); save(); renderAll();
+  });
+}
+
+function toggleDone(m){
+  if(!m.done && m.remind && m.repeat){
+    // くり返しのリマインドは «今回ぶん完了» → 次の回へ
+    if(m.resume){ m.remind = m.resume; delete m.resume; } else m.remind = nextRepeat(m.remind, m.repeat);
+    m.notified = false; m.updated = Date.now();
+    save(); renderAll(); toast('次は ' + fmtShort(m.remind) + ' に知らせます'); return;
+  }
+  m.done = !m.done; m.doneAt = m.done ? Date.now() : null; save(); renderAll();
+  if(m.done) toast('完了にしました', '戻す', function(){ m.done = false; save(); renderAll(); });
+}
+
+function deleteMemo(m){
+  var idx = db.memos.indexOf(m); if(idx < 0) return;
+  db.memos.splice(idx, 1); save(); renderAll();
+  toast('削除しました', '元に戻す', function(){ db.memos.splice(idx, 0, m); save(); renderAll(); });
+}
+
+function speak(text){
+  if(!('speechSynthesis' in window)){ toast('読み上げに未対応です'); return; }
+  speechSynthesis.cancel();
+  var u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = 1.0;
+  speechSynthesis.speak(u);
+}
+
+function memoAsText(m){
+  var k = catOf(m.cat), d = new Date(m.created);
+  return '【' + k.name + '】' + fmtDay(d) + ' ' + hm(d) + (m.remind ? '（🔔' + fmtShort(m.remind) + '）' : '') + '\n' + m.text;
+}
+function share(m){
+  var t = memoAsText(m);
+  if(navigator.share){ navigator.share({text:t}).catch(function(){}); }
+  else copyText(t);
+}
+function copyText(t){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(function(){ toast('コピーしました'); }, function(){ fallbackCopy(t); });
+  } else fallbackCopy(t);
+}
+function fallbackCopy(t){
+  var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); toast('コピーしました'); }catch(e){ toast('コピーできませんでした'); }
+  document.body.removeChild(ta);
+}
+
+/* ---------------- 編集シート ---------------- */
+function openEdit(id, startMic){
+  var m = getMemo(id); if(!m) return;
+  ui.editId = id; ui.edCat = m.cat;
+  var d = new Date(m.created);
+  $('edStamp').textContent = '入力日：' + d.getFullYear() + '年' + fmtDay(d) + ' ' + hm(d) + (m.updated - m.created > 60000 ? '　最終修正：' + fmtShort(m.updated) : '');
+  $('edCats').innerHTML = catChips(m.cat, 'edcat');
+  $('edText').value = m.text;
+  $('edRem').value = toLocalInput(m.remind);
+  $('edRepeat').value = m.repeat || '';
+  renderEdQuick(); hideSuggest('ed');
+  openSheet('editBg');
+  if(startMic) setTimeout(function(){ startVoice($('edText'), $('edInterim'), $('edMic'), null, function(v){ showSuggest('ed', v); }); }, 250);
+}
+function renderEdQuick(){
+  var h = '';
+  quickTimes().forEach(function(q){ h += '<button data-eq="' + q[1] + '">' + q[0] + '</button>'; });
+  h += '<button data-eq="none">なし</button>';
+  $('edQuick').innerHTML = h;
+}
+function saveEdit(){
+  var m = getMemo(ui.editId); if(!m){ closeSheets(); return; }
+  if(voice) stopVoice();
+  var t = $('edText').value.trim();
+  if(!t){ toast('内容が空です（消すときは「削除」）'); return; }
+  var r = fromLocalInput($('edRem').value);
+  if(r !== m.remind){ m.notified = false; delete m.resume; }
+  m.text = t; m.cat = ui.edCat; m.remind = r; m.repeat = r ? $('edRepeat').value : ''; m.updated = Date.now();
+  if(r && m.done && r > Date.now()) m.done = false;
+  save(); closeSheets(); renderAll(); toast('保存しました');
+  if(r) ensureNotifPermission();
+}
+
+/* カレンダー（.ics）：アプリを閉じていても端末のカレンダーが知らせてくれる */
+function icsDate(ms){ var d = new Date(ms); return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + '00'; }
+function icsEsc(s){ return String(s).replace(/\\/g,'\\\\').replace(/\n/g,'\\n').replace(/[,;]/g, function(c){ return '\\' + c; }); }
+function currentEditForCal(){
+  var t = $('edText').value.trim(), r = fromLocalInput($('edRem').value), k = catOf(ui.edCat);
+  if(!r){ toast('先にリマインドの日時を入れてください'); return null; }
+  return {title:k.emoji + ' ' + firstLine(t).slice(0,40), text:t, start:r, rep:$('edRepeat').value, cat:k.name};
+}
+function downloadIcs(){
+  var c = currentEditForCal(); if(!c) return;
+  var rr = {daily:'FREQ=DAILY', weekdays:'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', weekly:'FREQ=WEEKLY', monthly:'FREQ=MONTHLY'}[c.rep];
+  var lines = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//KEMURI//memo//JA','CALSCALE:GREGORIAN','BEGIN:VEVENT',
+    'UID:' + ui.editId + '@kemuri-memo','DTSTAMP:' + icsDate(Date.now()),'DTSTART:' + icsDate(c.start),'DTEND:' + icsDate(c.start + 15*60000),
+    'SUMMARY:' + icsEsc(c.title),'DESCRIPTION:' + icsEsc('【' + c.cat + '】\n' + c.text)];
+  if(rr) lines.push('RRULE:' + rr);
+  lines.push('BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:' + icsEsc(c.title),'TRIGGER:PT0M','END:VALARM','END:VEVENT','END:VCALENDAR');
+  var blob = new Blob([lines.join('\r\n')], {type:'text/calendar;charset=utf-8'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'memo-reminder.ics';
+  document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+  toast('カレンダー用ファイルを開きます。「追加」を押してください');
+}
+function openGcal(){
+  var c = currentEditForCal(); if(!c) return;
+  var rr = {daily:'RRULE:FREQ=DAILY', weekdays:'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', weekly:'RRULE:FREQ=WEEKLY', monthly:'RRULE:FREQ=MONTHLY'}[c.rep];
+  var url = 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent(c.title)
+    + '&dates=' + icsDate(c.start) + '/' + icsDate(c.start + 15*60000)
+    + '&details=' + encodeURIComponent('【' + c.cat + '】\n' + c.text) + (rr ? '&recur=' + encodeURIComponent(rr) : '');
+  window.open(url, '_blank');
+}
+
+/* ---------------- 日時の候補（話した中に日時があれば出す） ---------------- */
+function showSuggest(where, text){
+  var ms = parseWhen(text), box = $(where === 'comp' ? 'compSuggest' : 'edSuggest');
+  var cur = where === 'comp' ? ui.compRem : fromLocalInput($('edRem').value);
+  if(!ms || ms === cur){ box.style.display = 'none'; return; }
+  if(where === 'comp') suggestCompVal = ms; else suggestEdVal = ms;
+  box.innerHTML = '💡 「' + fmtShort(ms) + '」にリマインドしますか？<button data-sugg="' + where + '">設定する</button>';
+  box.style.display = 'block';
+}
+function hideSuggest(where){ $(where === 'comp' ? 'compSuggest' : 'edSuggest').style.display = 'none'; }
+
+/* ---------------- シート ---------------- */
+function openSheet(id){ $(id).classList.add('show'); document.body.style.overflow = 'hidden'; }
+function closeSheets(){
+  if(voice && (voice.ta === $('edText'))) stopVoice();
+  document.querySelectorAll('.sheetbg').forEach(function(s){ s.classList.remove('show'); });
+  document.body.style.overflow = '';
+}
+document.querySelectorAll('.sheetbg').forEach(function(bg){
+  bg.addEventListener('click', function(e){ if(e.target === bg || e.target.hasAttribute('data-close')) closeSheets(); });
+});
+
+/* ---------------- 設定 ---------------- */
+function renderSettings(){
+  var h = '';
+  db.cats.forEach(function(k, i){
+    h += '<div class="catrow" data-ci="' + i + '">'
+      + '<input class="emo" value="' + esc(k.emoji) + '" data-cf="emoji" maxlength="4">'
+      + '<input value="' + esc(k.name) + '" data-cf="name" maxlength="20">'
+      + '<input class="col" type="color" value="' + esc(k.color) + '" data-cf="color">'
+      + '<button data-cmove="' + i + '" title="上へ">↑</button>'
+      + '<button data-cdel="' + i + '" title="削除">🗑</button></div>';
+  });
+  $('catEdit').innerHTML = h;
+  $('optPunct').checked = !!db.opt.punct; $('optAutoSave').checked = !!db.opt.autoSave; $('optSound').checked = !!db.opt.sound;
+  var n = $('notifNote'), p = ('Notification' in window) ? Notification.permission : 'none';
+  n.innerHTML = p === 'granted' ? '✅ 通知はオンです。この画面（またはホーム画面のアプリ）を開いている間、時間になると通知と音で知らせます。'
+    : p === 'denied' ? '⛔ 通知がブロックされています。端末の設定 → ブラウザ → 通知 から許可してください。画面を開いていれば、画面上の表示と音では知らせます。'
+    : p === 'none' ? 'この環境ではOSの通知が使えません（iPhoneは「ホーム画面に追加」したアプリから使えます）。画面を開いていれば、画面上の表示と音で知らせます。'
+    : 'まだ通知が許可されていません。「通知をオンにする」を押してください。';
+  $('notifBtn').disabled = p !== 'default';
+  renderShareSettings();
+  var done = db.memos.filter(function(m){ return m.done; }).length;
+  $('dataInfo').textContent = 'メモ ' + db.memos.length + '件（完了 ' + done + '件）・項目 ' + db.cats.length + '個';
+}
+function addCategory(){
+  var name = prompt('新しい項目の名前', ''); if(!name || !name.trim()) return;
+  var palette = ['#d9622b','#2f8f5b','#b5403a','#3d6fb5','#b58a12','#8a4fb5','#2a8a8a','#c2477a'];
+  var c = {id:uid('c'), name:name.trim().slice(0,20), emoji:'🏷', color:palette[db.cats.length % palette.length]};
+  db.cats.push(c); save(); return c;
+}
+
+/* ---------------- 通知・リマインドの見張り ---------------- */
+var swReg = null;
+if('serviceWorker' in navigator && location.protocol !== 'file:'){
+  navigator.serviceWorker.register('memo-sw.js', {scope:'./'}).then(function(r){ swReg = r; }).catch(function(){});
+  navigator.serviceWorker.addEventListener('message', function(e){
+    if(e.data && e.data.type === 'open-memo') jumpTo(e.data.id);
+  });
+}
+function ensureNotifPermission(){
+  if(!('Notification' in window) || Notification.permission !== 'default') return;
+  try{
+    var p = Notification.requestPermission(function(){ renderSettings(); });
+    if(p && p.then) p.then(function(){ renderSettings(); });
+  }catch(e){}
+}
+function osNotify(title, body, id){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  var opt = {body:body, icon:'memo-icon.png', badge:'memo-icon.png', tag:'memo-' + id, data:{id:id}, requireInteraction:true, vibrate:[200,100,200]};
+  if(swReg && swReg.showNotification){ swReg.showNotification(title, opt).catch(function(){ try{ new Notification(title, opt); }catch(e){} }); }
+  else { try{ var n = new Notification(title, opt); n.onclick = function(){ window.focus(); jumpTo(id); n.close(); }; }catch(e){} }
+}
+var audioCtx = null;
+function beep(){
+  if(!db.opt.sound) return;
+  try{
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    var t = audioCtx.currentTime;
+    [0, .25, .5].forEach(function(o, i){
+      var osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+      osc.type = 'sine'; osc.frequency.value = i === 2 ? 1320 : 880;
+      g.gain.setValueAtTime(.0001, t+o); g.gain.exponentialRampToValueAtTime(.3, t+o+.02); g.gain.exponentialRampToValueAtTime(.0001, t+o+.2);
+      osc.connect(g); g.connect(audioCtx.destination); osc.start(t+o); osc.stop(t+o+.22);
+    });
+  }catch(e){}
+  try{ if(navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate([300,150,300]); }catch(e){}
+}
+// 音はユーザー操作のあとでないと鳴らない端末があるので、最初のタップで準備しておく
+document.addEventListener('pointerdown', function unlock(){
+  try{ audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if(audioCtx.state === 'suspended') audioCtx.resume(); }catch(e){}
+  document.removeEventListener('pointerdown', unlock);
+}, {once:false});
+
+var alarmQueue = [], alarmCur = null;
+var ALARMED = 'kemuri_memo_alarmed_v1';
+function checkReminders(){
+  var now = Date.now(), changed = false;
+  if(shareOn()){
+    // 共有中：くり返しを進める・済みにするのはサーバー（cron）。ここでは画面に出すだけ
+    var al = {}; try{ al = JSON.parse(localStorage.getItem(ALARMED) || '{}') || {}; }catch(e){}
+    db.memos.forEach(function(m){
+      if(m.done || !m.remind || m.notified || m.remind > now) return;
+      if(al[m.id] === m.remind) return;
+      al[m.id] = m.remind;
+      if(!share.push){ var k = catOf(m.cat); osNotify('🔔 ' + k.emoji + ' ' + k.name, firstLine(m.text), m.id); }
+      alarmQueue.push({id:m.id, at:m.remind}); changed = true;
+    });
+    if(changed){
+      var ids = {}; db.memos.forEach(function(m){ ids[m.id] = 1; });
+      Object.keys(al).forEach(function(id){ if(!ids[id]) delete al[id]; });
+      try{ localStorage.setItem(ALARMED, JSON.stringify(al)); }catch(e){}
+      beep(); renderAll(); showNextAlarm();
+    }
+    return;
+  }
+  db.memos.forEach(function(m){
+    if(m.done || !m.remind || m.notified || m.remind > now) return;
+    var k = catOf(m.cat), late = now - m.remind > 5*60000;
+    osNotify('🔔 ' + k.emoji + ' ' + k.name + (late ? '（' + fmtShort(m.remind) + ' のぶん）' : ''), firstLine(m.text), m.id);
+    alarmQueue.push({id:m.id, at:m.remind});
+    if(m.repeat && m.resume){ m.remind = m.resume; delete m.resume; m.notified = false; }
+    else if(m.repeat){ m.remind = nextRepeat(m.remind, m.repeat); m.notified = false; }
+    else m.notified = true;
+    changed = true;
+  });
+  if(changed){ save(); beep(); renderAll(); showNextAlarm(); }
+}
+function showNextAlarm(){
+  if(alarmCur) return;
+  var a = alarmQueue.shift(); if(!a) return;
+  var m = getMemo(a.id); if(!m){ showNextAlarm(); return; }
+  alarmCur = a.id;
+  var k = catOf(m.cat);
+  $('alarmAt').textContent = '🔔 ' + k.emoji + ' ' + k.name + '　' + fmtShort(a.at) + ' のリマインド' + (alarmQueue.length ? '（ほか' + alarmQueue.length + '件）' : '');
+  $('alarmTx').textContent = m.text;
+  $('alarm').classList.add('show');
+}
+function closeAlarm(){ $('alarm').classList.remove('show'); alarmCur = null; setTimeout(showNextAlarm, 300); }
+function snooze(m, v){
+  var t;
+  if(v === 'tomorrow'){ var d = new Date(); d.setDate(d.getDate()+1); d.setHours(9,0,0,0); t = d.getTime(); }
+  else t = Date.now() + (+v) * 60000;
+  if(m.repeat){
+    // くり返しのメモは、ふだんの予定（resume）を覚えておき、スヌーズが鳴ったらそこへ戻す
+    var regular = m.resume || m.remind;
+    if(t < regular){ m.resume = regular; m.remind = t; }
+  } else m.remind = t;
+  m.notified = false; m.updated = Date.now();
+  save(); renderAll(); toast(fmtShort(t) + ' にもう一度知らせます');
+}
+setInterval(function(){ checkReminders(); tickHeader(); }, 15000);
+setInterval(function(){ renderDue(); if(!document.querySelector('.sheetbg.show') && !voice) renderList(); }, 60000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden){ db = load(); renderAll(); checkReminders(); } });
+
+function jumpTo(id){
+  var m = getMemo(id); if(!m) return;
+  if(ui.tab !== 'all' && ui.tab !== m.cat) ui.tab = 'all';
+  if(m.done && ui.filter === 'open') ui.filter = 'all';
+  if(ui.filter === 'remind' && !m.remind) ui.filter = 'all';
+  ui.q = ''; $('search').value = '';
+  renderAll();
+  var el = $('memo-' + id);
+  if(el){ el.scrollIntoView({behavior:'smooth', block:'center'}); el.classList.add('flash'); setTimeout(function(){ el.classList.remove('flash'); }, 3500); }
+}
+
+/* ---------------- トースト ---------------- */
+var toastTimer = null, toastAct = null;
+function toast(msg, btnLabel, fn){
+  $('toastTx').textContent = msg;
+  var b = $('toastBtn');
+  if(btnLabel){ b.style.display = ''; b.textContent = btnLabel; toastAct = fn; } else { b.style.display = 'none'; toastAct = null; }
+  $('toast').classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ $('toast').classList.remove('show'); toastAct = null; }, btnLabel ? 6000 : 2800);
+}
+$('toastBtn').addEventListener('click', function(){ var f = toastAct; toastAct = null; $('toast').classList.remove('show'); if(f) f(); });
+
+/* ---------------- イベント ---------------- */
+$('tabs').addEventListener('click', function(e){
+  var b = e.target.closest('[data-tab]'); if(!b) return;
+  var t = b.getAttribute('data-tab');
+  if(t === '__add'){ var c = addCategory(); if(c){ ui.tab = c.id; renderAll(); } return; }
+  ui.tab = t; renderAll(); window.scrollTo({top:0, behavior:'smooth'});
+});
+
+$('tilesBox').addEventListener('click', function(e){
+  var b = e.target.closest('[data-tilerec]'); if(!b) return;
+  ui.compCat = b.getAttribute('data-tilerec');
+  renderComposer();
+  $('composer').scrollIntoView({behavior:'smooth', block:'start'});
+  startCompVoice();
+});
+
+function startCompVoice(onStopExtra){
+  compVoiceUsed = true;
+  startVoice($('compText'), $('compInterim'), $('compMic'), function(v){
+    renderComposer(); showSuggest('comp', v);
+    if(onStopExtra) onStopExtra(v);
+  }, function(v){ $('compSave').disabled = !v.trim(); showSuggest('comp', v); });
+}
+$('compMic').addEventListener('click', function(){ startCompVoice(); });
+$('compText').addEventListener('input', function(){ $('compSave').disabled = !this.value.trim(); clearTimeout(this._t); var v = this.value; this._t = setTimeout(function(){ showSuggest('comp', v); }, 500); });
+$('compSave').addEventListener('click', saveComposer);
+$('compClear').addEventListener('click', function(){
+  if(voice) stopVoice();
+  var old = $('compText').value; $('compText').value = ''; ui.compRem = null; hideSuggest('comp'); renderComposer();
+  if(old.trim()) toast('クリアしました', '戻す', function(){ $('compText').value = old; renderComposer(); });
+});
+$('compCats').addEventListener('click', function(e){
+  var b = e.target.closest('[data-compcat]'); if(!b) return;
+  ui.compCat = b.getAttribute('data-compcat'); renderComposer();
+});
+$('compQuick').addEventListener('click', function(e){
+  var b = e.target.closest('[data-cq]'); if(!b) return;
+  var v = b.getAttribute('data-cq');
+  if(v === 'none'){ ui.compRem = null; }
+  else if(v === 'pick'){
+    var inp = document.createElement('input'); inp.type = 'datetime-local';
+    inp.value = toLocalInput(ui.compRem || Date.now() + 3600000);
+    inp.style.cssText = 'position:fixed;opacity:0;top:50%;left:50%';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', function(){ ui.compRem = fromLocalInput(inp.value); renderComposer(); inp.remove(); });
+    inp.addEventListener('blur', function(){ setTimeout(function(){ inp.remove(); }, 500); });
+    if(inp.showPicker){ try{ inp.showPicker(); }catch(err){ inp.focus(); } } else { inp.focus(); inp.click(); }
+    return;
+  }
+  else ui.compRem = +v;
+  hideSuggest('comp'); renderComposer();
+});
+document.addEventListener('click', function(e){
+  var b = e.target.closest('[data-sugg]'); if(!b) return;
+  if(b.getAttribute('data-sugg') === 'comp'){ ui.compRem = suggestCompVal; renderComposer(); hideSuggest('comp'); }
+  else { $('edRem').value = toLocalInput(suggestEdVal); hideSuggest('ed'); }
+  toast('🔔 リマインドを設定しました');
+});
+
+// 右下のマイク：今の項目にすぐ録音（設定で «止めたら保存» にもできる）
+$('fab').addEventListener('click', function(){
+  if(voice && voice.btn === $('fab')){ stopVoice(); return; }
+  if(voice) stopVoice();
+  compVoiceUsed = true;
+  startVoice($('compText'), $('compInterim'), $('fab'), function(v){
+    renderComposer(); showSuggest('comp', v);
+    if(db.opt.autoSave && v.trim()) saveComposer();
+    else $('composer').scrollIntoView({behavior:'smooth', block:'start'});
+  }, function(v){ $('compSave').disabled = !v.trim(); });
+});
+
+$('filters').addEventListener('click', function(e){
+  var b = e.target.closest('[data-filter]'); if(!b) return;
+  ui.filter = b.getAttribute('data-filter'); renderFilters(); renderList();
+});
+$('search').addEventListener('input', function(){ ui.q = this.value; renderList(); });
+
+$('list').addEventListener('click', function(e){
+  var b = e.target.closest('[data-act]'); if(!b) return;
+  var m = getMemo(b.getAttribute('data-id')); if(!m) return;
+  var a = b.getAttribute('data-act');
+  if(a === 'done') toggleDone(m);
+  else if(a === 'edit') openEdit(m.id);
+  else if(a === 'addvoice') openEdit(m.id, true);
+  else if(a === 'remind'){ openEdit(m.id); setTimeout(function(){ $('edRem').scrollIntoView({block:'center'}); }, 200); }
+  else if(a === 'speak') speak(catOf(m.cat).name + '。' + m.text);
+  else if(a === 'pin'){ m.pin = !m.pin; save(); renderList(); toast(m.pin ? '📌 ピン留めしました' : 'ピンを外しました'); }
+  else if(a === 'share') share(m);
+});
+$('dueBox').addEventListener('click', function(e){ var it = e.target.closest('[data-jump]'); if(it) jumpTo(it.getAttribute('data-jump')); });
+$('bellBtn').addEventListener('click', function(){ ui.tab = 'all'; ui.filter = 'remind'; renderAll(); $('filters').scrollIntoView({behavior:'smooth', block:'start'}); });
+
+// 編集シート
+$('edCats').addEventListener('click', function(e){
+  var b = e.target.closest('[data-edcat]'); if(!b) return;
+  ui.edCat = b.getAttribute('data-edcat'); $('edCats').innerHTML = catChips(ui.edCat, 'edcat');
+});
+$('edMic').addEventListener('click', function(){
+  startVoice($('edText'), $('edInterim'), $('edMic'), function(v){ showSuggest('ed', v); }, function(v){ showSuggest('ed', v); });
+});
+$('edQuick').addEventListener('click', function(e){
+  var b = e.target.closest('[data-eq]'); if(!b) return;
+  var v = b.getAttribute('data-eq');
+  $('edRem').value = v === 'none' ? '' : toLocalInput(+v);
+  if(v === 'none') $('edRepeat').value = '';
+});
+$('edSave').addEventListener('click', saveEdit);
+$('edDel').addEventListener('click', function(){ var m = getMemo(ui.editId); closeSheets(); if(m) deleteMemo(m); });
+$('edIcs').addEventListener('click', downloadIcs);
+$('edGcal').addEventListener('click', openGcal);
+
+// 鳴っているリマインド
+$('alarm').addEventListener('click', function(e){
+  var b = e.target.closest('[data-snooze]'); if(!b) return;
+  var m = getMemo(alarmCur); if(m) snooze(m, b.getAttribute('data-snooze')); closeAlarm();
+});
+$('alarmDone').addEventListener('click', function(){
+  var m = getMemo(alarmCur);
+  if(m && !m.repeat){ m.done = true; m.doneAt = Date.now(); save(); renderAll(); toast('完了にしました'); }
+  closeAlarm();
+});
+$('alarmClose').addEventListener('click', closeAlarm);
+
+// 設定
+$('setBtn').addEventListener('click', function(){ renderSettings(); openSheet('setBg'); });
+$('catEdit').addEventListener('change', function(e){
+  var row = e.target.closest('[data-ci]'), f = e.target.getAttribute('data-cf'); if(!row || !f) return;
+  var c = db.cats[+row.getAttribute('data-ci')]; var v = e.target.value.trim();
+  if(f === 'name' && !v){ e.target.value = c.name; return; }
+  c[f] = f === 'emoji' ? (v || '🏷') : v; save(); renderAll();
+});
+$('catEdit').addEventListener('click', function(e){
+  var mv = e.target.closest('[data-cmove]'), dl = e.target.closest('[data-cdel]');
+  if(mv){ var i = +mv.getAttribute('data-cmove'); if(i > 0){ var t = db.cats[i]; db.cats[i] = db.cats[i-1]; db.cats[i-1] = t; save(); renderSettings(); renderAll(); } }
+  if(dl){
+    var j = +dl.getAttribute('data-cdel'), c = db.cats[j];
+    if(db.cats.length <= 1){ toast('項目は最低1つ必要です'); return; }
+    var n = db.memos.filter(function(m){ return m.cat === c.id; }).length;
+    if(!confirm('「' + c.name + '」を消しますか？' + (n ? '\nこの項目のメモ ' + n + '件は「その他」に移ります。' : ''))) return;
+    db.cats.splice(j, 1);
+    var to = fallbackCat();
+    if(to.id === c.id) to = db.cats[0];
+    if(!db.cats.some(function(x){ return x.id === to.id; })){ to = Object.assign({}, DEFAULT_CATS[5]); db.cats.push(to); }
+    db.memos.forEach(function(m){ if(m.cat === c.id) m.cat = to.id; });
+    if(ui.tab === c.id) ui.tab = 'all';
+    save(); renderSettings(); renderAll();
+  }
+});
+$('catAdd').addEventListener('click', function(){ if(addCategory()){ renderSettings(); renderAll(); } });
+$('optPunct').addEventListener('change', function(){ db.opt.punct = this.checked; save(); });
+$('optAutoSave').addEventListener('change', function(){ db.opt.autoSave = this.checked; save(); });
+$('optSound').addEventListener('change', function(){ db.opt.sound = this.checked; save(); });
+$('notifBtn').addEventListener('click', ensureNotifPermission);
+$('testBtn').addEventListener('click', function(){
+  beep(); osNotify('🔔 テスト通知', 'リマインドはこんなふうに届きます', 'test');
+  toast(('Notification' in window && Notification.permission === 'granted') ? '通知と音を出しました' : '音を出しました（通知はオフ）');
+});
+$('expBtn').addEventListener('click', function(){
+  var d = new Date();
+  var blob = new Blob([JSON.stringify({app:'kemuri-memo', version:1, exported:d.toISOString(), data:db}, null, 1)], {type:'application/json'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'kemuri-memo-' + ymd(d) + '.json'; document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+  toast('バックアップを書き出しました');
+});
+$('impBtn').addEventListener('click', function(){ $('impFile').click(); });
+$('impFile').addEventListener('change', function(){
+  var f = this.files[0]; if(!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    try{
+      var j = JSON.parse(r.result), d = j && j.data ? j.data : j;
+      if(!d || !Array.isArray(d.memos)) throw new Error('形式が違います');
+      var mode = confirm('読み込んだメモを、今のメモに «足し合わせ» ますか？\n\nOK＝足し合わせる（同じメモは上書き）\nキャンセル＝やめる');
+      if(!mode) return;
+      var byId = {}; db.memos.forEach(function(m){ byId[m.id] = m; });
+      var add = 0;
+      d.memos.forEach(function(m){ if(m && m.id && typeof m.text === 'string'){ if(!byId[m.id]) add++; byId[m.id] = m; } });
+      db.memos = Object.keys(byId).map(function(k){ return byId[k]; });
+      (d.cats || []).forEach(function(c){ if(c && c.id && !db.cats.some(function(x){ return x.id === c.id; })) db.cats.push(c); });
+      save(); renderSettings(); renderAll(); toast('読み込みました（新しいメモ ' + add + '件）');
+    }catch(e){ toast('読み込めませんでした：' + e.message); }
+  };
+  r.readAsText(f); this.value = '';
+});
+$('txtBtn').addEventListener('click', function(){
+  var list = visibleMemos().sort(function(a,b){ return a.created - b.created; });
+  if(!list.length){ toast('コピーするメモがありません'); return; }
+  copyText(list.map(memoAsText).join('\n\n'));
+});
+
+// 画面を閉じる前に入力中のものを失わないよう、下書きを残す
+var DRAFT = 'kemuri_memo_draft_v1';
+try{ var dr = JSON.parse(localStorage.getItem(DRAFT) || 'null'); if(dr && dr.text){ $('compText').value = dr.text; ui.compCat = dr.cat; ui.compRem = dr.rem; } }catch(e){}
+function saveDraft(){ try{ localStorage.setItem(DRAFT, JSON.stringify({text:$('compText').value, cat:ui.compCat, rem:ui.compRem})); }catch(e){} }
+window.addEventListener('pagehide', saveDraft);
+document.addEventListener('visibilitychange', function(){ if(document.hidden) saveDraft(); });
+
+/* ============================================================
+   ほかのiPhoneとの同期・サーバー通知（Xserver の memo-api と話す）
+   ・メモは «前回サーバーと揃えた形» と比べて、変わったものだけ送る
+   ・同じメモを2台で直したら、あとから送ったほうが残る
+   ・通知はサーバーの cron が毎分見て、Web Push でiPhoneに送る
+   ============================================================ */
+var DEFAULT_API = (function(){ try{ return new URL('api/', location.href).href; }catch(e){ return ''; } })();
+function shareOn(){ return !!((share.url || /^https?:/.test(DEFAULT_API)) && share.pass); }
+function apiUrl(action, base){
+  var u = String(base || share.url || DEFAULT_API || '').trim();
+  if(!/\.php($|\?)/.test(u)){ if(u.slice(-1) !== '/') u += '/'; u += 'api.php'; }
+  return u + (u.indexOf('?') < 0 ? '?' : '&') + 'a=' + action;
+}
+function api(action, payload, cred){
+  cred = cred || share;
+  var body = Object.assign({pass:cred.pass, device:share.device, name:cred.name || share.name || ''}, payload || {});
+  // text/plain にすると «事前確認(CORS preflight)» が要らず、Xserver でも素直に通る
+  return fetch(apiUrl(action, cred.url), {method:'POST', headers:{'Content-Type':'text/plain;charset=UTF-8'}, body:JSON.stringify(body), cache:'no-store'})
+    .then(function(r){
+      return r.text().then(function(t){
+        var j = null; try{ j = JSON.parse(t); }catch(e){}
+        if(!j){ throw new Error(r.status === 403 ? 'サーバーに断られました(403)。XserverのWAF設定を確認' : r.status === 404 ? 'URLが見つかりません(404)' : 'サーバーの返事が読めません(HTTP ' + r.status + ')'); }
+        if(!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        return j;
+      });
+    });
+}
+
+var syncing = false, syncAgain = false, syncTimer = null;
+function scheduleSync(){ if(!shareOn()) return; clearTimeout(syncTimer); syncTimer = setTimeout(doSync, 1200); }
+function doSync(){
+  if(!shareOn()) return Promise.resolve();
+  if(syncing){ syncAgain = true; return Promise.resolve(); }
+  syncing = true;
+  var last = share.lastSynced || {}, now = Date.now(), out = [], sent = {}, here = {};
+  db.memos.forEach(function(m){
+    here[m.id] = 1;
+    if(JSON.stringify(m) !== last[m.id]){ m.rev = now; sent[m.id] = JSON.stringify(m); out.push(JSON.parse(sent[m.id])); }
+  });
+  Object.keys(last).forEach(function(id){ if(!here[id]){ out.push({id:id, deleted:true, rev:now}); sent[id] = '__del'; } });
+  var catsJ = JSON.stringify(db.cats), payload = {memos:out};
+  if(catsJ !== share.catsJson){ payload.cats = db.cats; payload.catsRev = now; }
+  var before = JSON.stringify(db);
+  return api('sync', payload).then(function(res){
+    var keep = {}, nowIds = {};
+    db.memos.forEach(function(m){
+      nowIds[m.id] = 1;
+      var j = JSON.stringify(m);
+      if(j !== sent[m.id] && j !== last[m.id]) keep[m.id] = m;      // 送っている間に直された／増えたメモ
+    });
+    var rejected = res.rejected || [];
+    db.memos.forEach(function(m){ if(rejected.indexOf(m.id) >= 0) keep[m.id] = m; });   // サーバーに断られた（長すぎる）→ 原文を残す
+    var newLast = {}, list = [], seen = {};
+    (res.memos || []).forEach(function(sm){
+      if(sm.deleted) return;
+      newLast[sm.id] = JSON.stringify(sm);
+      if(keep[sm.id]) return;
+      var knew = (last[sm.id] !== undefined || sent[sm.id] !== undefined) && sent[sm.id] !== '__del';
+      if(knew && !nowIds[sm.id]) return;                               // 送っている間に消されたメモ
+      list.push(sm); seen[sm.id] = 1;
+    });
+    Object.keys(keep).forEach(function(id){ list.push(keep[id]); });
+    db.memos = list;
+    if(res.cats && res.cats.length){
+      if(JSON.stringify(db.cats) === catsJ) db.cats = res.cats;
+      share.catsJson = JSON.stringify(res.cats);
+    }
+    share.lastSynced = newLast; share.lastOk = Date.now(); share.people = res.people || [];
+    share.err = rejected.length ? '長すぎるメモ ' + rejected.length + '件は同期されていません（' + (res.textMax || 100000) + '文字まで）。この端末には残っています' : '';
+    saveShare();
+    applyingRemote = true; save(); applyingRemote = false;
+    if(JSON.stringify(db) !== before) renderAll(); else tickHeader();
+    checkReminders();
+  }).catch(function(e){
+    share.err = e.message || String(e); saveShare(); tickHeader();
+  }).then(function(){
+    syncing = false; renderShareSettings();
+    if(syncAgain){ syncAgain = false; setTimeout(doSync, 300); }
+  });
+}
+setInterval(function(){ if(!document.hidden && shareOn()) doSync(); }, 30000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden && shareOn()) doSync(); });
+
+function renderShareSettings(){
+  if(!$('shUrl')) return;
+  if(document.activeElement !== $('shUrl')) $('shUrl').value = (share.url && share.url !== DEFAULT_API) ? share.url : '';
+  $('shPass').placeholder = shareOn() ? '（接続済み・変えるときだけ入力）' : '合言葉';
+  $('shOff').disabled = !shareOn();
+  $('pushBtn').textContent = share.push ? '通知を受け取らない' : 'この端末で通知を受け取る';
+  $('pushBtn').disabled = !shareOn(); $('pushTest').disabled = !share.push;
+  var h;
+  if(!shareOn()) h = '合言葉を入れて「接続する」を押すと、どのiPhoneで書いても・直しても同じ内容になり、アプリを閉じていてもリマインドが届きます。ほかのiPhoneでも同じ合言葉を入れてください。（サーバーのURLは、別のサーバーを使うときだけ入れます）';
+  else {
+    h = (share.err ? '⚠ 同期できていません：' + esc(share.err) : '✅ 同期中' + (share.lastOk ? '（最終同期 ' + hm(new Date(share.lastOk)) + '）' : ''));
+    h += '<br>通知：' + (share.push ? '🔔 この端末はサーバーから受け取ります' : '🔕 この端末はまだ受け取っていません');
+    if(share.people && share.people.length) h += '<br>通知を受け取る端末：' + share.people.length + '台';
+    if(isIOS() && !isStandalone()) h += '<br><b>iPhoneは、Safariの共有ボタン →「ホーム画面に追加」→ ホーム画面のアイコンから開くと通知を受け取れます。</b>';
+  }
+  $('shNote').innerHTML = h;
+}
+function isIOS(){ return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+function isStandalone(){ return !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches)); }
+
+$('shConnect').addEventListener('click', function(){
+  var url = $('shUrl').value.trim() || DEFAULT_API, pass = $('shPass').value || (shareOn() ? share.pass : ''), name = deviceName();
+  if(!/^https?:\/\//.test(url)){ toast('このページをXserverのURL（https://…/memo/）から開いてください'); return; }
+  if(!pass){ toast('合言葉を入れてください'); return; }
+  var first = !shareOn();
+  var mine = db.memos.length;
+  if(first && mine && !confirm('この端末のメモ ' + mine + '件もサーバーに入れて、ほかのiPhoneと同じ内容にします。\n項目はサーバー（ほかのiPhone）の項目に合わせ、この端末で自分で作った項目はそこに足します。よろしいですか？')) return;
+  var btn = this; btn.disabled = true; btn.textContent = '接続中…';
+  api('sync', {memos:[]}, {url:url, pass:pass, name:name}).then(function(res){
+    share.url = url; share.pass = pass; share.name = name; share.err = '';
+    if(first){
+      share.lastSynced = {};
+      if(res.catsRev > 0 && res.cats && res.cats.length){
+        // サーバーに項目があれば、それを基準にする。初期の項目は送らず、自分で作った項目だけ足す
+        var have = {}, def = {};
+        res.cats.forEach(function(c){ have[c.id] = 1; });
+        DEFAULT_CATS.forEach(function(c){ def[c.id] = 1; });
+        var extra = db.cats.filter(function(c){ return !have[c.id] && !def[c.id]; });
+        db.cats = res.cats.concat(extra);
+        share.catsJson = JSON.stringify(res.cats);        // extra があるときだけ «変更» として送られる
+      } else share.catsJson = '';                          // サーバーが空 → この端末の項目を入れる
+    }
+    db.memos.forEach(function(m){ if(!m.owner) m.owner = share.device; });
+    applyingRemote = true; save(); applyingRemote = false;
+    saveShare(); $('shPass').value = '';
+    return doSync();
+  }).then(function(){
+    toast('接続しました。次は「この端末で通知を受け取る」を押してください');
+  }).catch(function(e){ toast('接続できません：' + e.message); })
+  .then(function(){ btn.disabled = false; btn.textContent = '接続する'; renderShareSettings(); renderAll(); });
+});
+$('shOff').addEventListener('click', function(){
+  if(!confirm('同期をやめますか？\nこの端末のメモは残ります（サーバーのメモも消えません）。')) return;
+  disablePush(true);
+  share.url = ''; share.pass = ''; share.lastSynced = {}; share.catsJson = ''; share.err = ''; share.people = [];
+  saveShare(); renderShareSettings(); renderAll(); toast('同期をやめました');
+});
+// 端末の見分け用（サーバーの記録に残すだけ。画面には出さない）
+function deviceName(){
+  var u = navigator.userAgent;
+  return /iPad/.test(u) ? 'iPad' : /iPhone/.test(u) ? 'iPhone' : /Android/.test(u) ? 'Android' : /Mac/.test(u) ? 'Mac' : /Windows/.test(u) ? 'Windows' : '端末';
+}
+
+function b64uToU8(s){
+  s = s.replace(/-/g, '+').replace(/_/g, '/'); while(s.length % 4) s += '=';
+  var r = atob(s), a = new Uint8Array(r.length); for(var i = 0; i < r.length; i++) a[i] = r.charCodeAt(i); return a;
+}
+function getReg(){
+  if(swReg) return Promise.resolve(swReg);
+  return navigator.serviceWorker.register('memo-sw.js', {scope:'./'}).then(function(r){ swReg = r; return r; });
+}
+function waitActive(reg){
+  if(reg.active) return Promise.resolve(reg);
+  return new Promise(function(res){
+    var w = reg.installing || reg.waiting;
+    if(!w){ res(reg); return; }
+    w.addEventListener('statechange', function(){ if(w.state === 'activated') res(reg); });
+    setTimeout(function(){ res(reg); }, 8000);
+  });
+}
+function sameKey(sub, key){
+  try{
+    var k = sub.options && sub.options.applicationServerKey; if(!k) return true;
+    var a = new Uint8Array(k), b = b64uToU8(key); if(a.length !== b.length) return false;
+    for(var i = 0; i < a.length; i++) if(a[i] !== b[i]) return false; return true;
+  }catch(e){ return true; }
+}
+function subscribePush(silent){
+  var reg;
+  return getReg().then(waitActive).then(function(r){ reg = r; return api('info'); }).then(function(info){
+    return reg.pushManager.getSubscription().then(function(sub){
+      if(sub && !sameKey(sub, info.vapid)) return sub.unsubscribe().then(function(){ return null; });
+      return sub;
+    }).then(function(sub){
+      if(sub) return sub;
+      if(silent) return null;
+      return reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64uToU8(info.vapid)});
+    });
+  }).then(function(sub){
+    if(!sub){ share.push = false; saveShare(); return false; }
+    return api('subscribe', {sub:sub.toJSON()}).then(function(){ share.push = true; saveShare(); return true; });
+  });
+}
+function enablePush(){
+  if(!shareOn()){ toast('先にサーバーに接続してください'); return; }
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)){
+    if(isIOS() && !isStandalone()) alert('iPhoneで通知を受け取るには：\n① Safariの共有ボタン →「ホーム画面に追加」\n② ホーム画面の「音声メモ」アイコンから開く\n③ もう一度このボタンを押す\n（iOS 16.4以上が必要です）');
+    else toast('このブラウザはプッシュ通知に対応していません');
+    return;
+  }
+  var p = Notification.requestPermission();
+  (p && p.then ? p : Promise.resolve(Notification.permission)).then(function(perm){
+    if(perm !== 'granted'){ toast('通知が許可されませんでした。端末の設定から「音声メモ」の通知を許可してください'); return; }
+    toast('通知を登録しています…');
+    return subscribePush(false).then(function(ok){ toast(ok ? '🔔 この端末で通知を受け取ります' : '登録できませんでした'); });
+  }).catch(function(e){ toast('通知の登録に失敗：' + e.message); })
+  .then(function(){ renderShareSettings(); });
+}
+function disablePush(quiet){
+  var was = share.push; share.push = false; saveShare();
+  if(was && shareOn()) api('unsubscribe').catch(function(){});
+  if(swReg && swReg.pushManager) swReg.pushManager.getSubscription().then(function(s){ if(s) s.unsubscribe(); }).catch(function(){});
+  if(!quiet) toast('この端末への通知をやめました');
+  renderShareSettings();
+}
+$('pushBtn').addEventListener('click', function(){ if(share.push) disablePush(); else enablePush(); });
+$('pushTest').addEventListener('click', function(){
+  api('testpush').then(function(r){
+    var ok = (r.codes || []).some(function(c){ return c >= 200 && c < 300; });
+    toast(ok ? '送りました。数秒で通知が届きます' : '送れませんでした（' + (r.codes || []).join(',') + '）。通知を登録し直してください');
+  }).catch(function(e){ toast('送れません：' + e.message); });
+});
+
+renderAll();
+checkReminders();
+if(shareOn()){
+  doSync();
+  if(share.push && 'Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator){
+    setTimeout(function(){ subscribePush(true).catch(function(){}); }, 1500);   // 登録を新しく保つ
+  }
+}
+var hm0 = location.hash.match(/memo=([^&]+)/);
+if(hm0){ setTimeout(function(){ jumpTo(decodeURIComponent(hm0[1])); }, 200); history.replaceState(null, '', location.pathname); }
+
+// テスト用に一部を外から呼べるようにする
+window.KemuriMemo = {parseWhen:parseWhen, nextRepeat:nextRepeat, db:function(){ return db; }};
+})();
+</script>
+</body>
+</html>
