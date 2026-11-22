@@ -22,10 +22,17 @@ function b64u_dec($s) {
 }
 
 /* ---------------- 設定 ---------------- */
+/* 未設定（ファイルが無い）ときだけ null。ファイルがあるのに読めない・壊れているときは
+   «未設定» と区別してエラーで止める（でないと、他人が合言葉を設定し直せてしまう） */
 function load_config() {
-  if (!is_file(MEMO_CONFIG)) return null;
-  $c = json_decode((string) file_get_contents(MEMO_CONFIG), true);
-  return is_array($c) ? $c : null;
+  if (!file_exists(MEMO_CONFIG)) return null;
+  $raw = @file_get_contents(MEMO_CONFIG);
+  $c = $raw === false ? null : json_decode($raw, true);
+  if (!is_array($c) || empty($c['passHash']) || !is_string($c['passHash'])
+      || empty($c['vapid']['pub']) || empty($c['vapid']['priv']) || empty($c['cronToken'])) {
+    throw new Exception('サーバーの設定ファイル（config.json）が壊れています。FTPで api/data/config.json を確認してください（消すと最初から設定し直しになります）');
+  }
+  return $c;
 }
 function save_config($c) {
   if (!is_dir(MEMO_DATA_DIR)) mkdir(MEMO_DATA_DIR, 0700, true);

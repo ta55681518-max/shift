@@ -1,7 +1,6 @@
 # ============================================================
 # 音声メモ（xserver/memo）を Xserver に FTP でアップロードする
-# ・xserver/memo の中身が変わって push されたとき、または
-#   Actions 画面の「Run workflow」で手動で動かしたときに送る
+# ・main の xserver/memo が変わったとき、または main で「Run workflow」を押したときに送る
 # ・FTPのIDやパスワードは GitHub の Secrets に置く（ここには書かない）
 #     XSERVER_FTP_HOST      例）sv12345.xserver.jp
 #     XSERVER_FTP_USER      例）サーバーID（またはFTPアカウント）
@@ -12,9 +11,11 @@
 # ============================================================
 name: 音声メモをXserverへ
 
+# 本番へ送るのは main だけ（main に入るには、ルールで人の承認が要る）。
+# 開発ブランチへの push や、main 以外からの手動実行では送らない。
 on:
   push:
-    branches: [main, claude/nifty-mendel-6g5d5c]
+    branches: [main]
     paths: ['xserver/memo/**', '.github/workflows/deploy-memo-xserver.yml']
   workflow_dispatch:
 
@@ -24,8 +25,12 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Settings → Environments で「xserver-production」に Required reviewers を付けると、
+    # 毎回アップロード前にもう一度承認を求めることもできる
+    environment: xserver-production
     steps:
       - uses: actions/checkout@v4
 

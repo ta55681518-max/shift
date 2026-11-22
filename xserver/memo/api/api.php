@@ -150,7 +150,15 @@ if ($a === 'sync') {
       if ($m === 'too_long') { $rejected[] = (string) $in['id']; continue; }
       if (!$m) continue;
       $cur = $map[$m['id']] ?? null;
-      if (!$cur || $m['rev'] >= (int) ($cur['rev'] ?? 0)) { $map[$m['id']] = $m; $accepted++; $changed = true; }
+      if (!$cur || $m['rev'] >= (int) ($cur['rev'] ?? 0)) {
+        // 通知の送り直し中の記録はサーバーだけが持つ。リマインドの日時・くり返しが同じ間は引き継ぐ
+        if ($cur && empty($m['deleted']) && empty($m['notified']) && isset($cur['sentTo'])
+            && ($m['remind'] ?? null) === ($cur['remind'] ?? null) && ($m['repeat'] ?? '') === ($cur['repeat'] ?? '')) {
+          $m['sentTo'] = $cur['sentTo'];
+          $m['pushTries'] = (int) ($cur['pushTries'] ?? 0);
+        }
+        $map[$m['id']] = $m; $accepted++; $changed = true;
+      }
     }
     // 消したメモの印は一定期間で片づける
     $limit = now_ms() - MEMO_TOMBSTONE_DAYS * 86400000;
